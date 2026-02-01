@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sdu-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sdu_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sdu_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-sdu_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdu_user} -d ${POSTGRES_DB:-sdu_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sdu-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_PORT: ${APP_PORT:-8080}
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-sdu_user}:${POSTGRES_PASSWORD:-sdu_pass}@db:5432/${POSTGRES_DB:-sdu_db}?sslmode=disable}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks:
+      - app
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: sdu-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    networks:
+      - app
+
+volumes:
+  postgres_data:
+  nginx_cache:
+  nginx_logs:
+
+networks:
+  app:

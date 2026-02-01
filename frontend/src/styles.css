@@ -1,0 +1,71 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #05070d;
+  --panel: rgba(255, 255, 255, 0.04);
+  --panel-strong: rgba(255, 255, 255, 0.08);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --muted: #9ba3b4;
+  --text: #f8fafc;
+  --accent: #4b91ff;
+  --accent-2: #3ae4ff;
+  --danger: #ef4444;
+}
+
+body {
+  background: radial-gradient(circle at 20% 20%, rgba(75, 145, 255, 0.08), transparent 30%),
+    radial-gradient(circle at 80% 0%, rgba(58, 228, 255, 0.05), transparent 25%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Manrope", "Inter", system-ui, -apple-system, sans-serif;
+}
+
+.glass {
+  background: var(--panel);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(12px);
+}
+
+.card {
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar-pill {
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--stroke);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.nav-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  transition: all 0.2s ease;
+}
+
+.nav-icon.active {
+  background: linear-gradient(135deg, #5b8bff, #32cfff);
+  box-shadow: 0 10px 24px rgba(75, 145, 255, 0.4);
+}
+
+.nav-icon.danger {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.pill {
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+}

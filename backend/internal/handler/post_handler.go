@@ -1,0 +1,133 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"sduthreads/internal/auth"
+	"sduthreads/internal/dto"
+	"sduthreads/internal/service"
+)
+
+type PostHandler struct {
+	service *service.PostService
+	jwt     *auth.JWTManager
+}
+
+func NewPostHandler(s *service.PostService, jwt *auth.JWTManager) *PostHandler {
+	return &PostHandler{service: s, jwt: jwt}
+}
+
+func (h *PostHandler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("/api/posts", h.handlePosts)
+	mux.HandleFunc("/api/posts/", h.handlePostActions)
+}
+
+func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var req dto.CreatePostRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		userID, err := requireUserID(r, h.jwt)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, req.MediaURL, req.Hashtags); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
+	case http.MethodGet:
+		limit := parseIntQuery(r, "limit", 20)
+		offset := parseIntQuery(r, "offset", 0)
+		var viewerID *uint64
+		if id, err := tryGetUserID(r, h.jwt); err == nil {
+			viewerID = &id
+		}
+		items, err := h.service.Feed(r.Context(), limit, offset, viewerID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp := make([]dto.FeedResponseItem, 0, len(items))
+		for _, it := range items {
+			resp = append(resp, dto.FeedResponseItem{
+				ID:        it.ID,
+				UserID:    it.UserID,
+				Username:  it.Username,
+				FullName:  it.FullName,
+				Content:   it.Content,
+				MediaURL:  it.MediaURL,
+				CreatedAt: it.CreatedAt,
+				UpdatedAt: it.UpdatedAt,
+				LikeCount: it.LikeCount,
+				LikedByMe: it.LikedByMe,
+			})
+		}
+		setNextOffset(w, offset, limit, len(resp))
+		writeJSON(w, http.StatusOK, resp)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) {
+	// Expected path: /api/posts/{id}/like
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/posts/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || parts[1] != "like" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	postID, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid post id")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		userID, err := requireUserID(r, h.jwt)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		if err := h.service.Like(r.Context(), postID, userID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})
+	case http.MethodDelete:
+		userID, err := requireUserID(r, h.jwt)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		if err := h.service.Unlike(r.Context(), postID, userID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func parseIntQuery(r *http.Request, key string, def int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}

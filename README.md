@@ -63,6 +63,40 @@ The main goal of this website is to help SDU students maintain connections and s
 
 ---
 
+## Environment variables
+Create `.env` from `.env.example` before running locally. Key values:
+- `APP_ENV`, `APP_PORT` — backend mode and port.
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` (по умолчанию 55432) — database credentials.
+- `DATABASE_URL` — Postgres connection string used by the backend.
+- `JWT_SECRET`, `JWT_TTL_HOURS` — ключ и срок жизни JWT (по умолчанию 24ч).
+- `RATE_LIMIT_RPM` — лимит запросов в минуту на IP (по умолчанию 120).
+
+## Логирование и rate limit
+- Каждый запрос логируется (method, path, status, длительность, ip, user-agent, user_id если есть токен).
+- Rate limit per IP: `RATE_LIMIT_RPM` (HTTP 429 при превышении).
+
+## API (черновик)
+- Auth: `POST /api/auth/register`, `POST /api/auth/login` → JWT.
+- Users: `POST /api/users` (legacy), `GET /api/users/{id}`, `GET /api/users/me`, `GET /api/users/search?q=`.
+- Follow: `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/followers|following`.
+- Posts: `POST /api/posts` (Bearer, `{content, media_url?, hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
+- Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
+- Hashtags: `GET /api/hashtags/search?q=`, `GET /api/hashtags/{name}/posts`.
+- Health: `/healthz`.
+
+## Run locally (Docker)
+```bash
+docker compose up --build
+```
+
+## Frontend build (Dockerfile)
+Сборка фронта теперь в образе Nginx (multi-stage). Команда:
+```bash
+docker compose up --build nginx
+```
+Стадия 1: Node 20 `npm ci && npm run build` из `frontend/`.  
+Стадия 2: Nginx собирает статик из `dist` и использует `nginx/nginx.conf`.
+
 ## Terms Used
 - **Subscriber / Subscription** = follower / following
 - **Repost** = resharing someone else’s post
