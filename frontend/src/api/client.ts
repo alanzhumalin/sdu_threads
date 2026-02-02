@@ -42,6 +42,7 @@ export const api = {
         username: string;
         full_name: string;
         created_at: string;
+        media_url?: string;
         like_count: number;
         liked_by_me: boolean;
       }[]

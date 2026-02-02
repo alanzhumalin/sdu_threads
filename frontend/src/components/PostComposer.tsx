@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { Image as ImageIcon, Hash } from "lucide-react";
 
 type Props = {
   onCreated?: () => void;
@@ -37,7 +38,7 @@ export default function PostComposer({ onCreated }: Props) {
   return (
     <form
       onSubmit={submit}
-      className="card p-4 md:p-5 space-y-3"
+      className="card p-4 md:p-4 space-y-3"
     >
       <div className="flex items-center justify-between text-sm text-white/70">
         <div className="flex items-center gap-2">
@@ -65,14 +66,10 @@ export default function PostComposer({ onCreated }: Props) {
       <div className="flex items-center justify-between">
         <div className="flex gap-2 text-white/50">
           <button type="button" className="nav-icon bg-white/5 border border-white/10">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 7.5h15m-15 5h9m-9 5h6" />
-            </svg>
+            <ImageIcon className="w-5 h-5" strokeWidth={1.7} />
           </button>
           <button type="button" className="nav-icon bg-white/5 border border-white/10">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5.5 5.5 12 12 18.5 18.5 12 12 5.5Z" />
-            </svg>
+            <Hash className="w-5 h-5" strokeWidth={1.7} />
           </button>
         </div>
         <button
