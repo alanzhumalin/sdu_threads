@@ -18,7 +18,7 @@ func NewCommentService(comments *repository.CommentRepository, posts *repository
 	return &CommentService{comments: comments, posts: posts, likes: likes}
 }
 
-func (s *CommentService) Create(ctx context.Context, postID, userID string, body string) error {
+func (s *CommentService) Create(ctx context.Context, postID, userID string, body string, replyTo *string) error {
 	if postID == "" || userID == "" {
 		return errors.New("post_id and user_id are required")
 	}
@@ -33,9 +33,10 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 		return errors.New("post not found")
 	}
 	comment := models.Comment{
-		PostID: postID,
-		UserID: userID,
-		Body:   body,
+		PostID:           postID,
+		UserID:           userID,
+		Body:             body,
+		ReplyToCommentID: replyTo,
 	}
 	return s.comments.Create(ctx, &comment)
 }

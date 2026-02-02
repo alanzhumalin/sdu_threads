@@ -81,6 +81,7 @@ export const api = {
         like_count: number;
         replies_count: number;
         reply_to_comment_id?: string;
+        replies?: any[];
       }[]
     >(`/comments?post_id=${postId}&limit=${limit}&offset=${offset}`, "GET", undefined, token),
   listReplies: (commentId: string, limit = 20, offset = 0, token?: string | null) =>
@@ -96,6 +97,7 @@ export const api = {
         like_count: number;
         replies_count: number;
         reply_to_comment_id?: string;
+        replies?: any[];
       }[]
     >(`/comments/${commentId}/replies?limit=${limit}&offset=${offset}`, "GET", undefined, token),
   createComment: (postId: string, body: string, replyTo?: string, token?: string | null) =>

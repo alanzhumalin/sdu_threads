@@ -46,7 +46,7 @@ func (h *CommentHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := h.comments.Create(r.Context(), req.PostID, userID, req.Content); err != nil {
+	if err := h.comments.Create(r.Context(), req.PostID, userID, req.Content, req.ReplyTo); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -70,6 +70,23 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]dto.CommentResponse, 0, len(items))
 	for _, c := range items {
+		replies, _ := h.comments.ListReplies(ctx, c.ID, 1, 0, viewerID)
+		replyDtos := make([]dto.CommentResponse, 0, len(replies))
+		for _, rc := range replies {
+			replyDtos = append(replyDtos, dto.CommentResponse{
+				ID:               rc.ID,
+				PostID:           rc.PostID,
+				UserID:           rc.UserID,
+				Username:         rc.Username,
+				Body:             rc.Body,
+				CreatedAt:        rc.CreatedAt,
+				LikedByMe:        rc.LikedByMe,
+				LikeCount:        rc.LikeCount,
+				RepliesCount:     rc.RepliesCount,
+				ReplyToCommentID: rc.ReplyToCommentID,
+				Replies:          []dto.CommentResponse{},
+			})
+		}
 		resp = append(resp, dto.CommentResponse{
 			ID:               c.ID,
 			PostID:           c.PostID,
@@ -81,6 +98,7 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 			LikeCount:        c.LikeCount,
 			RepliesCount:     c.RepliesCount,
 			ReplyToCommentID: c.ReplyToCommentID,
+			Replies:          replyDtos,
 		})
 	}
 	setNextOffset(w, offset, limit, len(resp))
@@ -161,6 +179,7 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 				LikeCount:        c.LikeCount,
 				RepliesCount:     c.RepliesCount,
 				ReplyToCommentID: c.ReplyToCommentID,
+				Replies:          []dto.CommentResponse{},
 			})
 		}
 		setNextOffset(w, offset, limit, len(resp))

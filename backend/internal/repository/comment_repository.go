@@ -59,7 +59,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT reply_to_comment_id AS comment_id, COUNT(*) AS count FROM comments WHERE reply_to_comment_id IS NOT NULL GROUP BY reply_to_comment_id
 ) rp ON rp.comment_id = c.id
-WHERE c.post_id = ?
+WHERE c.post_id = ? AND c.reply_to_comment_id IS NULL
 ORDER BY c.created_at DESC
 LIMIT ? OFFSET ?`
 	if err := r.db.WithContext(ctx).Raw(q, viewerID, postID, limit, offset).Scan(&res).Error; err != nil {

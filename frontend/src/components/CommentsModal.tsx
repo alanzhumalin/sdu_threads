@@ -16,6 +16,7 @@ type Comment = {
   like_count: number;
   replies_count: number;
   reply_to_comment_id?: string;
+  replies?: Comment[];
 };
 
 type PostMeta = {
@@ -69,6 +70,7 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
   const [error, setError] = useState("");
   const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
+  const [replyMode, setReplyMode] = useState(false);
   const [replies, setReplies] = useState<
     Record<string, { items: Comment[]; offset: number; total: number | null; loading: boolean }>
   >({});
@@ -82,6 +84,19 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
       const data = await api.listComments(post.id, PAGE, append ? offset : 0, token);
       setTotal((t) => (t === null ? data.length : t)); // rough total; server не отдаёт total
       setComments((prev) => (append ? [...prev, ...data] : data));
+      setReplies((prev) => {
+        const next = { ...prev };
+        (append ? data : data).forEach((c) => {
+          const total = typeof c.replies_count === "number" ? c.replies_count : c.replies?.length ?? 0;
+          next[c.id] = {
+            items: c.replies || [],
+            offset: c.replies?.length || 0,
+            total,
+            loading: false,
+          };
+        });
+        return next;
+      });
       if (append) setOffset((o) => o + data.length);
       else setOffset(data.length);
       setError("");
@@ -99,6 +114,9 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
 
   useEffect(() => {
     setPostMeta(post);
+    setReplyMode(false);
+    setReplyTo(null);
+    setBody("");
   }, [post]);
 
   const loadReplies = async (commentId: string) => {
@@ -108,9 +126,9 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
     }));
     const state = replies[commentId] || { items: [], offset: 0, total: null };
     try {
-      const data = await api.listReplies(commentId, PAGE, state.offset, token);
+      const data = await api.listReplies(commentId, 10, state.offset, token);
       const nextOffset = state.offset + data.length;
-      const total = state.total ?? (data.length < PAGE ? nextOffset : null);
+      const total = state.total ?? (data.length < 10 ? nextOffset : null);
       setReplies((prev) => ({
         ...prev,
         [commentId]: {
@@ -131,9 +149,10 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
   const send = async () => {
     if (!body.trim() || !token) return;
     try {
-      await api.createComment(post.id, body.trim(), replyTo?.id, token);
+      await api.createComment(post.id, body.trim(), replyMode ? replyTo?.id : undefined, token);
       setBody("");
       setReplyTo(null);
+      setReplyMode(false);
       load(false);
     } catch (e: any) {
       setError(e.message || "Не удалось отправить комментарий");
@@ -289,49 +308,48 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
                       className="text-white/70 hover:text-white"
                       onClick={() => {
                         setReplyTo(c);
-                        setBody((b) => (b.startsWith(`@${c.username} `) ? b : `@${c.username} ` + b));
+                        setReplyMode(true);
+                        focusTextarea();
                       }}
                     >
                       Ответить
                     </button>
-                    {c.replies_count > 0 && (
-                      <button
-                        className="text-white/70 hover:text-white"
-                        onClick={() => loadReplies(c.id)}
-                        disabled={replies[c.id]?.loading}
-                      >
-                        Показать ответы ({c.replies_count})
-                      </button>
-                    )}
                   </div>
                 </div>
-                {replies[c.id]?.items?.length ? (
-                  <div className="mt-3 space-y-2 pl-2 border-l border-white/10">
-                    {replies[c.id].items.map((r) => (
-                      <div key={r.id} className="flex gap-2 items-start text-sm text-white/80">
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs font-semibold text-white">
-                          {r.username?.[0]?.toUpperCase() || "?"}
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 text-xs text-white/60">
-                            <span className="font-semibold text-white">{r.username}</span>
-                            <span>{new Date(r.created_at).toLocaleString()}</span>
+                {(() => {
+                  const thread = replies[c.id];
+                  const items = thread?.items || [];
+                  const total = thread?.total ?? c.replies_count ?? 0;
+                  const remaining = Math.max(total - items.length, 0);
+                  return (
+                    <div className="mt-3 space-y-2 pl-3 border-l border-white/10">
+                      {items.map((r) => (
+                        <div key={r.id} className="flex gap-2 items-start text-sm text-white/80 relative">
+                          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs font-semibold text-white">
+                            {r.username?.[0]?.toUpperCase() || "?"}
                           </div>
-                          <div className="leading-relaxed">{highlightHashtags(r.body)}</div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 text-xs text-white/60">
+                              <span className="font-semibold text-white">{r.username}</span>
+                              <span>{new Date(r.created_at).toLocaleString()}</span>
+                            </div>
+                            <div className="leading-relaxed">{highlightHashtags(r.body)}</div>
+                          </div>
+                          <span className="absolute -left-3 top-4 h-[calc(100%-12px)] border-l border-white/10" aria-hidden />
                         </div>
-                      </div>
-                    ))}
-                    {replies[c.id].total === null && (
-                      <button
-                        className="text-white/60 hover:text-white text-xs"
-                        onClick={() => loadReplies(c.id)}
-                        disabled={replies[c.id].loading}
-                      >
-                        Показать ещё ответы
-                      </button>
-                    )}
-                  </div>
-                ) : null}
+                      ))}
+                      {remaining > 0 && (
+                        <button
+                          className="text-white/60 hover:text-white text-xs"
+                          onClick={() => loadReplies(c.id)}
+                          disabled={thread?.loading}
+                        >
+                          Показать ещё {Math.min(remaining, 10)} ответов
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           ))}
@@ -348,29 +366,46 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
           )}
         </div>
 
-        <div className="border-t border-white/10 p-3 flex items-center gap-3">
-          <button className="nav-icon bg-white/5 border border-white/10 text-white/80 hover:text-white" type="button" aria-label="attach" disabled>
-            <Paperclip className="w-5 h-5" />
-          </button>
-          <div className="flex-1 relative">
-            <textarea
-              ref={textareaRef}
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white placeholder:text-white/40 focus:border-white/30 outline-none transition resize-none"
-              rows={2}
-              placeholder={replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              onInput={adjustTextarea}
-            />
+        <div className="border-t border-white/10 p-3 flex flex-col gap-3">
+          {replyMode && replyTo && (
+            <div className="flex items-center justify-between rounded-lg border border-sky-700/40 bg-sky-500/10 px-3 py-2 text-sm text-white">
+              <span>Ответить @{replyTo.username}</span>
+              <button
+                type="button"
+                className="text-white/70 hover:text-white"
+                onClick={() => {
+                  setReplyMode(false);
+                  setReplyTo(null);
+                }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <button className="nav-icon bg-white/5 border border-white/10 text-white/80 hover:text-white" type="button" aria-label="attach" disabled>
+              <Paperclip className="w-5 h-5" />
+            </button>
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white placeholder:text-white/40 focus:border-white/30 outline-none transition resize-none"
+                rows={2}
+                placeholder={replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                onInput={adjustTextarea}
+              />
+            </div>
+            <button
+              onClick={send}
+              disabled={!body.trim() || !token}
+              className={`nav-icon ${body.trim() && token ? "bg-sky-500 text-black" : "bg-white/10 text-white/60"}`}
+              aria-label="send"
+            >
+              <SendHorizontal className="w-5 h-5" />
+            </button>
           </div>
-          <button
-            onClick={send}
-            disabled={!body.trim() || !token}
-            className={`nav-icon ${body.trim() && token ? "bg-sky-500 text-black" : "bg-white/10 text-white/60"}`}
-            aria-label="send"
-          >
-            <SendHorizontal className="w-5 h-5" />
-          </button>
         </div>
       </div>
     </div>,
