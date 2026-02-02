@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"sduthreads/internal/repository"
 )
@@ -16,15 +17,16 @@ func NewProfileService(users *repository.UserRepository, follows *repository.Fol
 }
 
 type Profile struct {
-	ID            string
-	Email         string
-	Username      string
-	FullName      string
-	Major         string
-	AvatarURL     string
-	BackgroundURL string
-	Followers     int64
-	Following     int64
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	Username      string `json:"username"`
+	FullName      string `json:"full_name"`
+	Major         string `json:"major"`
+	AvatarURL     string `json:"avatar_url"`
+	BackgroundURL string `json:"background_url"`
+	Followers     int64  `json:"followers"`
+	Following     int64  `json:"following"`
+	CreatedAt     string `json:"created_at"`
 }
 
 func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, error) {
@@ -50,5 +52,6 @@ func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, erro
 		BackgroundURL: u.BackgroundURL,
 		Followers:     followers,
 		Following:     following,
+		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
 	}, nil
 }

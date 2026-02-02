@@ -3,6 +3,7 @@ import FeedPage from "./Feed";
 import LoginPage from "./Login";
 import RegisterPage from "./Register";
 import Placeholder from "./Placeholder";
+import ProfilePage from "./Profile";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 
@@ -77,7 +78,7 @@ export default function App() {
             path="/profile"
             element={
               <Protected>
-                <Placeholder title="Профиль" />
+                <ProfilePage />
               </Protected>
             }
           />

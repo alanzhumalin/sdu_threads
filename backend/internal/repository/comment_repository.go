@@ -24,12 +24,15 @@ type CommentWithUser struct {
 	PostID           string
 	UserID           string
 	Username         string
+	FullName         string
 	Body             string
 	CreatedAt        string
 	LikedByMe        bool
 	LikeCount        int64
 	RepliesCount     int64
 	ReplyToCommentID *string
+	ReplyToFullName  *string
+	ReplyToUsername  *string
 }
 
 func (r *CommentRepository) ListByPost(ctx context.Context, postID string, limit, offset int, viewerID string) ([]CommentWithUser, error) {
@@ -41,13 +44,17 @@ func (r *CommentRepository) ListByPost(ctx context.Context, postID string, limit
 	}
 	var res []CommentWithUser
 	q := `
-SELECT c.id, c.post_id, c.user_id, u.username, c.body, c.created_at,
+SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, c.body, c.created_at,
        COALESCE(cl.liked, false) AS liked_by_me,
        COALESCE(clc.count, 0) AS like_count,
        COALESCE(rp.count, 0) AS replies_count,
-       c.reply_to_comment_id
+       c.reply_to_comment_id,
+       pu.full_name AS reply_to_full_name,
+       pu.username AS reply_to_username
 FROM comments c
 JOIN users u ON u.id = c.user_id
+LEFT JOIN comments pc ON pc.id = c.reply_to_comment_id
+LEFT JOIN users pu ON pu.id = pc.user_id
 LEFT JOIN (
     SELECT comment_id, TRUE AS liked
     FROM comment_likes
@@ -77,13 +84,17 @@ func (r *CommentRepository) ListReplies(ctx context.Context, parentID string, li
 	}
 	var res []CommentWithUser
 	q := `
-SELECT c.id, c.post_id, c.user_id, u.username, c.body, c.created_at,
+SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, c.body, c.created_at,
        COALESCE(cl.liked, false) AS liked_by_me,
        COALESCE(clc.count, 0) AS like_count,
        COALESCE(rp.count, 0) AS replies_count,
-       c.reply_to_comment_id
+       c.reply_to_comment_id,
+       pu.full_name AS reply_to_full_name,
+       pu.username AS reply_to_username
 FROM comments c
 JOIN users u ON u.id = c.user_id
+LEFT JOIN comments pc ON pc.id = c.reply_to_comment_id
+LEFT JOIN users pu ON pu.id = pc.user_id
 LEFT JOIN (
     SELECT comment_id, TRUE AS liked
     FROM comment_likes

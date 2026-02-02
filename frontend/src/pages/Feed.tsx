@@ -73,9 +73,21 @@ export default function FeedPage() {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
+  const loadViewed = () => {
+    try {
+      const raw = localStorage.getItem("viewed_posts");
+      if (!raw) return new Set<string>();
+      const arr = JSON.parse(raw);
+      return new Set<string>(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set<string>();
+    }
+  };
   const seenPosts = useRef<Set<string>>(new Set());
+  const viewedPersisted = useRef<Set<string>>(loadViewed());
   const pendingTimers = useRef<Map<string, number>>(new Map());
   const observer = useRef<IntersectionObserver | null>(null);
 
@@ -87,8 +99,9 @@ export default function FeedPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const data = await api.feed(token);
-      setFeed(data);
+      const { items, nextOffset } = await api.feedPage(20, 0, token);
+      setFeed(items);
+      setNextOffset(nextOffset);
       setError("");
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить ленту");
@@ -107,11 +120,9 @@ export default function FeedPage() {
       (entries) => {
         entries.forEach((entry) => {
           const target = entry.target as HTMLElement;
-          const idAttr = target.getAttribute("data-post-id");
-          if (!idAttr) return;
-          const id = Number(idAttr);
-          if (Number.isNaN(id)) return;
-          if (seenPosts.current.has(id)) {
+          const id = target.getAttribute("data-post-id");
+          if (!id) return;
+          if (seenPosts.current.has(id) || viewedPersisted.current.has(id)) {
             obs.unobserve(target);
             return;
           }
@@ -126,7 +137,7 @@ export default function FeedPage() {
           if (pendingTimers.current.has(id)) return;
           const timer = window.setTimeout(() => {
             pendingTimers.current.delete(id);
-            if (seenPosts.current.has(id)) return;
+            if (seenPosts.current.has(id) || viewedPersisted.current.has(id)) return;
             if (!isHalfVisible(target)) return;
             sendView(id);
             seenPosts.current.add(id);
@@ -146,13 +157,54 @@ export default function FeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  const loadMore = async () => {
+    if (loading || !token || nextOffset === null) return;
+    setLoading(true);
+    try {
+      const { items, nextOffset: n } = await api.feedPage(20, nextOffset, token);
+      setFeed((prev) => [...prev, ...items]);
+      setNextOffset(n);
+      setError("");
+    } catch (e: any) {
+      setError(e.message || "Не удалось загрузить ленту");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = loadMoreRef.current;
+    if (!sentinel || nextOffset === null) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            loadMore();
+          }
+        });
+      },
+      { rootMargin: "200px 0px" }
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [nextOffset, token]);
+
   const sendView = async (postId: string) => {
     if (!token) return;
+    if (viewedPersisted.current.has(postId)) return;
     try {
       await api.viewPost(postId, token);
       setFeed((prev) =>
         prev.map((p) => (p.id === postId ? { ...p, view_count: (p.view_count || 0) + 1 } : p))
       );
+      viewedPersisted.current.add(postId);
+      try {
+        localStorage.setItem("viewed_posts", JSON.stringify(Array.from(viewedPersisted.current)));
+      } catch {
+        // ignore storage errors
+      }
     } catch {
       // ignore view errors silently
     }
@@ -302,6 +354,11 @@ export default function FeedPage() {
           </div>
         )}
       </div>
+      {nextOffset !== null && (
+        <div ref={loadMoreRef} className="h-10 flex items-center justify-center text-white/60 text-sm">
+          {loading ? "Загрузка..." : "Подгружаем ещё..."}
+        </div>
+      )}
       {commentsPost && (
         <CommentsModal
           post={commentsPost}

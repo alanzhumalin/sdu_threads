@@ -10,6 +10,7 @@ type Comment = {
   post_id: string;
   user_id: string;
   username: string;
+  full_name?: string;
   body: string;
   created_at: string;
   liked_by_me: boolean;
@@ -17,6 +18,8 @@ type Comment = {
   replies_count: number;
   reply_to_comment_id?: string;
   replies?: Comment[];
+  reply_to_full_name?: string;
+  reply_to_username?: string;
 };
 
 type PostMeta = {
@@ -119,25 +122,42 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
     setBody("");
   }, [post]);
 
-  const loadReplies = async (commentId: string) => {
+  const loadReplies = async (commentId: string, reset = false) => {
     setReplies((prev) => ({
       ...prev,
-      [commentId]: { ...(prev[commentId] || { items: [], offset: 0, total: null }), loading: true },
+      [commentId]: {
+        ...(reset ? { items: [], offset: 0, total: null } : prev[commentId] || { items: [], offset: 0, total: null }),
+        loading: true,
+      },
     }));
-    const state = replies[commentId] || { items: [], offset: 0, total: null };
+    const state = reset ? { items: [], offset: 0, total: replies[commentId]?.total ?? null } : replies[commentId] || { items: [], offset: 0, total: null };
     try {
       const data = await api.listReplies(commentId, 10, state.offset, token);
       const nextOffset = state.offset + data.length;
-      const total = state.total ?? (data.length < 10 ? nextOffset : null);
-      setReplies((prev) => ({
-        ...prev,
-        [commentId]: {
-          items: [...state.items, ...data],
-          offset: nextOffset,
-          total,
-          loading: false,
-        },
-      }));
+      const total = state.total ?? (data.length < 10 ? nextOffset : nextOffset + 10);
+      setReplies((prev) => {
+        const next = {
+          ...prev,
+          [commentId]: {
+            items: [...state.items, ...data],
+            offset: nextOffset,
+            total,
+            loading: false,
+          },
+        };
+        // initialize child threads placeholders
+        data.forEach((r) => {
+          if (!next[r.id]) {
+            next[r.id] = {
+              items: r.replies || [],
+              offset: r.replies?.length || 0,
+              total: r.replies_count ?? r.replies?.length ?? 0,
+              loading: false,
+            };
+          }
+        });
+        return next;
+      });
     } catch {
       setReplies((prev) => ({
         ...prev,
@@ -153,7 +173,32 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
       setBody("");
       setReplyTo(null);
       setReplyMode(false);
-      load(false);
+      if (replyMode && replyTo) {
+        setComments((prev) =>
+          prev.map((c) => (c.id === replyTo.id ? { ...c, replies_count: (c.replies_count ?? 0) + 1 } : c))
+        );
+        setReplies((prev) => {
+          const next: typeof prev = {};
+          Object.entries(prev).forEach(([id, thread]) => {
+            next[id] = {
+              ...thread,
+              items: thread.items.map((item) =>
+                item.id === replyTo.id ? { ...item, replies_count: (item.replies_count ?? 0) + 1 } : item
+              ),
+            };
+          });
+          next[replyTo.id] = {
+            items: [],
+            offset: 0,
+            total: (prev[replyTo.id]?.total ?? replyTo.replies_count ?? 0) + 1,
+            loading: false,
+          };
+          return next;
+        });
+        loadReplies(replyTo.id, true);
+      } else {
+        load(false);
+      }
     } catch (e: any) {
       setError(e.message || "Не удалось отправить комментарий");
     }
@@ -161,22 +206,15 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
 
   const toggleLike = async (c: Comment) => {
     if (!token) return;
-    setComments((prev) =>
-      prev.map((x) =>
-        x.id === c.id
-          ? {
-              ...x,
-              liked_by_me: !x.liked_by_me,
-              like_count: x.like_count + (x.liked_by_me ? -1 : 1),
-            }
-          : x
-      )
-    );
+    const prev = findCommentById(c.id);
+    const nextLiked = !c.liked_by_me;
+    const nextCount = c.like_count + (nextLiked ? 1 : -1);
+    updateCommentLocal(c.id, { liked_by_me: nextLiked, like_count: nextCount });
     try {
       if (c.liked_by_me) await api.unlikeComment(c.id, token);
       else await api.likeComment(c.id, token);
     } catch {
-      // ignore
+      if (prev) updateCommentLocal(c.id, { liked_by_me: prev.liked_by_me, like_count: prev.like_count });
     }
   };
 
@@ -230,6 +268,118 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
     textareaRef.current?.focus();
   };
 
+  const findCommentById = (id: string): Comment | null => {
+    const top = comments.find((c) => c.id === id);
+    if (top) return top;
+    for (const thread of Object.values(replies)) {
+      const hit = thread.items.find((r) => r.id === id);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  const updateCommentLocal = (id: string, patch: Partial<Comment>) => {
+    setComments((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setReplies((prev) => {
+      const next: typeof prev = {};
+      for (const [key, thread] of Object.entries(prev)) {
+        next[key] = {
+          ...thread,
+          items: thread.items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+        };
+      }
+      return next;
+    });
+  };
+
+  const renderComment = (c: Comment, depth = 0) => {
+    const thread = replies[c.id];
+    const items = thread?.items || [];
+    const total = (thread?.total ?? c.replies_count ?? 0) || 0;
+    const remaining = Math.max(total - items.length, 0);
+    const hasReplies = items.length > 0;
+    const displayName = c.full_name || c.username;
+    const replyTarget =
+      c.reply_to_full_name || c.reply_to_username
+        ? c.reply_to_full_name || c.reply_to_username
+        : null;
+
+    return (
+      <div key={c.id} className={`border border-white/10 rounded-xl p-3 flex gap-3 ${depth > 0 ? "bg-white/5" : ""}`}>
+        <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white">
+          {(c.full_name || c.username || "?")[0]?.toUpperCase() || "?"}
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center justify-between text-sm text-white/70">
+            <span className="font-semibold text-white">{displayName}</span>
+            <span>{timeAgo(c.created_at)}</span>
+          </div>
+          {replyTarget && (
+            <div className="text-xs text-white/60 mt-1">
+              Ответ для @{replyTarget}
+            </div>
+          )}
+          <div className="mt-2 text-white leading-relaxed break-words">
+            {replyTarget ? (
+              <>
+                <span className="text-sky-400 font-semibold">@{replyTarget}</span>
+                <span className="ml-1">{highlightHashtags(c.body)}</span>
+              </>
+            ) : (
+              highlightHashtags(c.body)
+            )}
+          </div>
+          <div className="mt-3 flex items-center justify-between text-sm text-white/60">
+            <div className="flex items-center gap-3">
+              <button
+                className={`flex items-center gap-1 ${c.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"}`}
+                onClick={() => toggleLike(c)}
+              >
+                <Heart className={`w-4 h-4 ${c.liked_by_me ? "fill-current" : ""}`} strokeWidth={1.6} />
+                <span>{c.like_count}</span>
+              </button>
+              <button
+                className="text-white/70 hover:text-white"
+                onClick={() => {
+                  setReplyTo(c);
+                  setReplyMode(true);
+                  focusTextarea();
+                }}
+              >
+                Ответить
+              </button>
+            </div>
+          </div>
+          {hasReplies && (
+            <div className="mt-3 space-y-2 pl-3 border-l border-white/10">
+              {items.map((r) => renderComment(r, depth + 1))}
+              {remaining > 0 && (
+                <button
+                  className="text-white/60 hover:text-white text-xs"
+                  onClick={() => loadReplies(c.id)}
+                  disabled={thread?.loading}
+                >
+                  Показать ещё {Math.min(remaining, 10)} ответов
+                </button>
+              )}
+            </div>
+          )}
+          {!hasReplies && remaining > 0 && (
+            <div className="mt-3">
+              <button
+                className="text-white/60 hover:text-white text-xs"
+                onClick={() => loadReplies(c.id)}
+                disabled={thread?.loading}
+              >
+                Показать ответы ({Math.min(remaining, 10)})
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return createPortal(
     <div className="fixed inset-0 w-screen h-screen z-[120] flex items-center justify-center bg-black/70 backdrop-blur-lg">
       <div ref={containerRef} className="w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl bg-black border border-white/10 shadow-2xl flex flex-col">
@@ -281,78 +431,7 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-          {comments.map((c) => (
-            <div key={c.id} className="border border-white/10 rounded-xl p-3 flex gap-3">
-              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white">
-                {c.username?.[0]?.toUpperCase() || "?"}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between text-sm text-white/70">
-                  <span className="font-semibold text-white">{c.username}</span>
-                  <span>{timeAgo(c.created_at)}</span>
-                </div>
-                {c.reply_to_comment_id && (
-                  <div className="text-xs text-white/50 mt-1">в ответ на коммент</div>
-                )}
-                <div className="mt-2 text-white leading-relaxed break-words">{highlightHashtags(c.body)}</div>
-                <div className="mt-3 flex items-center justify-between text-sm text-white/60">
-                  <div className="flex items-center gap-3">
-                    <button
-                      className={`flex items-center gap-1 ${c.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"}`}
-                      onClick={() => toggleLike(c)}
-                    >
-                      <Heart className={`w-4 h-4 ${c.liked_by_me ? "fill-current" : ""}`} strokeWidth={1.6} />
-                      <span>{c.like_count}</span>
-                    </button>
-                    <button
-                      className="text-white/70 hover:text-white"
-                      onClick={() => {
-                        setReplyTo(c);
-                        setReplyMode(true);
-                        focusTextarea();
-                      }}
-                    >
-                      Ответить
-                    </button>
-                  </div>
-                </div>
-                {(() => {
-                  const thread = replies[c.id];
-                  const items = thread?.items || [];
-                  const total = thread?.total ?? c.replies_count ?? 0;
-                  const remaining = Math.max(total - items.length, 0);
-                  return (
-                    <div className="mt-3 space-y-2 pl-3 border-l border-white/10">
-                      {items.map((r) => (
-                        <div key={r.id} className="flex gap-2 items-start text-sm text-white/80 relative">
-                          <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs font-semibold text-white">
-                            {r.username?.[0]?.toUpperCase() || "?"}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 text-xs text-white/60">
-                              <span className="font-semibold text-white">{r.username}</span>
-                              <span>{new Date(r.created_at).toLocaleString()}</span>
-                            </div>
-                            <div className="leading-relaxed">{highlightHashtags(r.body)}</div>
-                          </div>
-                          <span className="absolute -left-3 top-4 h-[calc(100%-12px)] border-l border-white/10" aria-hidden />
-                        </div>
-                      ))}
-                      {remaining > 0 && (
-                        <button
-                          className="text-white/60 hover:text-white text-xs"
-                          onClick={() => loadReplies(c.id)}
-                          disabled={thread?.loading}
-                        >
-                          Показать ещё {Math.min(remaining, 10)} ответов
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          ))}
+          {comments.map((c) => renderComment(c, 0))}
           {comments.length === 0 && !loading && <p className="text-white/60">Комментариев нет</p>}
           {error && <p className="text-red-400 text-sm">{error}</p>}
           {remaining !== null && remaining > 0 && (

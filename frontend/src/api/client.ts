@@ -1,6 +1,10 @@
+import { useAuthStore } from "../store/auth";
+
 type HttpMethod = "GET" | "POST" | "DELETE";
 
 const API_BASE = "/api";
+
+let redirecting = false;
 
 async function request<T>(
   path: string,
@@ -17,11 +21,58 @@ async function request<T>(
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401 || res.status === 403) {
+    if (!redirecting) {
+      redirecting = true;
+      try {
+        useAuthStore.getState().setToken(null);
+      } catch {
+        // ignore
+      }
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const msg = await res.text();
     throw new Error(msg || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+async function requestWithHeaders<T>(
+  path: string,
+  method: HttpMethod = "GET",
+  body?: any,
+  token?: string | null
+): Promise<{ data: T; headers: Headers }> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401 || res.status === 403) {
+    if (!redirecting) {
+      redirecting = true;
+      try {
+        useAuthStore.getState().setToken(null);
+      } catch {
+        // ignore
+      }
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const msg = await res.text();
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { data, headers: res.headers };
 }
 
 export const api = {
@@ -33,8 +84,21 @@ export const api = {
     full_name: string;
     password: string;
   }) => request<{ token: string }>("/auth/register", "POST", payload),
-  feed: (token?: string | null) =>
-    request<
+  profileMe: (token?: string | null) =>
+    request<{
+      id: string;
+      email: string;
+      username: string;
+      full_name: string;
+      major: string;
+      avatar_url?: string;
+      background_url?: string;
+      followers: number;
+      following: number;
+      created_at: string;
+    }>("/users/me", "GET", undefined, token),
+  feedPage: (limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
       {
         id: string;
         user_id: string;
@@ -46,8 +110,13 @@ export const api = {
         like_count: number;
         liked_by_me: boolean;
         view_count: number;
+        comment_count?: number;
       }[]
-    >("/posts?limit=20", "GET", undefined, token),
+    >(`/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  feed: (token?: string | null) => api.feedPage(20, 0, token).then((r) => r.items),
   createPost: (payload: { content: string; media_url?: string; hashtags?: string[] }, token: string) =>
     request<{ status: string }>("/posts", "POST", payload, token),
   searchHashtags: (q: string, limit = 8) =>
@@ -75,6 +144,7 @@ export const api = {
         post_id: string;
         user_id: string;
         username: string;
+        full_name?: string;
         body: string;
         created_at: string;
         liked_by_me: boolean;
@@ -82,6 +152,8 @@ export const api = {
         replies_count: number;
         reply_to_comment_id?: string;
         replies?: any[];
+        reply_to_full_name?: string;
+        reply_to_username?: string;
       }[]
     >(`/comments?post_id=${postId}&limit=${limit}&offset=${offset}`, "GET", undefined, token),
   listReplies: (commentId: string, limit = 20, offset = 0, token?: string | null) =>

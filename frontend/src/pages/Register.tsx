@@ -20,7 +20,8 @@ export default function RegisterPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await api.register(form);
+      const normalizedUsername = form.username.toLowerCase().replace(/\s+/g, "_");
+      const res = await api.register({ ...form, username: normalizedUsername });
       setToken(res.token);
       navigate("/");
     } catch (err: any) {
@@ -44,7 +45,10 @@ export default function RegisterPage() {
           <Field
             label="Username"
             value={form.username}
-            onChange={(e) => setForm({ ...form, username: e.target.value })}
+            onChange={(e) => {
+              const v = e.target.value.toLowerCase().replace(/\s+/g, "_");
+              setForm({ ...form, username: v });
+            }}
           />
           <Field
             label="Имя"

@@ -78,12 +78,15 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 				PostID:           rc.PostID,
 				UserID:           rc.UserID,
 				Username:         rc.Username,
+				FullName:         rc.FullName,
 				Body:             rc.Body,
 				CreatedAt:        rc.CreatedAt,
 				LikedByMe:        rc.LikedByMe,
 				LikeCount:        rc.LikeCount,
 				RepliesCount:     rc.RepliesCount,
 				ReplyToCommentID: rc.ReplyToCommentID,
+				ReplyToFullName:  rc.ReplyToFullName,
+				ReplyToUsername:  rc.ReplyToUsername,
 				Replies:          []dto.CommentResponse{},
 			})
 		}
@@ -92,12 +95,15 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 			PostID:           c.PostID,
 			UserID:           c.UserID,
 			Username:         c.Username,
+			FullName:         c.FullName,
 			Body:             c.Body,
 			CreatedAt:        c.CreatedAt,
 			LikedByMe:        c.LikedByMe,
 			LikeCount:        c.LikeCount,
 			RepliesCount:     c.RepliesCount,
 			ReplyToCommentID: c.ReplyToCommentID,
+			ReplyToFullName:  c.ReplyToFullName,
+			ReplyToUsername:  c.ReplyToUsername,
 			Replies:          replyDtos,
 		})
 	}
@@ -173,12 +179,15 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 				PostID:           c.PostID,
 				UserID:           c.UserID,
 				Username:         c.Username,
+				FullName:         c.FullName,
 				Body:             c.Body,
 				CreatedAt:        c.CreatedAt,
 				LikedByMe:        c.LikedByMe,
 				LikeCount:        c.LikeCount,
 				RepliesCount:     c.RepliesCount,
 				ReplyToCommentID: c.ReplyToCommentID,
+				ReplyToFullName:  c.ReplyToFullName,
+				ReplyToUsername:  c.ReplyToUsername,
 				Replies:          []dto.CommentResponse{},
 			})
 		}
