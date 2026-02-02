@@ -1,16 +1,20 @@
 package dto
 
 type CreateCommentRequest struct {
-	PostID  uint64 `json:"post_id"`
+	PostID  string `json:"post_id"`
 	Content string `json:"content"`
+	ReplyTo *string `json:"reply_to_comment_id,omitempty"`
 }
 
 type CommentResponse struct {
-	ID        uint64 `json:"id"`
-	PostID    uint64 `json:"post_id"`
-	UserID    uint64 `json:"user_id"`
+	ID        string `json:"id"`
+	PostID    string `json:"post_id"`
+	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
 	LikedByMe bool   `json:"liked_by_me"`
+	LikeCount int64  `json:"like_count"`
+	RepliesCount int64 `json:"replies_count"`
+	ReplyToCommentID *string `json:"reply_to_comment_id,omitempty"`
 }

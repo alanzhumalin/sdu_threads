@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"sduthreads/internal/auth"
@@ -37,11 +36,7 @@ func (h *FollowHandler) handleFollowRoutes(w http.ResponseWriter, r *http.Reques
 	}
 
 	// follow-related routes
-	userID, err := strconv.ParseUint(parts[0], 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
-		return
-	}
+	userID := parts[0]
 
 	switch parts[1] {
 	case "follow":
@@ -55,7 +50,7 @@ func (h *FollowHandler) handleFollowRoutes(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, targetID uint64) {
+func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, targetID string) {
 	userID, err := requireUserID(r, h.jwt)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
@@ -80,7 +75,7 @@ func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, tar
 	}
 }
 
-func (h *FollowHandler) handleFollowers(w http.ResponseWriter, r *http.Request, userID uint64) {
+func (h *FollowHandler) handleFollowers(w http.ResponseWriter, r *http.Request, userID string) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -96,7 +91,7 @@ func (h *FollowHandler) handleFollowers(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, list)
 }
 
-func (h *FollowHandler) handleFollowing(w http.ResponseWriter, r *http.Request, userID uint64) {
+func (h *FollowHandler) handleFollowing(w http.ResponseWriter, r *http.Request, userID string) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -117,7 +112,7 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	var userID uint64
+	var userID string
 	if idStr == "me" {
 		id, err := requireUserID(r, h.jwt)
 		if err != nil {
@@ -126,12 +121,7 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 		}
 		userID = id
 	} else {
-		id, err := strconv.ParseUint(idStr, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid user id")
-			return
-		}
-		userID = id
+		userID = idStr
 	}
 
 	p, err := h.profile.Get(r.Context(), userID)

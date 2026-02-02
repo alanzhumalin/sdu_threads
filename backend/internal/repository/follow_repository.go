@@ -14,17 +14,17 @@ func NewFollowRepository(db *gorm.DB) *FollowRepository {
 	return &FollowRepository{db: db}
 }
 
-func (r *FollowRepository) Follow(ctx context.Context, followerID, followeeID uint64) error {
+func (r *FollowRepository) Follow(ctx context.Context, followerID, followeeID string) error {
 	const q = `INSERT INTO follows (follower_id, followee_id) VALUES (?, ?) ON CONFLICT DO NOTHING`
 	return r.db.WithContext(ctx).Exec(q, followerID, followeeID).Error
 }
 
-func (r *FollowRepository) Unfollow(ctx context.Context, followerID, followeeID uint64) error {
+func (r *FollowRepository) Unfollow(ctx context.Context, followerID, followeeID string) error {
 	return r.db.WithContext(ctx).
 		Exec(`DELETE FROM follows WHERE follower_id = ? AND followee_id = ?`, followerID, followeeID).Error
 }
 
-func (r *FollowRepository) FollowersCount(ctx context.Context, userID uint64) (int64, error) {
+func (r *FollowRepository) FollowersCount(ctx context.Context, userID string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Raw(`SELECT COUNT(*) FROM follows WHERE followee_id = ?`, userID).
@@ -32,7 +32,7 @@ func (r *FollowRepository) FollowersCount(ctx context.Context, userID uint64) (i
 	return count, err
 }
 
-func (r *FollowRepository) FollowingCount(ctx context.Context, userID uint64) (int64, error) {
+func (r *FollowRepository) FollowingCount(ctx context.Context, userID string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Raw(`SELECT COUNT(*) FROM follows WHERE follower_id = ?`, userID).
@@ -41,12 +41,12 @@ func (r *FollowRepository) FollowingCount(ctx context.Context, userID uint64) (i
 }
 
 type FollowUser struct {
-	ID       uint64
+	ID       string
 	Username string
 	FullName string
 }
 
-func (r *FollowRepository) Followers(ctx context.Context, userID uint64, limit, offset int) ([]FollowUser, error) {
+func (r *FollowRepository) Followers(ctx context.Context, userID string, limit, offset int) ([]FollowUser, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -67,7 +67,7 @@ LIMIT ? OFFSET ?`
 	return res, nil
 }
 
-func (r *FollowRepository) Following(ctx context.Context, userID uint64, limit, offset int) ([]FollowUser, error) {
+func (r *FollowRepository) Following(ctx context.Context, userID string, limit, offset int) ([]FollowUser, error) {
 	if limit <= 0 {
 		limit = 20
 	}

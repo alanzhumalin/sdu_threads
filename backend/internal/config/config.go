@@ -12,6 +12,7 @@ type Config struct {
 	JWTSecret    string
 	JWTTTLHours  int
 	RateLimitRPM int
+	ViewTTLMin   int
 }
 
 func Load() Config {
@@ -22,6 +23,7 @@ func Load() Config {
 		JWTSecret:    getEnv("JWT_SECRET", "dev-secret"),
 		JWTTTLHours:  getEnvInt("JWT_TTL_HOURS", 24),
 		RateLimitRPM: getEnvInt("RATE_LIMIT_RPM", 120),
+		ViewTTLMin:   getEnvInt("VIEW_TTL_MIN", 15),
 	}
 }
 

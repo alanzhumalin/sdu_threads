@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"sduthreads/internal/auth"
@@ -55,19 +54,16 @@ func (h *CommentHandler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
-	postIDStr := r.URL.Query().Get("post_id")
-	if postIDStr == "" {
+	postID := r.URL.Query().Get("post_id")
+	if postID == "" {
 		writeError(w, http.StatusBadRequest, "post_id is required")
 		return
 	}
-	postID, err := strconv.ParseUint(postIDStr, 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid post id")
-		return
-	}
+	ctx := r.Context()
+	viewerID, _ := tryGetUserID(r, h.jwt)
 	limit := parseIntQuery(r, "limit", 20)
 	offset := parseIntQuery(r, "offset", 0)
-	items, err := h.comments.List(r.Context(), postID, limit, offset)
+	items, err := h.comments.List(ctx, postID, limit, offset, viewerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -75,13 +71,16 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 	resp := make([]dto.CommentResponse, 0, len(items))
 	for _, c := range items {
 		resp = append(resp, dto.CommentResponse{
-			ID:        c.ID,
-			PostID:    c.PostID,
-			UserID:    c.UserID,
-			Username:  c.Username,
-			Body:      c.Body,
-			CreatedAt: c.CreatedAt,
-			LikedByMe: c.LikedByMe,
+			ID:               c.ID,
+			PostID:           c.PostID,
+			UserID:           c.UserID,
+			Username:         c.Username,
+			Body:             c.Body,
+			CreatedAt:        c.CreatedAt,
+			LikedByMe:        c.LikedByMe,
+			LikeCount:        c.LikeCount,
+			RepliesCount:     c.RepliesCount,
+			ReplyToCommentID: c.ReplyToCommentID,
 		})
 	}
 	setNextOffset(w, offset, limit, len(resp))
@@ -94,11 +93,7 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 0 || parts[0] == "" {
 		return
 	}
-	commentID, err := strconv.ParseUint(parts[0], 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid comment id")
-		return
-	}
+	commentID := parts[0]
 
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		userID, err := requireUserID(r, h.jwt)
@@ -136,6 +131,40 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "replies" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		ctx := r.Context()
+		viewerID, _ := tryGetUserID(r, h.jwt)
+		limit := parseIntQuery(r, "limit", 20)
+		offset := parseIntQuery(r, "offset", 0)
+		items, err := h.comments.ListReplies(ctx, commentID, limit, offset, viewerID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp := make([]dto.CommentResponse, 0, len(items))
+		for _, c := range items {
+			resp = append(resp, dto.CommentResponse{
+				ID:               c.ID,
+				PostID:           c.PostID,
+				UserID:           c.UserID,
+				Username:         c.Username,
+				Body:             c.Body,
+				CreatedAt:        c.CreatedAt,
+				LikedByMe:        c.LikedByMe,
+				LikeCount:        c.LikeCount,
+				RepliesCount:     c.RepliesCount,
+				ReplyToCommentID: c.ReplyToCommentID,
+			})
+		}
+		setNextOffset(w, offset, limit, len(resp))
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 }

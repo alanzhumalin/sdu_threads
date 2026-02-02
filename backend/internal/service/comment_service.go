@@ -18,8 +18,8 @@ func NewCommentService(comments *repository.CommentRepository, posts *repository
 	return &CommentService{comments: comments, posts: posts, likes: likes}
 }
 
-func (s *CommentService) Create(ctx context.Context, postID, userID uint64, body string) error {
-	if postID == 0 || userID == 0 {
+func (s *CommentService) Create(ctx context.Context, postID, userID string, body string) error {
+	if postID == "" || userID == "" {
 		return errors.New("post_id and user_id are required")
 	}
 	if len(body) == 0 {
@@ -40,12 +40,16 @@ func (s *CommentService) Create(ctx context.Context, postID, userID uint64, body
 	return s.comments.Create(ctx, &comment)
 }
 
-func (s *CommentService) List(ctx context.Context, postID uint64, limit, offset int) ([]repository.CommentWithUser, error) {
-	return s.comments.ListByPost(ctx, postID, limit, offset)
+func (s *CommentService) List(ctx context.Context, postID string, limit, offset int, viewerID string) ([]repository.CommentWithUser, error) {
+	return s.comments.ListByPost(ctx, postID, limit, offset, viewerID)
 }
 
-func (s *CommentService) Delete(ctx context.Context, commentID, userID uint64) error {
-	if commentID == 0 || userID == 0 {
+func (s *CommentService) ListReplies(ctx context.Context, commentID string, limit, offset int, viewerID string) ([]repository.CommentWithUser, error) {
+	return s.comments.ListReplies(ctx, commentID, limit, offset, viewerID)
+}
+
+func (s *CommentService) Delete(ctx context.Context, commentID, userID string) error {
+	if commentID == "" || userID == "" {
 		return errors.New("comment_id and user_id are required")
 	}
 	ok, err := s.comments.DeleteIfOwner(ctx, commentID, userID)
@@ -58,15 +62,15 @@ func (s *CommentService) Delete(ctx context.Context, commentID, userID uint64) e
 	return nil
 }
 
-func (s *CommentService) Like(ctx context.Context, commentID, userID uint64) error {
-	if commentID == 0 || userID == 0 {
+func (s *CommentService) Like(ctx context.Context, commentID, userID string) error {
+	if commentID == "" || userID == "" {
 		return errors.New("comment_id and user_id are required")
 	}
 	return s.likes.AddComment(ctx, commentID, userID)
 }
 
-func (s *CommentService) Unlike(ctx context.Context, commentID, userID uint64) error {
-	if commentID == 0 || userID == 0 {
+func (s *CommentService) Unlike(ctx context.Context, commentID, userID string) error {
+	if commentID == "" || userID == "" {
 		return errors.New("comment_id and user_id are required")
 	}
 	return s.likes.RemoveComment(ctx, commentID, userID)

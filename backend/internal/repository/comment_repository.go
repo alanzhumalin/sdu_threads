@@ -20,16 +20,19 @@ func (r *CommentRepository) Create(ctx context.Context, c *models.Comment) error
 }
 
 type CommentWithUser struct {
-	ID        uint64
-	PostID    uint64
-	UserID    uint64
-	Username  string
-	Body      string
-	CreatedAt string
-	LikedByMe bool
+	ID               string
+	PostID           string
+	UserID           string
+	Username         string
+	Body             string
+	CreatedAt        string
+	LikedByMe        bool
+	LikeCount        int64
+	RepliesCount     int64
+	ReplyToCommentID *string
 }
 
-func (r *CommentRepository) ListByPost(ctx context.Context, postID uint64, limit, offset int) ([]CommentWithUser, error) {
+func (r *CommentRepository) ListByPost(ctx context.Context, postID string, limit, offset int, viewerID string) ([]CommentWithUser, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -39,7 +42,10 @@ func (r *CommentRepository) ListByPost(ctx context.Context, postID uint64, limit
 	var res []CommentWithUser
 	q := `
 SELECT c.id, c.post_id, c.user_id, u.username, c.body, c.created_at,
-       COALESCE(cl.liked, false) AS liked_by_me
+       COALESCE(cl.liked, false) AS liked_by_me,
+       COALESCE(clc.count, 0) AS like_count,
+       COALESCE(rp.count, 0) AS replies_count,
+       c.reply_to_comment_id
 FROM comments c
 JOIN users u ON u.id = c.user_id
 LEFT JOIN (
@@ -47,24 +53,58 @@ LEFT JOIN (
     FROM comment_likes
     WHERE user_id = ?
 ) cl ON cl.comment_id = c.id
+LEFT JOIN (
+    SELECT comment_id, COUNT(*) AS count FROM comment_likes GROUP BY comment_id
+) clc ON clc.comment_id = c.id
+LEFT JOIN (
+    SELECT reply_to_comment_id AS comment_id, COUNT(*) AS count FROM comments WHERE reply_to_comment_id IS NOT NULL GROUP BY reply_to_comment_id
+) rp ON rp.comment_id = c.id
 WHERE c.post_id = ?
-ORDER BY c.created_at ASC
+ORDER BY c.created_at DESC
 LIMIT ? OFFSET ?`
-	if err := r.db.WithContext(ctx).Raw(q, getViewerID(ctx), postID, limit, offset).Scan(&res).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(q, viewerID, postID, limit, offset).Scan(&res).Error; err != nil {
 		return nil, err
 	}
 	return res, nil
 }
 
-// getViewerID reads user id from context if middleware set it; otherwise returns nil placeholder.
-func getViewerID(ctx context.Context) interface{} {
-	if v := ctx.Value("viewer_id"); v != nil {
-		return v
+func (r *CommentRepository) ListReplies(ctx context.Context, parentID string, limit, offset int, viewerID string) ([]CommentWithUser, error) {
+	if limit <= 0 {
+		limit = 20
 	}
-	return nil
+	if limit > 100 {
+		limit = 100
+	}
+	var res []CommentWithUser
+	q := `
+SELECT c.id, c.post_id, c.user_id, u.username, c.body, c.created_at,
+       COALESCE(cl.liked, false) AS liked_by_me,
+       COALESCE(clc.count, 0) AS like_count,
+       COALESCE(rp.count, 0) AS replies_count,
+       c.reply_to_comment_id
+FROM comments c
+JOIN users u ON u.id = c.user_id
+LEFT JOIN (
+    SELECT comment_id, TRUE AS liked
+    FROM comment_likes
+    WHERE user_id = ?
+) cl ON cl.comment_id = c.id
+LEFT JOIN (
+    SELECT comment_id, COUNT(*) AS count FROM comment_likes GROUP BY comment_id
+) clc ON clc.comment_id = c.id
+LEFT JOIN (
+    SELECT reply_to_comment_id AS comment_id, COUNT(*) AS count FROM comments WHERE reply_to_comment_id IS NOT NULL GROUP BY reply_to_comment_id
+) rp ON rp.comment_id = c.id
+WHERE c.reply_to_comment_id = ?
+ORDER BY c.created_at DESC
+LIMIT ? OFFSET ?`
+	if err := r.db.WithContext(ctx).Raw(q, viewerID, parentID, limit, offset).Scan(&res).Error; err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
-func (r *CommentRepository) DeleteIfOwner(ctx context.Context, commentID, userID uint64) (bool, error) {
+func (r *CommentRepository) DeleteIfOwner(ctx context.Context, commentID, userID string) (bool, error) {
 	result := r.db.WithContext(ctx).
 		Exec(`DELETE FROM comments WHERE id = ? AND user_id = ?`, commentID, userID)
 	return result.RowsAffected > 0, result.Error

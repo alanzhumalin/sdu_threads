@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 	"sduthreads/internal/models"
@@ -20,19 +21,21 @@ func (r *PostRepository) Create(ctx context.Context, post *models.Post) error {
 }
 
 type FeedItem struct {
-	ID        uint64
-	UserID    uint64
+	ID        string
+	UserID    string
 	Username  string
 	FullName  string
 	Content   string
 	MediaURL  string
+	ViewCount int64
+	CommentCount int64
 	CreatedAt string
 	UpdatedAt string
 	LikeCount int64
 	LikedByMe bool
 }
 
-func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *uint64) ([]FeedItem, error) {
+func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *string) ([]FeedItem, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -41,7 +44,7 @@ func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *
 	}
 
 	viewerPresent := false
-	var viewer uint64
+	var viewer string
 	if viewerID != nil {
 		viewerPresent = true
 		viewer = *viewerID
@@ -49,15 +52,19 @@ func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *
 
 	var items []FeedItem
 	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
        p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
 FROM posts p
 JOIN users u ON u.id = p.user_id
 LEFT JOIN (
     SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
 ) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
@@ -70,7 +77,7 @@ LIMIT ? OFFSET ?`
 	return items, nil
 }
 
-func (r *PostRepository) Exists(ctx context.Context, postID uint64) (bool, error) {
+func (r *PostRepository) Exists(ctx context.Context, postID string) (bool, error) {
 	var exists bool
 	err := r.db.WithContext(ctx).
 		Raw(`SELECT EXISTS (SELECT 1 FROM posts WHERE id = ?)`, postID).
@@ -78,7 +85,25 @@ func (r *PostRepository) Exists(ctx context.Context, postID uint64) (bool, error
 	return exists, err
 }
 
-func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offset int, viewerID *uint64) ([]FeedItem, error) {
+func (r *PostRepository) IncrementView(ctx context.Context, postID string) error {
+	return r.db.WithContext(ctx).Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ?`, postID).Error
+}
+
+func (r *PostRepository) AddViewOnce(ctx context.Context, postID, userID string, windowStart time.Time) error {
+	tx := r.db.WithContext(ctx)
+	res := tx.Exec(
+		`INSERT INTO post_view_windows (post_id, user_id, window_start) VALUES (?, ?, ?)
+		 ON CONFLICT DO NOTHING`, postID, userID, windowStart)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil
+	}
+	return tx.Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ?`, postID).Error
+}
+
+func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offset int, viewerID *string) ([]FeedItem, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -87,7 +112,7 @@ func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offs
 	}
 
 	viewerPresent := false
-	var viewer uint64
+	var viewer string
 	if viewerID != nil {
 		viewerPresent = true
 		viewer = *viewerID
@@ -95,9 +120,10 @@ func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offs
 
 	var items []FeedItem
 	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
        p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
 FROM posts p
 JOIN post_hashtags ph ON ph.post_id = p.id
@@ -106,6 +132,9 @@ JOIN users u ON u.id = p.user_id
 LEFT JOIN (
     SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
 ) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id

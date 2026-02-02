@@ -34,10 +34,11 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	commentRepo := repository.NewCommentRepository(client.DB)
 	followRepo := repository.NewFollowRepository(client.DB)
 	tagRepo := repository.NewHashtagRepository(client.DB)
+	viewService := service.NewViewService(postRepo, cfg.ViewTTLMin)
 
 	// services
 	userService := service.NewUserService(userRepo)
-	postService := service.NewPostService(postRepo, likeRepo, tagRepo)
+	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo)
 	authService := service.NewAuthService(userRepo, jwtMgr)
 	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo)
 	followService := service.NewFollowService(followRepo, userRepo)
@@ -49,7 +50,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewHealthHandler().Register(mux)
 	handler.NewAuthHandler(authService).Register(mux)
 	handler.NewUserHandler(userService).Register(mux)
-	handler.NewPostHandler(postService, jwtMgr).Register(mux)
+	handler.NewPostHandler(postService, viewService, jwtMgr).Register(mux)
 	handler.NewCommentHandler(commentService, jwtMgr).Register(mux)
 	handler.NewFollowHandler(followService, profileService, jwtMgr).Register(mux)
 	handler.NewHashtagHandler(hashtagService, jwtMgr).Register(mux)

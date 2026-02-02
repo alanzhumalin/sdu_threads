@@ -10,8 +10,8 @@ type ctxKey string
 
 const userIDKey ctxKey = "user_id"
 
-func UserIDFromContext(ctx context.Context) (uint64, bool) {
-	id, ok := ctx.Value(userIDKey).(uint64)
+func UserIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(userIDKey).(string)
 	return id, ok
 }
 

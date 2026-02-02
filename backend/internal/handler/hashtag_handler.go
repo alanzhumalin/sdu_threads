@@ -49,7 +49,7 @@ func (h *HashtagHandler) postsByTag(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseIntQuery(r, "limit", 20)
 	offset := parseIntQuery(r, "offset", 0)
-	var viewerID *uint64
+	var viewerID *string
 	if id, err := tryGetUserID(r, h.jwt); err == nil {
 		viewerID = &id
 	}

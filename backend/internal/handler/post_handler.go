@@ -13,11 +13,12 @@ import (
 
 type PostHandler struct {
 	service *service.PostService
+	views   *service.ViewService
 	jwt     *auth.JWTManager
 }
 
-func NewPostHandler(s *service.PostService, jwt *auth.JWTManager) *PostHandler {
-	return &PostHandler{service: s, jwt: jwt}
+func NewPostHandler(s *service.PostService, views *service.ViewService, jwt *auth.JWTManager) *PostHandler {
+	return &PostHandler{service: s, views: views, jwt: jwt}
 }
 
 func (h *PostHandler) Register(mux *http.ServeMux) {
@@ -46,7 +47,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		limit := parseIntQuery(r, "limit", 20)
 		offset := parseIntQuery(r, "offset", 0)
-		var viewerID *uint64
+		var viewerID *string
 		if id, err := tryGetUserID(r, h.jwt); err == nil {
 			viewerID = &id
 		}
@@ -68,6 +69,8 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt: it.UpdatedAt,
 				LikeCount: it.LikeCount,
 				LikedByMe: it.LikedByMe,
+				ViewCount: it.ViewCount,
+				CommentCount: it.CommentCount,
 			})
 		}
 		setNextOffset(w, offset, limit, len(resp))
@@ -81,42 +84,56 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 	// Expected path: /api/posts/{id}/like
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/posts/")
 	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
-	if len(parts) != 2 || parts[1] != "like" {
+	if len(parts) != 2 || (parts[1] != "like" && parts[1] != "view") {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
-	postID, err := strconv.ParseUint(parts[0], 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid post id")
-		return
-	}
+	postID := parts[0]
 
-	switch r.Method {
-	case http.MethodPost:
+	switch parts[1] {
+	case "like":
+		switch r.Method {
+		case http.MethodPost:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			if err := h.service.Like(r.Context(), postID, userID); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})
+		case http.MethodDelete:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			if err := h.service.Unlike(r.Context(), postID, userID); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	case "view":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
 		userID, err := requireUserID(r, h.jwt)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		if err := h.service.Like(r.Context(), postID, userID); err != nil {
+		if err := h.views.AddView(r.Context(), postID, userID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})
-	case http.MethodDelete:
-		userID, err := requireUserID(r, h.jwt)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		if err := h.service.Unlike(r.Context(), postID, userID); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "viewed"})
 	}
 }
 

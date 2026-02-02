@@ -1,12 +1,12 @@
 package models
 
 type Hashtag struct {
-	ID   uint64 `gorm:"primaryKey"`
+	ID   string `gorm:"type:uuid;default:uuid_generate_v4();primaryKey"`
 	Name string `gorm:"uniqueIndex;not null"`
 }
 
 type PostHashtag struct {
-	ID        uint64 `gorm:"primaryKey"`
-	PostID    uint64 `gorm:"not null;index"`
-	HashtagID uint64 `gorm:"not null;index"`
+	ID        string `gorm:"type:uuid;default:uuid_generate_v4();primaryKey"`
+	PostID    string `gorm:"type:uuid;not null;index"`
+	HashtagID string `gorm:"type:uuid;not null;index"`
 }

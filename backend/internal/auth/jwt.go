@@ -20,11 +20,11 @@ func NewJWTManager(secret string, ttlHours int) *JWTManager {
 }
 
 type Claims struct {
-	UserID uint64 `json:"user_id"`
+	UserID string `json:"user_id"`
 	jwt.RegisteredClaims
 }
 
-func (m *JWTManager) Generate(userID uint64) (string, error) {
+func (m *JWTManager) Generate(userID string) (string, error) {
 	now := time.Now()
 	claims := &Claims{
 		UserID: userID,

@@ -16,8 +16,8 @@ func NewFollowService(f *repository.FollowRepository, u *repository.UserReposito
 	return &FollowService{follows: f, users: u}
 }
 
-func (s *FollowService) Follow(ctx context.Context, followerID, followeeID uint64) error {
-	if followerID == 0 || followeeID == 0 {
+func (s *FollowService) Follow(ctx context.Context, followerID, followeeID string) error {
+	if followerID == "" || followeeID == "" {
 		return errors.New("user ids required")
 	}
 	if followerID == followeeID {
@@ -30,22 +30,22 @@ func (s *FollowService) Follow(ctx context.Context, followerID, followeeID uint6
 	return s.follows.Follow(ctx, followerID, followeeID)
 }
 
-func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID uint64) error {
-	if followerID == 0 || followeeID == 0 {
+func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID string) error {
+	if followerID == "" || followeeID == "" {
 		return errors.New("user ids required")
 	}
 	return s.follows.Unfollow(ctx, followerID, followeeID)
 }
 
-func (s *FollowService) Followers(ctx context.Context, userID uint64, limit, offset int) ([]repository.FollowUser, error) {
+func (s *FollowService) Followers(ctx context.Context, userID string, limit, offset int) ([]repository.FollowUser, error) {
 	return s.follows.Followers(ctx, userID, limit, offset)
 }
 
-func (s *FollowService) Following(ctx context.Context, userID uint64, limit, offset int) ([]repository.FollowUser, error) {
+func (s *FollowService) Following(ctx context.Context, userID string, limit, offset int) ([]repository.FollowUser, error) {
 	return s.follows.Following(ctx, userID, limit, offset)
 }
 
-func (s *FollowService) Counters(ctx context.Context, userID uint64) (followers, following int64, err error) {
+func (s *FollowService) Counters(ctx context.Context, userID string) (followers, following int64, err error) {
 	followers, err = s.follows.FollowersCount(ctx, userID)
 	if err != nil {
 		return

@@ -16,7 +16,7 @@ func NewProfileService(users *repository.UserRepository, follows *repository.Fol
 }
 
 type Profile struct {
-	ID            uint64
+	ID            string
 	Email         string
 	Username      string
 	FullName      string
@@ -27,7 +27,7 @@ type Profile struct {
 	Following     int64
 }
 
-func (s *ProfileService) Get(ctx context.Context, userID uint64) (*Profile, error) {
+func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, error) {
 	u, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err

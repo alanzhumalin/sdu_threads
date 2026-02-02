@@ -3,8 +3,8 @@ package models
 import "time"
 
 type Follow struct {
-	ID         uint64    `gorm:"primaryKey"`
-	FollowerID uint64    `gorm:"not null;index"`
-	FolloweeID uint64    `gorm:"not null;index"`
+	ID         string    `gorm:"type:uuid;default:uuid_generate_v4();primaryKey"`
+	FollowerID string    `gorm:"type:uuid;not null;index"`
+	FolloweeID string    `gorm:"type:uuid;not null;index"`
 	CreatedAt  time.Time `gorm:"not null;default:now()"`
 }

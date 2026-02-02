@@ -10,7 +10,7 @@ type CreateUserRequest struct {
 }
 
 type UserResponse struct {
-	ID            uint64 `json:"id"`
+	ID            string `json:"id"`
 	Email         string `json:"email"`
 	Username      string `json:"username"`
 	FullName      string `json:"full_name"`

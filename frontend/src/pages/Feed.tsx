@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import PostComposer from "../components/PostComposer";
+import { CommentsModal } from "../components/CommentsModal";
 import {
   Heart,
   HeartOff,
@@ -14,8 +15,8 @@ import {
 } from "lucide-react";
 
 type FeedItem = {
-  id: number;
-  user_id: number;
+  id: string;
+  user_id: string;
   content: string;
   username: string;
   full_name: string;
@@ -24,7 +25,28 @@ type FeedItem = {
   like_count: number;
   liked_by_me: boolean;
   comment_count?: number;
-  view_count?: number;
+  view_count: number;
+};
+
+const highlightHashtags = (text: string) => {
+  const parts = text.split(/(#[\p{L}\p{N}_-]+)/gu);
+  return parts.map((part, idx) => {
+    if (/^#[\p{L}\p{N}_-]+$/u.test(part)) {
+      return (
+        <span key={idx} className="text-sky-400 font-semibold">
+          {part}
+        </span>
+      );
+    }
+    return <span key={idx}>{part}</span>;
+  });
+};
+
+const isHalfVisible = (el: HTMLElement) => {
+  const rect = el.getBoundingClientRect();
+  const viewH = window.innerHeight || document.documentElement.clientHeight;
+  const visibleH = Math.min(rect.bottom, viewH) - Math.max(rect.top, 0);
+  return visibleH >= rect.height * 0.5;
 };
 
 const timeAgo = (iso: string) => {
@@ -51,7 +73,16 @@ export default function FeedPage() {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
+  const seenPosts = useRef<Set<string>>(new Set());
+  const pendingTimers = useRef<Map<string, number>>(new Map());
+  const observer = useRef<IntersectionObserver | null>(null);
+
+  const updatePost = (id: string, patch: Partial<FeedItem>) => {
+    setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+  };
 
   const refresh = async () => {
     setLoading(true);
@@ -71,37 +102,91 @@ export default function FeedPage() {
   }, [token]);
 
   useEffect(() => {
+    if (!token) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const target = entry.target as HTMLElement;
+          const idAttr = target.getAttribute("data-post-id");
+          if (!idAttr) return;
+          const id = Number(idAttr);
+          if (Number.isNaN(id)) return;
+          if (seenPosts.current.has(id)) {
+            obs.unobserve(target);
+            return;
+          }
+          if (!entry.isIntersecting) {
+            const pending = pendingTimers.current.get(id);
+            if (pending) {
+              clearTimeout(pending);
+              pendingTimers.current.delete(id);
+            }
+            return;
+          }
+          if (pendingTimers.current.has(id)) return;
+          const timer = window.setTimeout(() => {
+            pendingTimers.current.delete(id);
+            if (seenPosts.current.has(id)) return;
+            if (!isHalfVisible(target)) return;
+            sendView(id);
+            seenPosts.current.add(id);
+            obs.unobserve(target);
+          }, 1000);
+          pendingTimers.current.set(id, timer);
+        });
+      },
+      { threshold: 0.5 }
+    );
+    observer.current = obs;
+    return () => {
+      obs.disconnect();
+      pendingTimers.current.forEach((t) => clearTimeout(t));
+      pendingTimers.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const sendView = async (postId: string) => {
+    if (!token) return;
+    try {
+      await api.viewPost(postId, token);
+      setFeed((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, view_count: (p.view_count || 0) + 1 } : p))
+      );
+    } catch {
+      // ignore view errors silently
+    }
+  };
+
+  const setPostRef = (id: string) => (el: HTMLElement | null) => {
+    if (!observer.current || !el) return;
+    observer.current.observe(el);
+  };
+
+  useEffect(() => {
     const handler = () => setMenuOpenId(null);
     window.addEventListener("click", handler);
     return () => window.removeEventListener("click", handler);
   }, []);
 
-  const toggleLike = async (id: number, liked: boolean) => {
+  const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
+    const current = feed.find((p) => p.id === id);
+    const nextCount = (current?.like_count ?? 0) + (liked ? -1 : 1);
+    updatePost(id, { liked_by_me: !liked, like_count: nextCount });
     try {
-      if (liked) {
-        await api.unlikePost(id, token);
-      } else {
-        await api.likePost(id, token);
-      }
-      setFeed((prev) =>
-        prev.map((p) =>
-          p.id === id
-            ? {
-                ...p,
-                liked_by_me: !liked,
-                like_count: p.like_count + (liked ? -1 : 1),
-              }
-            : p
-        )
-      );
+      if (liked) await api.unlikePost(id, token);
+      else await api.likePost(id, token);
     } catch (e: any) {
       setError(e.message || "Ошибка лайка");
+      if (current) {
+        updatePost(id, { liked_by_me: liked, like_count: current.like_count });
+      }
     }
   };
 
   return (
-    <main className="max-w-6xl mx-auto px-3 md:px-[9rem] py-6 space-y-4">
+    <main className="max-w-6xl mx-auto px-3 md:px-[13rem] py-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Лента</p>
@@ -118,6 +203,8 @@ export default function FeedPage() {
         {feed.map((item) => (
           <article
             key={item.id}
+            ref={setPostRef(item.id)}
+            data-post-id={item.id}
             className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden"
           >
             <div className="flex items-start justify-between">
@@ -158,7 +245,9 @@ export default function FeedPage() {
               )}
             </div>
 
-            <p className="mt-3 text-white leading-relaxed">{item.content}</p>
+            <p className="mt-3 text-white leading-relaxed break-words">
+              {highlightHashtags(item.content)}
+            </p>
 
             {item.media_url && (
               <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
@@ -187,15 +276,18 @@ export default function FeedPage() {
                   <span className="font-medium">{item.like_count}</span>
                 </button>
 
-                <div className="flex items-center gap-2 text-white/60">
+                <button
+                  className="flex items-center gap-2 text-white/60 hover:text-white"
+                  onClick={() => setCommentsPost(item)}
+                >
                   <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
                   <span>{item.comment_count ?? 0}</span>
-                </div>
+                </button>
               </div>
 
               <div className="flex items-center gap-2 text-white/60">
                 <Eye className="w-5 h-5" strokeWidth={1.7} />
-                <span>{item.view_count ?? "—"}</span>
+                <span>{item.view_count ?? 0}</span>
               </div>
             </div>
           </article>
@@ -210,6 +302,13 @@ export default function FeedPage() {
           </div>
         )}
       </div>
+      {commentsPost && (
+        <CommentsModal
+          post={commentsPost}
+          onUpdatePost={updatePost}
+          onClose={() => setCommentsPost(null)}
+        />
+      )}
     </main>
   );
 }

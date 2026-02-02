@@ -16,8 +16,8 @@ func NewHashtagRepository(db *gorm.DB) *HashtagRepository {
 }
 
 // Upsert returns ids for given hashtag names (lowercase), creating missing ones.
-func (r *HashtagRepository) Upsert(ctx context.Context, names []string) (map[string]uint64, error) {
-	res := make(map[string]uint64)
+func (r *HashtagRepository) Upsert(ctx context.Context, names []string) (map[string]string, error) {
+	res := make(map[string]string)
 	if len(names) == 0 {
 		return res, nil
 	}
@@ -28,7 +28,7 @@ func (r *HashtagRepository) Upsert(ctx context.Context, names []string) (map[str
 		if name == "" {
 			continue
 		}
-		var id uint64
+		var id string
 		err := tx.Raw(`INSERT INTO hashtags (name) VALUES (?) ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name RETURNING id`, name).Scan(&id).Error
 		if err != nil {
 			return nil, err
@@ -38,7 +38,7 @@ func (r *HashtagRepository) Upsert(ctx context.Context, names []string) (map[str
 	return res, nil
 }
 
-func (r *HashtagRepository) AttachToPost(ctx context.Context, postID uint64, hashtagIDs map[string]uint64) error {
+func (r *HashtagRepository) AttachToPost(ctx context.Context, postID string, hashtagIDs map[string]string) error {
 	if len(hashtagIDs) == 0 {
 		return nil
 	}
@@ -52,7 +52,7 @@ func (r *HashtagRepository) AttachToPost(ctx context.Context, postID uint64, has
 }
 
 type Hashtag struct {
-	ID   uint64
+	ID   string
 	Name string
 }
 
@@ -64,5 +64,8 @@ func (r *HashtagRepository) Search(ctx context.Context, q string, limit int) ([]
 	err := r.db.WithContext(ctx).
 		Raw(`SELECT id, name FROM hashtags WHERE name ILIKE ? ORDER BY name ASC LIMIT ?`, "%"+q+"%", limit).
 		Scan(&res).Error
+	if res == nil {
+		res = []Hashtag{}
+	}
 	return res, err
 }
