@@ -93,7 +93,7 @@ export default function SearchPage() {
 
   const showPopular = query.trim() === "";
   return (
-    <main className="max-w-[672px] w-full mx-auto py-6 space-y-4">
+    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Поиск</p>
@@ -168,7 +168,7 @@ export default function SearchPage() {
               </div>
             )}
             {!loading && users.length === 0 && (
-              <div className="card p-4 text-white/60 text-sm">Нет пользователей по запросу.</div>
+              <div className="card p-6 text-white/60 text-sm text-center">Нет пользователей по запросу</div>
             )}
             {!loading &&
               users.map((user) => (
@@ -206,7 +206,7 @@ export default function SearchPage() {
               </div>
             )}
             {!loading && hashtags.length === 0 && (
-              <div className="card p-4 text-white/60 text-sm">Нет хэштегов по запросу.</div>
+              <div className="card p-6 text-white/60 text-sm text-center">Нет хэштегов по запросу</div>
             )}
             {!loading &&
               hashtags.map((tag) => (

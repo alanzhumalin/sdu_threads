@@ -36,14 +36,19 @@ func (r *RateLimiter) getLimiter(ip string) *rate.Limiter {
 	return lim
 }
 
+// Allow checks if a request from given key (ip) is permitted.
+func (r *RateLimiter) Allow(ip string) bool {
+	lim := r.getLimiter(ip)
+	return lim.Allow()
+}
+
 func (r *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ip, _, _ := net.SplitHostPort(req.RemoteAddr)
 		if ip == "" {
 			ip = req.RemoteAddr
 		}
-		lim := r.getLimiter(ip)
-		if !lim.Allow() {
+		if !r.Allow(ip) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte("rate limit exceeded"))
 			return

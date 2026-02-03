@@ -58,7 +58,13 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewNotificationHandler(notificationService, jwtMgr).Register(mux)
 	searchHandler.Register(mux)
 
-	handlerWithMw := middleware.Logging(middleware.NewRateLimiter(cfg.RateLimitRPM).Middleware(middleware.Recover(mux)))
+	// path-aware rate limiting: stricter for auth endpoints
+	pathLimiter := middleware.NewPathRateLimiter(cfg.RateLimitRPM, map[string]int{
+		"/api/auth/register": 10,
+		"/api/auth/login":    60,
+	})
+
+	handlerWithMw := middleware.Logging(pathLimiter.Middleware(middleware.Recover(mux)))
 
 	return &Server{
 		cfg: cfg,

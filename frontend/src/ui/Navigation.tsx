@@ -38,18 +38,23 @@ export default function Navigation({ items, onClick, activePath }: Props) {
 
   useEffect(() => {
     const updatePosition = () => {
-      const feed = document.querySelector<HTMLElement>("[data-feed-root]");
+      const target =
+        document.querySelector<HTMLElement>("[data-feed-root]") ||
+        document.querySelector<HTMLElement>("[data-page-root]");
       const navEl = navRef.current;
-      if (!feed || !navEl) return;
-      const feedRect = feed.getBoundingClientRect();
+      if (!target || !navEl) return;
+      const feedRect = target.getBoundingClientRect();
       const navWidth = navEl.offsetWidth;
       const nextLeft = feedRect.left - navWidth - 20; // 20px gap слева от ленты
       setLeft(Math.max(16, nextLeft)); // не прижимаем к самому краю
     };
-    updatePosition();
+    const raf = requestAnimationFrame(updatePosition);
     window.addEventListener("resize", updatePosition);
-    return () => window.removeEventListener("resize", updatePosition);
-  }, []);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [activePath]);
 
   return (
     <>
