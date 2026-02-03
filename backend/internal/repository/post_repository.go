@@ -21,18 +21,18 @@ func (r *PostRepository) Create(ctx context.Context, post *models.Post) error {
 }
 
 type FeedItem struct {
-	ID        string
-	UserID    string
-	Username  string
-	FullName  string
-	Content   string
-	MediaURL  string
-	ViewCount int64
+	ID           string
+	UserID       string
+	Username     string
+	FullName     string
+	Content      string
+	MediaURL     string
+	ViewCount    int64
 	CommentCount int64
-	CreatedAt string
-	UpdatedAt string
-	LikeCount int64
-	LikedByMe bool
+	CreatedAt    string
+	UpdatedAt    string
+	LikeCount    int64
+	LikedByMe    bool
 }
 
 func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *string) ([]FeedItem, error) {

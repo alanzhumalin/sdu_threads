@@ -1,6 +1,6 @@
 import { useAuthStore } from "../store/auth";
 
-type HttpMethod = "GET" | "POST" | "DELETE";
+type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH";
 
 const API_BASE = "/api";
 
@@ -75,6 +75,30 @@ async function requestWithHeaders<T>(
   return { data, headers: res.headers };
 }
 
+const feedPageFn = (
+  limit = 20,
+  offset = 0,
+  token?: string | null
+) =>
+  requestWithHeaders<
+    {
+      id: string;
+      user_id: string;
+      content: string;
+      username: string;
+      full_name: string;
+      created_at: string;
+      media_url?: string;
+      like_count: number;
+      liked_by_me: boolean;
+      view_count: number;
+      comment_count?: number;
+    }[]
+  >(`/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+    items: data,
+    nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+  }));
+
 export const api = {
   login: (email: string, password: string) =>
     request<{ token: string }>("/auth/login", "POST", { email, password }),
@@ -97,26 +121,24 @@ export const api = {
       following: number;
       created_at: string;
     }>("/users/me", "GET", undefined, token),
-  feedPage: (limit = 20, offset = 0, token?: string | null) =>
-    requestWithHeaders<
-      {
-        id: string;
-        user_id: string;
-        content: string;
-        username: string;
-        full_name: string;
-        created_at: string;
-        media_url?: string;
-        like_count: number;
-        liked_by_me: boolean;
-        view_count: number;
-        comment_count?: number;
-      }[]
-    >(`/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
-      items: data,
-      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
-    })),
-  feed: (token?: string | null) => api.feedPage(20, 0, token).then((r) => r.items),
+  updateProfile: (
+    payload: { full_name?: string; major?: string; avatar_url?: string; background_url?: string },
+    token: string
+  ) =>
+    request<{
+      id: string;
+      email: string;
+      username: string;
+      full_name: string;
+      major: string;
+      avatar_url?: string;
+      background_url?: string;
+      followers: number;
+      following: number;
+      created_at: string;
+    }>("/users/me", "PATCH", payload, token),
+  feedPage: feedPageFn,
+  feed: (token?: string | null) => feedPageFn(20, 0, token).then((r) => r.items),
   createPost: (payload: { content: string; media_url?: string; hashtags?: string[] }, token: string) =>
     request<{ status: string }>("/posts", "POST", payload, token),
   searchHashtags: (q: string, limit = 8) =>

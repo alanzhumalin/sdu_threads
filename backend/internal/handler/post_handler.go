@@ -59,17 +59,17 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 		resp := make([]dto.FeedResponseItem, 0, len(items))
 		for _, it := range items {
 			resp = append(resp, dto.FeedResponseItem{
-				ID:        it.ID,
-				UserID:    it.UserID,
-				Username:  it.Username,
-				FullName:  it.FullName,
-				Content:   it.Content,
-				MediaURL:  it.MediaURL,
-				CreatedAt: it.CreatedAt,
-				UpdatedAt: it.UpdatedAt,
-				LikeCount: it.LikeCount,
-				LikedByMe: it.LikedByMe,
-				ViewCount: it.ViewCount,
+				ID:           it.ID,
+				UserID:       it.UserID,
+				Username:     it.Username,
+				FullName:     it.FullName,
+				Content:      it.Content,
+				MediaURL:     it.MediaURL,
+				CreatedAt:    it.CreatedAt,
+				UpdatedAt:    it.UpdatedAt,
+				LikeCount:    it.LikeCount,
+				LikedByMe:    it.LikedByMe,
+				ViewCount:    it.ViewCount,
 				CommentCount: it.CommentCount,
 			})
 		}

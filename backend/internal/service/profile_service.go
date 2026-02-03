@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"sduthreads/internal/dto"
 	"sduthreads/internal/repository"
 )
 
@@ -54,4 +56,26 @@ func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, erro
 		Following:     following,
 		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
 	}, nil
+}
+
+func (s *ProfileService) Update(ctx context.Context, userID string, req dto.UpdateProfileRequest) (*Profile, error) {
+	fields := map[string]interface{}{}
+	if req.FullName != nil {
+		fields["full_name"] = strings.TrimSpace(*req.FullName)
+	}
+	if req.Major != nil {
+		fields["major"] = strings.TrimSpace(*req.Major)
+	}
+	if req.AvatarURL != nil {
+		fields["avatar_url"] = strings.TrimSpace(*req.AvatarURL)
+	}
+	if req.BackgroundURL != nil {
+		fields["background_url"] = strings.TrimSpace(*req.BackgroundURL)
+	}
+
+	if err := s.users.UpdateProfile(ctx, userID, fields); err != nil {
+		return nil, err
+	}
+
+	return s.Get(ctx, userID)
 }

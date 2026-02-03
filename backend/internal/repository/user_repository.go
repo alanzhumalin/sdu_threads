@@ -58,3 +58,13 @@ func (r *UserRepository) Search(ctx context.Context, q string, limit, offset int
 		Find(&users).Error
 	return users, err
 }
+
+func (r *UserRepository) UpdateProfile(ctx context.Context, id string, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(fields).Error
+}

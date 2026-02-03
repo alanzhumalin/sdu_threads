@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/dto"
 	"sduthreads/internal/service"
 )
 
@@ -108,10 +110,6 @@ func (h *FollowHandler) handleFollowing(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, idStr string) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	var userID string
 	if idStr == "me" {
 		id, err := requireUserID(r, h.jwt)
@@ -124,11 +122,36 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 		userID = idStr
 	}
 
-	p, err := h.profile.Get(r.Context(), userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
+	switch r.Method {
+	case http.MethodGet:
+		p, err := h.profile.Get(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	case http.MethodPatch:
+		currentID, err := requireUserID(r, h.jwt)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		if userID != "me" && userID != currentID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		var req dto.UpdateProfileRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		p, err := h.profile.Update(r.Context(), currentID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
-
-	writeJSON(w, http.StatusOK, p)
 }
