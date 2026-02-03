@@ -11,7 +11,7 @@ type NotificationItem = {
   actor_id: string;
   actor_username: string;
   actor_full_name?: string;
-  post_id: string;
+  post_id?: string;
   comment_id?: string;
   post_content?: string;
   post_media_url?: string;
@@ -71,19 +71,27 @@ export default function NotificationsPage() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
+  // сбрасываем счетчик при инициализации страницы, пока не загрузили данные
+  useEffect(() => {
+    setUnreadCount(0);
+  }, [setUnreadCount]);
+
+  const normalize = (n: NotificationItem): NotificationItem => ({
+    ...n,
+    read: n.read === true,
+  });
 
   const mergeNotifications = (existing: NotificationItem[], incoming: NotificationItem[]) => {
     const seen = new Set(existing.map((i) => i.id));
-    const merged = [...existing];
+    const merged = existing.map(normalize);
     incoming.forEach((item) => {
-      if (!seen.has(item.id)) {
-        merged.push(item);
-        seen.add(item.id);
-      }
-      // update read flag if exists
-      const idx = merged.findIndex((m) => m.id === item.id);
-      if (idx >= 0) {
-        merged[idx] = { ...merged[idx], ...item };
+      const norm = normalize(item);
+      if (!seen.has(norm.id)) {
+        merged.push(norm);
+        seen.add(norm.id);
+      } else {
+        const idx = merged.findIndex((m) => m.id === norm.id);
+        if (idx >= 0) merged[idx] = { ...merged[idx], ...norm };
       }
     });
     merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -117,8 +125,8 @@ export default function NotificationsPage() {
           },
         };
         const totalUnread =
-          nextState.all.items.filter((i) => !i.read).length +
-          nextState.mentions.items.filter((i) => !i.read).length;
+          nextState.all.items.filter((i) => i.read === false).length +
+          nextState.mentions.items.filter((i) => i.read === false).length;
         setUnreadCount(totalUnread);
         return nextState;
       });
@@ -255,8 +263,8 @@ export default function NotificationsPage() {
         {(["all", "mentions"] as const).map((t) => {
           const unreadTab =
             t === "all"
-              ? data.all.items.filter((i) => !i.read).length
-              : data.mentions.items.filter((i) => !i.read).length;
+              ? data.all.items.filter((i) => i.read === false).length
+              : data.mentions.items.filter((i) => i.read === false).length;
           return (
           <button
             key={t}
@@ -312,11 +320,14 @@ export default function NotificationsPage() {
               n.read ? "opacity-80" : "border-white/30"
             }`}
           >
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3 relative w-full">
+              {!n.read && (
+                <span className="absolute -left-1 top-1 w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_0_4px_rgba(79,168,255,0.12)]" />
+              )}
               <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
                 {n.actor_full_name?.[0]?.toUpperCase() || n.actor_username?.[0]?.toUpperCase() || "U"}
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1 flex-1">
                 <p className="text-white font-semibold">{renderMessage(n)}</p>
                 <p className="text-white/50 text-sm">{timeAgo(n.created_at)}</p>
                 {n.comment_body && (
