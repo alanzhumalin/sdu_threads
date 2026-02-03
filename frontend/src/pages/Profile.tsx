@@ -224,7 +224,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-3 md:px-[13rem] py-6 space-y-6">
+    <div className="max-w-[672px] w-full mx-auto py-6 space-y-6">
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <div className="rounded-2xl border border-white/10 overflow-hidden bg-black shadow-xl">
         <div className="relative h-40 md:h-52 overflow-hidden">

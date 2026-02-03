@@ -251,7 +251,7 @@ export default function NotificationsPage() {
   const current = data[tab];
 
   return (
-    <main className="max-w-6xl mx-auto px-3 md:px-[13rem] py-6 space-y-4">
+    <main className="max-w-[672px] w-full mx-auto py-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Уведомления</p>

@@ -240,7 +240,7 @@ export default function FeedPage() {
   return (
     <main
       data-feed-root
-      className="max-w-[672px] w-full mx-auto px-3 py-6 space-y-4"
+      className="max-w-[672px] w-full mx-auto py-6 space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
