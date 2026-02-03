@@ -238,7 +238,10 @@ export default function FeedPage() {
   };
 
   return (
-    <main className="max-w-6xl mx-auto px-3 md:px-[13rem] py-6 space-y-4">
+    <main
+      data-feed-root
+      className="max-w-[672px] w-full mx-auto px-3 py-6 space-y-4"
+    >
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Лента</p>

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"sduthreads/internal/dto"
 	"sduthreads/internal/repository"
 )
 
@@ -33,5 +34,17 @@ func (h *SearchHandler) searchUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setNextOffset(w, offset, limit, len(users))
-	writeJSON(w, http.StatusOK, users)
+	resp := make([]dto.UserResponse, 0, len(users))
+	for _, u := range users {
+		resp = append(resp, dto.UserResponse{
+			ID:            u.ID,
+			Email:         u.Email,
+			Username:      u.Username,
+			FullName:      u.FullName,
+			Major:         u.Major,
+			AvatarURL:     u.AvatarURL,
+			BackgroundURL: u.BackgroundURL,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

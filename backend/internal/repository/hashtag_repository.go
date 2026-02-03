@@ -52,8 +52,14 @@ func (r *HashtagRepository) AttachToPost(ctx context.Context, postID string, has
 }
 
 type Hashtag struct {
-	ID   string
-	Name string
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type PopularHashtag struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	PostCount int64  `json:"post_count"`
 }
 
 func (r *HashtagRepository) Search(ctx context.Context, q string, limit int) ([]Hashtag, error) {
@@ -66,6 +72,31 @@ func (r *HashtagRepository) Search(ctx context.Context, q string, limit int) ([]
 		Scan(&res).Error
 	if res == nil {
 		res = []Hashtag{}
+	}
+	return res, err
+}
+
+func (r *HashtagRepository) Popular(ctx context.Context, limit int) ([]PopularHashtag, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	var res []PopularHashtag
+	err := r.db.WithContext(ctx).
+		Raw(
+			`SELECT h.id, h.name, COUNT(ph.post_id) AS post_count
+			 FROM hashtags h
+			 JOIN post_hashtags ph ON ph.hashtag_id = h.id
+			 GROUP BY h.id, h.name
+			 ORDER BY post_count DESC, h.name ASC
+			 LIMIT ?`,
+			limit,
+		).
+		Scan(&res).Error
+	if res == nil {
+		res = []PopularHashtag{}
 	}
 	return res, err
 }

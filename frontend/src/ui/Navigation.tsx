@@ -8,6 +8,7 @@ import {
   User,
   UserPlus,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 type NavItem = { label: string; path: string; icon: string };
 
@@ -30,10 +31,32 @@ const icons: Record<string, JSX.Element> = {
 };
 
 export default function Navigation({ items, onClick, activePath }: Props) {
+  const navRef = useRef<HTMLDivElement | null>(null);
+  const [left, setLeft] = useState<number>(24);
+
+  useEffect(() => {
+    const updatePosition = () => {
+      const feed = document.querySelector<HTMLElement>("[data-feed-root]");
+      const navEl = navRef.current;
+      if (!feed || !navEl) return;
+      const feedRect = feed.getBoundingClientRect();
+      const navWidth = navEl.offsetWidth;
+      const nextLeft = feedRect.left - navWidth - 20; // 20px gap слева от ленты
+      setLeft(Math.max(16, nextLeft)); // не прижимаем к самому краю
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, []);
+
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden md:flex flex-col w-20 p-5 space-y-4">
+      <nav
+        ref={navRef}
+        style={{ left }}
+        className="hidden md:flex fixed top-32 z-30 flex-col items-center space-y-2.5 p-2 rounded-2xl border border-white/10 bg-black/80 backdrop-blur"
+      >
         {items.map((item) => (
           <button
             key={item.path}

@@ -153,6 +153,49 @@ export const api = {
           }))
         : []
     ),
+  popularHashtags: (limit = 10) =>
+    request<any[]>(`/hashtags/popular?limit=${limit}`, "GET").then((res) =>
+      Array.isArray(res)
+        ? res.map((h) => ({
+            id: h.id ?? h.ID ?? h.Id,
+            name: h.name ?? h.Name,
+            post_count: h.post_count ?? h.PostCount ?? h.postCount ?? 0,
+          }))
+        : []
+    ),
+  notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        type: string;
+        actor_id: string;
+        actor_username: string;
+        actor_full_name?: string;
+        post_id?: string;
+        comment_id?: string;
+        created_at: string;
+        message?: string;
+      }[]
+    >(
+      `/notifications?filter=${filter}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  searchUsers: (q: string, limit = 20, offset = 0, token?: string | null) =>
+    request<
+      {
+        id: string;
+        email: string;
+        username: string;
+        full_name?: string;
+        major?: string;
+        avatar_url?: string;
+      }[]
+    >(`/users/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`, "GET", undefined, token),
   likePost: (postId: string, token: string) =>
     request<{ status: string }>(`/posts/${postId}/like`, "POST", undefined, token),
   unlikePost: (postId: string, token: string) =>

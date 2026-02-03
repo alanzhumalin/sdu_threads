@@ -4,6 +4,8 @@ import LoginPage from "./Login";
 import RegisterPage from "./Register";
 import Placeholder from "./Placeholder";
 import ProfilePage from "./Profile";
+import SearchPage from "./Search";
+import NotificationsPage from "./Notifications";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 
@@ -44,54 +46,56 @@ export default function App() {
   const isAuthPage = location.pathname === "/login" || location.pathname === "/register";
 
   return (
-    <div className="min-h-screen bg-black text-white flex">
+    <div className="min-h-screen bg-black text-white relative">
       {!isAuthPage && (
         <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
       )}
-      <div className="flex-1 pb-20 md:pb-0">
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <Protected>
-                <FeedPage />
-              </Protected>
-            }
-          />
-          <Route
-            path="/search"
-            element={
-              <Protected>
-                <Placeholder title="Поиск" />
-              </Protected>
-            }
-          />
+      <div className="mx-auto max-w-6xl px-3 md:px-8 md:h-screen md:overflow-hidden">
+        <div className="pb-20 md:pb-6 md:overflow-y-auto md:h-screen">
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <Protected>
+                  <FeedPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/search"
+              element={
+                <Protected>
+                  <SearchPage />
+                </Protected>
+              }
+            />
           <Route
             path="/notifications"
             element={
               <Protected>
-                <Placeholder title="Уведомления" />
+                <NotificationsPage />
               </Protected>
             }
           />
-          <Route
-            path="/profile"
-            element={
-              <Protected>
-                <ProfilePage />
-              </Protected>
-            }
-          />
-          <Route
-            path="/login"
-            element={token ? <Navigate to="/" replace /> : <LoginPage />}
-          />
-          <Route
-            path="/register"
-            element={token ? <Navigate to="/" replace /> : <RegisterPage />}
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            <Route
+              path="/profile"
+              element={
+                <Protected>
+                  <ProfilePage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/login"
+              element={token ? <Navigate to="/" replace /> : <LoginPage />}
+            />
+            <Route
+              path="/register"
+              element={token ? <Navigate to="/" replace /> : <RegisterPage />}
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ func NewHashtagHandler(tags *service.HashtagService, jwt *auth.JWTManager) *Hash
 
 func (h *HashtagHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/hashtags/search", h.search)
+	mux.HandleFunc("/api/hashtags/popular", h.popular)
 	mux.HandleFunc("/api/hashtags/", h.postsByTag)
 }
 
@@ -31,6 +32,20 @@ func (h *HashtagHandler) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	limit := parseIntQuery(r, "limit", 20)
 	tags, err := h.tags.Search(r.Context(), q, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, tags)
+}
+
+func (h *HashtagHandler) popular(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseIntQuery(r, "limit", 10)
+	tags, err := h.tags.Popular(r.Context(), limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

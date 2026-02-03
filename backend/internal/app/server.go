@@ -44,6 +44,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	followService := service.NewFollowService(followRepo, userRepo)
 	profileService := service.NewProfileService(userRepo, followRepo)
 	hashtagService := service.NewHashtagService(tagRepo, postRepo)
+	notificationService := service.NewNotificationService(client.DB, userRepo)
 	searchHandler := handler.NewSearchHandler(userRepo)
 
 	// handlers
@@ -54,6 +55,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewCommentHandler(commentService, jwtMgr).Register(mux)
 	handler.NewFollowHandler(followService, profileService, jwtMgr).Register(mux)
 	handler.NewHashtagHandler(hashtagService, jwtMgr).Register(mux)
+	handler.NewNotificationHandler(notificationService, jwtMgr).Register(mux)
 	searchHandler.Register(mux)
 
 	handlerWithMw := middleware.Logging(middleware.NewRateLimiter(cfg.RateLimitRPM).Middleware(middleware.Recover(mux)))

@@ -31,3 +31,7 @@ func (s *HashtagService) Posts(ctx context.Context, name string, limit, offset i
 	}
 	return s.posts.ByHashtag(ctx, name, limit, offset, viewerID)
 }
+
+func (s *HashtagService) Popular(ctx context.Context, limit int) ([]repository.PopularHashtag, error) {
+	return s.tags.Popular(ctx, limit)
+}
