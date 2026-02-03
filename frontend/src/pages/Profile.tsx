@@ -385,7 +385,7 @@ export default function ProfilePage() {
         createPortal(
           <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-md">
             <div className="min-h-screen w-full flex items-center justify-center px-4 py-8">
-              <div className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-lg p-7 shadow-2xl relative space-y-5">
+              <div className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-lg p-7 shadow-2xl relative flex flex-col gap-5">
                 <button
                   className="absolute top-3 right-3 text-white/60 hover:text-white"
                   onClick={() => setEditOpen(false)}
@@ -425,7 +425,7 @@ export default function ProfilePage() {
                         />
                       </div>
 
-                      <div className="absolute bottom-0 -translate-y-[10px] z-10">
+                      <div className="absolute left-0 bottom-0 translate-y-1/2 z-10">
                         <div className="relative w-[88px] h-[88px]">
                           <div className="absolute inset-0 rounded-full border-4 border-[#0b0b0f]" />
                           <div className="w-full h-full rounded-full bg-black border border-white/25 flex items-center justify-center text-2xl font-semibold text-white overflow-hidden relative z-10 shadow-lg shadow-black/40">
@@ -456,12 +456,11 @@ export default function ProfilePage() {
                           />
                         </div>
                       </div>
-                      <div className="h-12" />
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-4 mt-8">
                   <div className="mt-0">
                     <label className="block text-sm text-white/60 mb-1.5">Полное имя</label>
                     <input
