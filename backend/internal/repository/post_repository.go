@@ -77,6 +77,47 @@ LIMIT ? OFFSET ?`
 	return items, nil
 }
 
+func (r *PostRepository) Get(ctx context.Context, postID string, viewerID *string) (*FeedItem, error) {
+	limit := 1
+	offset := 0
+
+	viewerPresent := false
+	var viewer string
+	if viewerID != nil {
+		viewerPresent = true
+		viewer = *viewerID
+	}
+
+	var items []FeedItem
+	q := `
+SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
+       p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+WHERE p.id = ?
+LIMIT ? OFFSET ?`
+
+	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, viewer, postID, limit, offset).Scan(&items).Error; err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &items[0], nil
+}
+
 func (r *PostRepository) Exists(ctx context.Context, postID string) (bool, error) {
 	var exists bool
 	err := r.db.WithContext(ctx).

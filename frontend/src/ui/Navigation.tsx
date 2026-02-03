@@ -9,6 +9,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useNotificationStore } from "../store/notifications";
 
 type NavItem = { label: string; path: string; icon: string };
 
@@ -33,6 +34,7 @@ const icons: Record<string, JSX.Element> = {
 export default function Navigation({ items, onClick, activePath }: Props) {
   const navRef = useRef<HTMLDivElement | null>(null);
   const [left, setLeft] = useState<number>(24);
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
 
   useEffect(() => {
     const updatePosition = () => {
@@ -79,7 +81,12 @@ export default function Navigation({ items, onClick, activePath }: Props) {
                     : "text-white/60"
               }
             >
-              {icons[item.icon] || null}
+              <span className="relative grid place-items-center w-6 h-6">
+                {icons[item.icon] || null}
+                {item.icon === "bell" && unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+                )}
+              </span>
             </span>
           </button>
         ))}
@@ -99,7 +106,12 @@ export default function Navigation({ items, onClick, activePath }: Props) {
                   : "text-white/60"
             }`}
           >
-            <span className="mb-1">{icons[item.icon] || null}</span>
+            <span className="mb-1 relative grid place-items-center w-6 h-6">
+              {icons[item.icon] || null}
+              {item.icon === "bell" && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+              )}
+            </span>
           </button>
         ))}
       </nav>

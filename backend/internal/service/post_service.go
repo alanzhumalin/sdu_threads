@@ -55,6 +55,13 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 	return s.posts.Feed(ctx, limit, offset, viewerID)
 }
 
+func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) (*repository.FeedItem, error) {
+	if postID == "" {
+		return nil, errors.New("post_id is required")
+	}
+	return s.posts.Get(ctx, postID, viewerID)
+}
+
 func (s *PostService) Like(ctx context.Context, postID, userID string) error {
 	if userID == "" || postID == "" {
 		return errors.New("post_id and user_id are required")

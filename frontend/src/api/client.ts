@@ -173,8 +173,12 @@ export const api = {
         actor_full_name?: string;
         post_id?: string;
         comment_id?: string;
+        post_content?: string;
+        post_media_url?: string;
+        comment_body?: string;
         created_at: string;
         message?: string;
+        read?: boolean;
       }[]
     >(
       `/notifications?filter=${filter}&limit=${limit}&offset=${offset}`,
@@ -185,6 +189,25 @@ export const api = {
       items: data,
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
+  markNotificationRead: (id: string, token?: string | null) =>
+    request<{ status: string }>(`/notifications/${id}/read`, "POST", undefined, token),
+  markAllNotificationsRead: (token?: string | null) =>
+    request<{ status: string; updated?: number }>(`/notifications-read-all`, "POST", undefined, token),
+  postById: (postId: string, token?: string | null) =>
+    request<{
+      id: string;
+      user_id: string;
+      username: string;
+      full_name: string;
+      content: string;
+      media_url?: string;
+      created_at: string;
+      updated_at: string;
+      like_count: number;
+      liked_by_me: boolean;
+      view_count: number;
+      comment_count?: number;
+    }>(`/posts/${postId}`, "GET", undefined, token),
   searchUsers: (q: string, limit = 20, offset = 0, token?: string | null) =>
     request<
       {

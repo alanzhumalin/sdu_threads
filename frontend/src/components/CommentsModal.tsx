@@ -22,7 +22,7 @@ type Comment = {
   reply_to_username?: string;
 };
 
-type PostMeta = {
+export type PostMeta = {
   id: string;
   user_id: string;
   username: string;
@@ -40,6 +40,7 @@ type Props = {
   post: PostMeta;
   onClose: () => void;
   onUpdatePost?: (id: string, patch: Partial<PostMeta>) => void;
+  focusCommentId?: string;
 };
 
 const PAGE = 20;
@@ -63,7 +64,7 @@ const timeAgo = (iso: string) => {
   return date.toLocaleString();
 };
 
-export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
+export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: Props) {
   const token = useAuthStore((s) => s.token);
   const [postMeta, setPostMeta] = useState(post);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -79,6 +80,7 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
   >({});
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const commentRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const load = async (append = false) => {
     if (loading) return;
@@ -121,6 +123,14 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
     setReplyTo(null);
     setBody("");
   }, [post]);
+
+  useEffect(() => {
+    if (!focusCommentId) return;
+    const target = commentRefs.current[focusCommentId];
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [comments, focusCommentId]);
 
   const loadReplies = async (commentId: string, reset = false) => {
     setReplies((prev) => ({
@@ -305,7 +315,13 @@ export function CommentsModal({ post, onClose, onUpdatePost }: Props) {
         : null;
 
     return (
-      <div key={c.id} className={`border border-white/10 rounded-xl p-3 flex gap-3 ${depth > 0 ? "bg-white/5" : ""}`}>
+      <div
+        key={c.id}
+        ref={(el) => {
+          commentRefs.current[c.id] = el;
+        }}
+        className={`border border-white/10 rounded-xl p-3 flex gap-3 ${depth > 0 ? "bg-white/5" : ""}`}
+      >
         <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white">
           {(c.full_name || c.username || "?")[0]?.toUpperCase() || "?"}
         </div>

@@ -81,15 +81,48 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) {
-	// Expected path: /api/posts/{id}/like
+	// Paths: /api/posts/{id}, /api/posts/{id}/like, /api/posts/{id}/view
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/posts/")
 	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+
+	postID := parts[0]
+
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var viewerID *string
+		if id, err := tryGetUserID(r, h.jwt); err == nil {
+			viewerID = &id
+		}
+		post, err := h.service.Get(r.Context(), postID, viewerID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		resp := dto.FeedResponseItem{
+			ID:           post.ID,
+			UserID:       post.UserID,
+			Username:     post.Username,
+			FullName:     post.FullName,
+			Content:      post.Content,
+			MediaURL:     post.MediaURL,
+			CreatedAt:    post.CreatedAt,
+			UpdatedAt:    post.UpdatedAt,
+			LikeCount:    post.LikeCount,
+			LikedByMe:    post.LikedByMe,
+			ViewCount:    post.ViewCount,
+			CommentCount: post.CommentCount,
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	if len(parts) != 2 || (parts[1] != "like" && parts[1] != "view") {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-
-	postID := parts[0]
 
 	switch parts[1] {
 	case "like":
