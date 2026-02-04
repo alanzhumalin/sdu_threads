@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Hash, Loader2, Search, User as UserIcon } from "lucide-react";
+import { Hash, Loader2, Search, User as UserIcon, Heart, MessageCircle, Eye } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useFeedStore } from "../store/feed";
+import { highlightHashtags } from "../utils/text";
+import { CommentsModal } from "../components/CommentsModal";
 
 type UserResult = {
   id: string;
@@ -18,8 +21,47 @@ type TagResult = {
   post_count?: number;
 };
 
+type FeedItem = {
+  id: string;
+  user_id: string;
+  username: string;
+  full_name: string;
+  content: string;
+  media_url?: string;
+  created_at: string;
+  updated_at?: string;
+  like_count: number;
+  liked_by_me: boolean;
+  view_count: number;
+  comment_count?: number;
+  mentions?: string[];
+  hashtags?: string[];
+  is_subscribed?: boolean;
+  is_me?: boolean;
+};
+
+const timeAgo = (iso: string) => {
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  const min = Math.floor(sec / 60);
+  const hour = Math.floor(min / 60);
+  const day = Math.floor(hour / 24);
+  if (sec < 45) return "только что";
+  if (min < 2) return "минуту назад";
+  if (min < 5) return `${min} минуты назад`;
+  if (min < 60) return `${min} мин назад`;
+  if (hour < 2) return "час назад";
+  if (hour < 5) return `${hour} часа назад`;
+  if (hour < 24) return `${hour} ч назад`;
+  if (day === 1) return "вчера";
+  if (day < 7) return `${day} дн назад`;
+  return date.toLocaleString();
+};
+
 export default function SearchPage() {
   const token = useAuthStore((s) => s.token);
+  const feedStore = useFeedStore();
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState<UserResult[]>([]);
   const [hashtags, setHashtags] = useState<TagResult[]>([]);
@@ -31,6 +73,14 @@ export default function SearchPage() {
   const [popularError, setPopularError] = useState("");
 
   const activeQueryRef = useRef("");
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [tagPosts, setTagPosts] = useState<FeedItem[]>([]);
+  const [tagNextOffset, setTagNextOffset] = useState<number | null>(null);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagError, setTagError] = useState("");
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
 
   useEffect(() => {
     const loadPopular = async () => {
@@ -83,6 +133,13 @@ export default function SearchPage() {
       setLoading(false);
       return;
     }
+    // если пользователь начал печатать — выходим из режима тега
+    if (selectedTag !== null) {
+      setSelectedTag(null);
+      setTagPosts([]);
+      setTagNextOffset(null);
+      setTagError("");
+    }
     setLoading(true);
     setError("");
     const timer = window.setTimeout(() => {
@@ -92,9 +149,116 @@ export default function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, token]);
 
+  const mergePosts = (current: FeedItem[], incoming: FeedItem[]) => {
+    const seen = new Set(current.map((p) => p.id));
+    const res = [...current];
+    incoming.forEach((p) => {
+      if (!seen.has(p.id)) {
+        res.push(p);
+        seen.add(p.id);
+      }
+    });
+    return res;
+  };
+
+  const selectTag = (name: string) => {
+    activeQueryRef.current = "";
+    setQuery("");
+    setUsers([]);
+    setHashtags([]);
+    setError("");
+    setLoading(false);
+    setSelectedTag(name);
+    setTagPosts([]);
+    setTagNextOffset(null);
+    setTagError("");
+    loadTag(name, 0, false);
+  };
+
+  const loadTag = async (name: string, offset = 0, append = false) => {
+    setTagLoading(true);
+    try {
+      const { items, nextOffset } = await api.postsByHashtag(name, 20, offset, token);
+      setTagPosts((prev) => (append ? mergePosts(prev, items) : items));
+      setTagNextOffset(nextOffset);
+      setTagError("");
+    } catch (e: any) {
+      setTagError(e.message || "Не удалось загрузить посты");
+      if (!append) {
+        setTagPosts([]);
+        setTagNextOffset(null);
+      }
+    } finally {
+      setTagLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedTag) return;
+    loadTag(selectedTag, 0, false);
+  }, [selectedTag, token]);
+
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect();
+    if (!selectedTag || tagNextOffset === null) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && !tagLoading && tagNextOffset !== null) {
+          loadTag(selectedTag, tagNextOffset, true);
+        }
+      },
+      { rootMargin: "200px 0px" }
+    );
+    observerRef.current.observe(sentinel);
+    return () => observerRef.current?.disconnect();
+  }, [selectedTag, tagNextOffset, tagLoading]);
+
+  const toggleLike = async (id: string, liked: boolean) => {
+    if (!token) return;
+    setTagPosts((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, liked_by_me: !liked, like_count: p.like_count + (liked ? -1 : 1) } : p))
+    );
+    feedStore.updateItem(id, {
+      liked_by_me: !liked,
+      like_count:
+        (feedStore.items.find((p) => p.id === id)?.like_count ?? 0) + (liked ? -1 : 1),
+    });
+    try {
+      if (liked) await api.unlikePost(id, token);
+      else await api.likePost(id, token);
+    } catch {
+      setTagPosts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, liked_by_me: liked, like_count: p.like_count + (liked ? 1 : -1) } : p))
+      );
+      const original = feedStore.items.find((p) => p.id === id);
+      if (original) feedStore.updateItem(id, { liked_by_me: liked, like_count: original.like_count });
+    }
+  };
+
+  const toggleFollow = async (post: FeedItem) => {
+    if (!token || post.is_me) return;
+    const next = !post.is_subscribed;
+    setTagPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, is_subscribed: next } : p)));
+    feedStore.updateByUser(post.user_id, { is_subscribed: next });
+    try {
+      if (next) {
+        await api.followUser(post.user_id, token);
+      } else {
+        await api.unfollowUser(post.user_id, token);
+      }
+    } catch {
+      setTagPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, is_subscribed: post.is_subscribed } : p)));
+      feedStore.updateByUser(post.user_id, { is_subscribed: post.is_subscribed });
+    }
+  };
+
+  const showResults = selectedTag !== null;
   const showPopular = query.trim() === "";
   return (
-    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4">
+    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Поиск</p>
@@ -112,7 +276,7 @@ export default function SearchPage() {
         />
       </div>
 
-      {showPopular && (
+      {showPopular && !showResults && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Популярные хэштеги</h2>
@@ -130,7 +294,8 @@ export default function SearchPage() {
             {popular.map((tag) => (
               <div
                 key={tag.id}
-                className="card p-3 flex items-center justify-between hover:border-white/25 transition"
+                className="card p-3 flex items-center justify-between hover:border-white/25 transition cursor-pointer"
+                onClick={() => selectTag(tag.name)}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
@@ -149,7 +314,7 @@ export default function SearchPage() {
         </section>
       )}
 
-      {!showPopular && (
+      {!showPopular && !showResults && (
         <section className="space-y-4">
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
@@ -214,7 +379,8 @@ export default function SearchPage() {
               hashtags.map((tag) => (
                 <div
                   key={tag.id}
-                  className="card p-3 flex items-center justify-between hover:border-white/25 transition"
+                  className="card p-3 flex items-center justify-between hover:border-white/25 transition cursor-pointer"
+                  onClick={() => selectTag(tag.name)}
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
@@ -229,6 +395,137 @@ export default function SearchPage() {
           </div>
 
         </section>
+      )}
+
+      {showResults && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white/60">Посты с тегом</p>
+              <h2 className="text-xl font-semibold text-white">#{selectedTag}</h2>
+            </div>
+            <button
+              className="text-white/60 text-sm hover:text-white"
+              onClick={() => {
+                setSelectedTag(null);
+                setTagPosts([]);
+                setTagError("");
+              }}
+            >
+              Назад к поиску
+            </button>
+          </div>
+          {tagError && <p className="text-red-400 text-sm">{tagError}</p>}
+          {tagLoading && tagPosts.length === 0 && (
+            <p className="text-white/60 text-sm">Загрузка постов...</p>
+          )}
+          {!tagLoading && tagPosts.length === 0 && !tagError && (
+            <div className="card p-6 text-white/60 text-sm">Постов с этим тегом пока нет.</div>
+          )}
+
+          <div className="space-y-3">
+            {tagPosts.map((p) => (
+              <article key={p.id} className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <Link
+                      to={`/u/${p.username}`}
+                      className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                    >
+                      {p.full_name?.[0]?.toUpperCase() || p.username?.[0]?.toUpperCase() || "U"}
+                    </Link>
+                    <div>
+                      <Link
+                        to={`/u/${p.username}`}
+                        className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                      >
+                        {p.full_name || "Без имени"}
+                      </Link>
+                      <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {p.is_me ? (
+                      <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
+                        Это вы
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => toggleFollow(p)}
+                        className={`px-3 py-1 rounded-full text-xs border transition ${
+                          p.is_subscribed
+                            ? "border-white/20 text-white/80 hover:border-white/40"
+                            : "border-white text-black bg-white hover:bg-white/90"
+                        }`}
+                      >
+                        {p.is_subscribed ? "Отписаться" : "Подписаться"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <p className="mt-3 text-white leading-relaxed break-words">
+                  {highlightHashtags(
+                    p.content,
+                    p.mentions ? new Set(p.mentions.map((m) => m.toLowerCase())) : undefined,
+                    p.hashtags ? new Set(p.hashtags.map((h) => h.toLowerCase())) : undefined
+                  )}
+                </p>
+
+                {p.media_url && (
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+                    <img src={p.media_url} alt="media" className="w-full h-auto object-cover" />
+                  </div>
+                )}
+
+                <div className="mt-4 flex items-center justify-between text-sm text-white/60">
+                  <div className="flex items-center gap-6">
+                    <button
+                      onClick={() => toggleLike(p.id, p.liked_by_me)}
+                      className={`flex items-center gap-2 px-2 py-1 rounded-full transition ${
+                        p.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"
+                      }`}
+                    >
+                      {p.liked_by_me ? (
+                        <Heart className="w-5 h-5 fill-current" strokeWidth={1.7} />
+                      ) : (
+                        <Heart className="w-5 h-5" strokeWidth={1.7} />
+                      )}
+                      <span className="font-medium">{p.like_count}</span>
+                    </button>
+
+                    <button
+                      className="flex items-center gap-2 text-white/60 hover:text-white"
+                      onClick={() => setCommentsPost(p)}
+                    >
+                      <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
+                      <span>{p.comment_count ?? 0}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-white/60">
+                    <Eye className="w-5 h-5" strokeWidth={1.7} />
+                    <span>{p.view_count ?? 0}</span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
+            {tagLoading && tagPosts.length > 0
+              ? "Загружаем..."
+              : tagNextOffset !== null
+                ? "Прокрутите, чтобы загрузить ещё"
+                : ""}
+          </div>
+        </section>
+      )}
+
+      {commentsPost && (
+        <CommentsModal
+          post={commentsPost}
+          onClose={() => setCommentsPost(null)}
+        />
       )}
     </main>
   );

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useFeedStore } from "../store/feed";
 import PostComposer from "../components/PostComposer";
 import { CommentsModal } from "../components/CommentsModal";
+import { TopUsers } from "../components/TopUsers";
 import { highlightHashtags } from "../utils/text";
 import {
   Heart,
@@ -60,13 +62,22 @@ const timeAgo = (iso: string) => {
 };
 
 export default function FeedPage() {
-  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const token = useAuthStore((s) => s.token);
+  const {
+    items: cachedFeed,
+    nextOffset: cachedNext,
+    initialized,
+    setCache,
+    updateItem: updateCacheItem,
+    updateByUser: updateCacheByUser,
+  } = useFeedStore();
+  const [feed, setFeed] = useState<FeedItem[]>(cachedFeed);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [loading, setLoading] = useState(!initialized);
+  const [nextOffset, setNextOffset] = useState<number | null>(cachedNext);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
-  const token = useAuthStore((s) => s.token);
+  const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
   const loadViewed = () => {
     try {
       const raw = localStorage.getItem("viewed_posts");
@@ -84,15 +95,31 @@ export default function FeedPage() {
 
   const updatePost = (id: string, patch: Partial<FeedItem>) => {
     setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    updateCacheItem(id, patch);
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+  };
+
+  const updateAuthor = (userId: string, patch: Partial<FeedItem>) => {
+    setFeed((prev) => prev.map((p) => (p.user_id === userId ? { ...p, ...patch } : p)));
+    updateCacheByUser(userId, patch);
   };
 
   const refresh = async () => {
     setLoading(true);
     try {
+      const prevIds = new Set(feed.map((p) => p.id));
       const { items, nextOffset } = await api.feedPage(20, 0, token);
+      const newIds = new Set<string>();
+      items.forEach((p) => {
+        if (!prevIds.has(p.id)) newIds.add(p.id);
+      });
+      if (newIds.size > 0) {
+        setJustAdded(newIds);
+        window.setTimeout(() => setJustAdded(new Set()), 700);
+      }
       setFeed(items);
       setNextOffset(nextOffset);
+      setCache(items, nextOffset);
       setError("");
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить ленту");
@@ -102,7 +129,14 @@ export default function FeedPage() {
   };
 
   useEffect(() => {
+    if (initialized && cachedFeed.length) {
+      setFeed(cachedFeed);
+      setNextOffset(cachedNext);
+      setLoading(false);
+      return;
+    }
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
@@ -153,7 +187,11 @@ export default function FeedPage() {
     setLoading(true);
     try {
       const { items, nextOffset: n } = await api.feedPage(20, nextOffset, token);
-      setFeed((prev) => [...prev, ...items]);
+      setFeed((prev) => {
+        const merged = [...prev, ...items];
+        setCache(merged, n);
+        return merged;
+      });
       setNextOffset(n);
       setError("");
     } catch (e: any) {
@@ -204,7 +242,7 @@ export default function FeedPage() {
   const toggleFollow = async (post: FeedItem) => {
     if (!token || post.is_me) return;
     const nextState = !post.is_subscribed;
-    updatePost(post.id, { is_subscribed: nextState });
+    updateAuthor(post.user_id, { is_subscribed: nextState });
     try {
       if (nextState) {
         await api.followUser(post.user_id, token);
@@ -212,7 +250,7 @@ export default function FeedPage() {
         await api.unfollowUser(post.user_id, token);
       }
     } catch {
-      updatePost(post.id, { is_subscribed: post.is_subscribed });
+      updateAuthor(post.user_id, { is_subscribed: post.is_subscribed });
     }
   };
 
@@ -244,29 +282,29 @@ export default function FeedPage() {
   };
 
   return (
-    <main
-      data-feed-root
-      className="max-w-[672px] w-full mx-auto py-6 space-y-4"
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-white/60">Лента</p>
-          <h1 className="text-2xl font-semibold text-white">Что нового?</h1>
+    <main data-feed-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-white/60">Лента</p>
+            <h1 className="text-2xl font-semibold text-white">Что нового?</h1>
+          </div>
         </div>
-      </div>
 
-      <PostComposer onCreated={refresh} />
+        <PostComposer onCreated={refresh} />
 
-      {loading && <p className="text-gray-400">Загрузка фида...</p>}
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+        {loading && <p className="text-gray-400">Загрузка фида...</p>}
+        {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      <div className="space-y-3">
-        {feed.map((item) => (
-          <article
-            key={item.id}
-            ref={setPostRef(item.id)}
-            data-post-id={item.id}
-            className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden"
+        <div className="space-y-3">
+          {feed.map((item) => (
+            <article
+              key={item.id}
+              ref={setPostRef(item.id)}
+              data-post-id={item.id}
+              className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${
+              justAdded.has(item.id) ? "animate-new-post" : ""
+            }`}
           >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -385,27 +423,29 @@ export default function FeedPage() {
           </article>
         ))}
 
-        {!loading && feed.length === 0 && !error && (
-          <div className="card p-6 text-white/70 space-y-3">
-            <p>Постов пока нет.</p>
-            <p className="text-sm">
-              Создайте первый пост через кнопку «Опубликовать» выше.
-            </p>
+          {!loading && feed.length === 0 && !error && (
+            <div className="card p-6 text-white/70 space-y-3">
+              <p>Постов пока нет.</p>
+              <p className="text-sm">
+                Создайте первый пост через кнопку «Опубликовать» выше.
+              </p>
+            </div>
+          )}
+        </div>
+        {nextOffset !== null && (
+          <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
+            {loading ? "Загрузка..." : "Подгружаем ещё..."}
           </div>
         )}
+        {commentsPost && (
+          <CommentsModal
+            post={commentsPost}
+            onUpdatePost={updatePost}
+            onClose={() => setCommentsPost(null)}
+          />
+        )}
       </div>
-      {nextOffset !== null && (
-        <div ref={loadMoreRef} className="h-10 flex items-center justify-center text-white/60 text-sm">
-          {loading ? "Загрузка..." : "Подгружаем ещё..."}
-        </div>
-      )}
-      {commentsPost && (
-        <CommentsModal
-          post={commentsPost}
-          onUpdatePost={updatePost}
-          onClose={() => setCommentsPost(null)}
-        />
-      )}
+      <TopUsers />
     </main>
   );
 }

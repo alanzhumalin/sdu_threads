@@ -32,6 +32,7 @@ export function MentionPreview({ username, children }: Props) {
     place: "bottom",
   });
   const closeTimer = useRef<number | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
 
   const clearTimer = () => {
     if (closeTimer.current) {
@@ -47,9 +48,10 @@ export function MentionPreview({ username, children }: Props) {
     const rect = el.getBoundingClientRect();
     const viewH = window.innerHeight || document.documentElement.clientHeight;
     const ratio = rect.top / viewH;
-    const place: "top" | "bottom" = ratio > 0.65 ? "top" : "bottom";
+    // ниже середины +30% — открываем вверх
+    const place: "top" | "bottom" = ratio > 0.6 ? "top" : "bottom";
     const left = clamp(rect.left - 8, 8, (window.innerWidth || 1200) - 300);
-    const top = place === "top" ? rect.top - 12 : rect.bottom + 12;
+    const top = place === "top" ? rect.top : rect.bottom;
     setPos({ top, left, place });
     setOpen(true);
     if (!data && !loading) {
@@ -78,17 +80,33 @@ export function MentionPreview({ username, children }: Props) {
   };
 
   useEffect(
-    () => () => {
-      clearTimer();
+    () => {
+      const onScroll = () => {
+        clearTimer();
+        setOpen(false);
+      };
+      window.addEventListener("scroll", onScroll, { passive: true });
+      return () => {
+        window.removeEventListener("scroll", onScroll);
+        clearTimer();
+      };
     },
     []
   );
 
   const content = open ? (
     <div
+      ref={popupRef}
       onMouseEnter={handleEnter}
       onMouseLeave={scheduleClose}
-      style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 1000, width: 280 }}
+      style={{
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
+        zIndex: 1000,
+        width: 280,
+        transform: pos.place === "top" ? "translateY(calc(-100% - 10px))" : "translateY(8px)",
+      }}
       className="rounded-2xl border border-white/10 bg-black/90 shadow-2xl overflow-hidden backdrop-blur"
     >
       <div className="relative h-20 bg-gradient-to-r from-white/10 to-white/5">
@@ -100,7 +118,7 @@ export function MentionPreview({ username, children }: Props) {
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : null}
-        <div className="absolute -bottom-6 left-4 w-12 h-12 rounded-full bg-white/15 border border-white/20 overflow-hidden flex items-center justify-center text-sm font-semibold">
+       <div className="absolute -bottom-7 left-4 w-14 h-14 rounded-full bg-black border border-white/20 overflow-hidden flex items-center justify-center text-sm font-semibold">
           {data?.avatar_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={data.avatar_url} alt="" className="w-full h-full object-cover" />

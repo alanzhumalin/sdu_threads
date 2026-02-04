@@ -24,6 +24,7 @@ func NewPostHandler(s *service.PostService, views *service.ViewService, jwt *aut
 func (h *PostHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/posts", h.handlePosts)
 	mux.HandleFunc("/api/posts/", h.handlePostActions)
+	mux.HandleFunc("/api/posts-liked", h.handleLiked)
 }
 
 func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
@@ -45,19 +46,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 	case http.MethodGet:
-		limit := parseIntQuery(r, "limit", 20)
-		offset := parseIntQuery(r, "offset", 0)
-		var viewerID *string
-		if id, err := tryGetUserID(r, h.jwt); err == nil {
-			viewerID = &id
-		}
-		items, err := h.service.Feed(r.Context(), limit, offset, viewerID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		setNextOffset(w, offset, limit, len(items))
-		writeJSON(w, http.StatusOK, items)
+		h.handleFeed(w, r)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -139,6 +128,22 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (h *PostHandler) handleFeed(w http.ResponseWriter, r *http.Request) {
+	limit := parseIntQuery(r, "limit", 20)
+	offset := parseIntQuery(r, "offset", 0)
+	var viewerID *string
+	if id, err := tryGetUserID(r, h.jwt); err == nil {
+		viewerID = &id
+	}
+	items, err := h.service.Feed(r.Context(), limit, offset, viewerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setNextOffset(w, offset, limit, len(items))
+	writeJSON(w, http.StatusOK, items)
+}
+
 func parseIntQuery(r *http.Request, key string, def int) int {
 	v := r.URL.Query().Get(key)
 	if v == "" {
@@ -149,4 +154,25 @@ func parseIntQuery(r *http.Request, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func (h *PostHandler) handleLiked(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseIntQuery(r, "limit", 20)
+	offset := parseIntQuery(r, "offset", 0)
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	items, err := h.service.LikedBy(r.Context(), userID, limit, offset, &userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setNextOffset(w, offset, limit, len(items))
+	writeJSON(w, http.StatusOK, items)
 }

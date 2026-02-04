@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -41,10 +41,9 @@ const timeAgo = (iso: string) => {
 export default function ProfilePage() {
   const token = useAuthStore((s) => s.token);
   const [profile, setProfile] = useState<any>(null);
-  const [feed, setFeed] = useState<any[]>([]);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"posts" | "liked">("posts");
-  const [loading, setLoading] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [commentsPost, setCommentsPost] = useState<any | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -73,30 +72,44 @@ export default function ProfilePage() {
   const pendingTimers = useRef<Map<string, number>>(new Map());
   const observer = useRef<IntersectionObserver | null>(null);
 
-  const fetchAll = async () => {
+  const [myPosts, setMyPosts] = useState<{ items: any[]; nextOffset: number | null; loading: boolean; loadingMore: boolean; error: string }>({
+    items: [],
+    nextOffset: null,
+    loading: false,
+    loadingMore: false,
+    error: "",
+  });
+  const [likedPosts, setLikedPosts] = useState<{ items: any[]; nextOffset: number | null; loading: boolean; loadingMore: boolean; error: string }>({
+    items: [],
+    nextOffset: null,
+    loading: false,
+    loadingMore: false,
+    error: "",
+  });
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const observerTabRef = useRef<IntersectionObserver | null>(null);
+
+  const fetchProfile = async () => {
     if (!token) return;
-    setLoading(true);
+    setLoadingProfile(true);
     try {
-      const [p, f] = await Promise.all([api.profileMe(token), api.feed(token)]);
+      const p = await api.profileMe(token);
       setProfile(p);
-      setFeed(f);
       setError("");
+      loadMyPosts(p.id, 0, false);
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить профиль");
     } finally {
-      setLoading(false);
+      setLoadingProfile(false);
     }
   };
 
   useEffect(() => {
-    fetchAll();
+    fetchProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const myPosts = useMemo(() => feed.filter((p) => profile && p.user_id === profile.id), [feed, profile]);
-  const likedPosts = useMemo(() => feed.filter((p) => p.liked_by_me), [feed]);
-
-  const postsToShow = activeTab === "posts" ? myPosts : likedPosts;
+  const postsToShow = activeTab === "posts" ? myPosts.items : likedPosts.items;
 
   const openEdit = () => {
     if (!profile) return;
@@ -161,11 +174,11 @@ export default function ProfilePage() {
             return;
           }
           if (pendingTimers.current.has(id)) return;
-          const timer = window.setTimeout(() => {
-            pendingTimers.current.delete(id);
-            if (seenPosts.current.has(id) || viewedPersisted.current.has(id)) return;
-            if (!isHalfVisible(target)) return;
-            sendView(id);
+    const timer = window.setTimeout(() => {
+      pendingTimers.current.delete(id);
+      if (seenPosts.current.has(id) || viewedPersisted.current.has(id)) return;
+      if (!isHalfVisible(target)) return;
+      sendView(id);
             seenPosts.current.add(id);
             obs.unobserve(target);
           }, 1000);
@@ -184,13 +197,16 @@ export default function ProfilePage() {
   }, [token, postsToShow]);
 
   const updatePost = (id: string, patch: Partial<any>) => {
-    setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    setMyPosts((prev) => ({ ...prev, items: prev.items.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
+    setLikedPosts((prev) => ({ ...prev, items: prev.items.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
   };
 
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
-    const current = feed.find((p) => p.id === id);
+    const current =
+      myPosts.items.find((p) => p.id === id) ||
+      likedPosts.items.find((p) => p.id === id);
     const nextCount = (current?.like_count ?? 0) + (liked ? -1 : 1);
     updatePost(id, { liked_by_me: !liked, like_count: nextCount });
     try {
@@ -206,7 +222,7 @@ export default function ProfilePage() {
     if (viewedPersisted.current.has(postId)) return;
     try {
       await api.viewPost(postId, token);
-      updatePost(postId, { view_count: (feed.find((p) => p.id === postId)?.view_count || 0) + 1 });
+      updatePost(postId, { view_count: 1 + (myPosts.items.find((p) => p.id === postId)?.view_count || likedPosts.items.find((p) => p.id === postId)?.view_count || 0) });
       viewedPersisted.current.add(postId);
       try {
         localStorage.setItem("viewed_posts", JSON.stringify(Array.from(viewedPersisted.current)));
@@ -218,13 +234,83 @@ export default function ProfilePage() {
     }
   };
 
+  const loadMyPosts = async (userId: string, offset = 0, append = false) => {
+    setMyPosts((prev) => ({ ...prev, loading: !append, loadingMore: append }));
+    try {
+      const { items, nextOffset } = await api.userPosts(userId, 20, offset, token);
+      setMyPosts((prev) => ({
+        items: append ? [...prev.items, ...items] : items,
+        nextOffset,
+        loading: false,
+        loadingMore: false,
+        error: "",
+      }));
+    } catch (e: any) {
+      setMyPosts((prev) => ({
+        ...prev,
+        loading: false,
+        loadingMore: false,
+        error: e.message || "Не удалось загрузить посты",
+      }));
+    }
+  };
+
+  const loadLikedPosts = async (offset = 0, append = false) => {
+    setLikedPosts((prev) => ({ ...prev, loading: !append, loadingMore: append }));
+    try {
+      const { items, nextOffset } = await api.likedPosts(20, offset, token);
+      setLikedPosts((prev) => ({
+        items: append ? [...prev.items, ...items] : items,
+        nextOffset,
+        loading: false,
+        loadingMore: false,
+        error: "",
+      }));
+    } catch (e: any) {
+      setLikedPosts((prev) => ({
+        ...prev,
+        loading: false,
+        loadingMore: false,
+        error: e.message || "Не удалось загрузить понравившиеся",
+      }));
+    }
+  };
+
+  useEffect(() => {
+    if (!profile) return;
+    if (activeTab === "liked" && likedPosts.items.length === 0 && !likedPosts.loading) {
+      loadLikedPosts(0, false);
+    }
+  }, [activeTab, profile]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (observerTabRef.current) observerTabRef.current.disconnect();
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    observerTabRef.current = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry.isIntersecting) return;
+        if (activeTab === "posts" && myPosts.nextOffset !== null && !myPosts.loadingMore && !myPosts.loading && profile) {
+          loadMyPosts(profile.id, myPosts.nextOffset, true);
+        }
+        if (activeTab === "liked" && likedPosts.nextOffset !== null && !likedPosts.loadingMore && !likedPosts.loading) {
+          loadLikedPosts(likedPosts.nextOffset, true);
+        }
+      },
+      { rootMargin: "200px 0px" }
+    );
+    observerTabRef.current.observe(sentinel);
+    return () => observerTabRef.current?.disconnect();
+  }, [activeTab, myPosts.nextOffset, likedPosts.nextOffset, myPosts.loadingMore, likedPosts.loadingMore, profile]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setPostRef = (id: string) => (el: HTMLElement | null) => {
     if (!observer.current || !el) return;
     observer.current.observe(el);
   };
 
   return (
-    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6">
+    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <div className="rounded-2xl border border-white/10 overflow-hidden bg-black shadow-xl">
         <div className="relative h-40 md:h-52 overflow-hidden">
@@ -293,17 +379,26 @@ export default function ProfilePage() {
 
         {activeTab === "posts" && (
           <div className="border border-white/10 rounded-xl">
-            <PostComposer onCreated={fetchAll} />
+            <PostComposer
+              onCreated={() => {
+                if (profile) {
+                  loadMyPosts(profile.id, 0, false);
+                }
+              }}
+            />
           </div>
         )}
 
         <div className="space-y-3">
-          {loading && <p className="text-white/60">Загрузка...</p>}
-          {!loading && postsToShow.length === 0 && (
-            <div className="py-8 flex justify-center">
-              <p className="text-white/60 text-sm">Пока нет постов</p>
-            </div>
+          {(activeTab === "posts" ? myPosts.loading : likedPosts.loading) && (
+            <p className="text-white/60">Загрузка...</p>
           )}
+          {!(activeTab === "posts" ? myPosts.loading : likedPosts.loading) &&
+            postsToShow.length === 0 && (
+              <div className="py-8 flex justify-center">
+                <p className="text-white/60 text-sm">Пока нет постов</p>
+              </div>
+            )}
           {postsToShow.map((p) => (
             <article
               key={p.id}
@@ -375,6 +470,19 @@ export default function ProfilePage() {
               </div>
             </article>
           ))}
+        </div>
+        <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
+          {activeTab === "posts"
+            ? myPosts.loadingMore
+              ? "Загружаем..."
+              : myPosts.nextOffset !== null
+                ? "Прокрутите, чтобы загрузить ещё"
+                : ""
+            : likedPosts.loadingMore
+              ? "Загружаем..."
+              : likedPosts.nextOffset !== null
+                ? "Прокрутите, чтобы загрузить ещё"
+                : ""}
         </div>
       </div>
       {commentsPost && (

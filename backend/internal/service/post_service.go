@@ -260,6 +260,68 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 	return resp, nil
 }
 
+func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset int, viewerID *string) ([]dto.FeedResponseItem, error) {
+	items, err := s.posts.LikedByUser(ctx, userID, limit, offset, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	mentionMap, err := s.enrichMentions(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	hashtagMap, err := s.enrichHashtags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	followMap := map[string]bool{}
+	if viewerID != nil && s.fols != nil {
+		authors := make([]string, 0, len(items))
+		seen := make(map[string]struct{})
+		for _, it := range items {
+			if _, ok := seen[it.UserID]; ok {
+				continue
+			}
+			seen[it.UserID] = struct{}{}
+			if it.UserID == *viewerID {
+				continue
+			}
+			authors = append(authors, it.UserID)
+		}
+		if len(authors) > 0 {
+			if m, err := s.fols.FollowingMap(ctx, *viewerID, authors); err == nil {
+				followMap = m
+			}
+		}
+	}
+	resp := make([]dto.FeedResponseItem, 0, len(items))
+	for _, it := range items {
+		isMe := viewerID != nil && *viewerID == it.UserID
+		isSub := false
+		if !isMe && viewerID != nil {
+			isSub = followMap[it.UserID]
+		}
+		resp = append(resp, dto.FeedResponseItem{
+			ID:           it.ID,
+			UserID:       it.UserID,
+			Username:     it.Username,
+			FullName:     it.FullName,
+			Content:      it.Content,
+			MediaURL:     it.MediaURL,
+			CreatedAt:    it.CreatedAt,
+			UpdatedAt:    it.UpdatedAt,
+			LikeCount:    it.LikeCount,
+			LikedByMe:    it.LikedByMe,
+			ViewCount:    it.ViewCount,
+			CommentCount: it.CommentCount,
+			Mentions:     mentionMap[it.ID],
+			Hashtags:     hashtagMap[it.ID],
+			IsSubscribed: isSub,
+			IsMe:         isMe,
+		})
+	}
+	return resp, nil
+}
+
 func (s *PostService) Like(ctx context.Context, postID, userID string) error {
 	if userID == "" || postID == "" {
 		return errors.New("post_id and user_id are required")

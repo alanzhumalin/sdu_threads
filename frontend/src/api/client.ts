@@ -179,10 +179,34 @@ export const api = {
       is_subscribed?: boolean;
       is_me?: boolean;
     }[]
-  >(`/users/${userId}/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
-    items: data,
-    nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
-  })),
+    >(`/users/${userId}/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  likedPosts: (limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        user_id: string;
+        content: string;
+        username: string;
+        full_name: string;
+        created_at: string;
+        updated_at?: string;
+        media_url?: string;
+        like_count: number;
+        liked_by_me: boolean;
+        view_count: number;
+        comment_count?: number;
+        mentions?: string[];
+        hashtags?: string[];
+        is_subscribed?: boolean;
+        is_me?: boolean;
+      }[]
+    >(`/posts-liked?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
   createPost: (payload: { content: string; media_url?: string; hashtags?: string[] }, token: string) =>
     request<{ status: string }>("/posts", "POST", payload, token),
   searchHashtags: (q: string, limit = 8) =>
@@ -206,6 +230,42 @@ export const api = {
             post_count: h.post_count ?? h.PostCount ?? h.postCount ?? 0,
           }))
         : []
+    ),
+  topUsers: (limit = 3, token?: string | null) =>
+    request<
+      {
+        id: string;
+        username: string;
+        full_name: string;
+        avatar_url?: string;
+        followers: number;
+      }[]
+    >(`/top-users?limit=${limit}`, "GET", undefined, token || undefined),
+  postsByHashtag: (name: string, limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        user_id: string;
+        content: string;
+        username: string;
+        full_name: string;
+        created_at: string;
+        updated_at: string;
+        media_url?: string;
+        like_count: number;
+        liked_by_me: boolean;
+        view_count: number;
+        comment_count?: number;
+        mentions?: string[];
+        hashtags?: string[];
+        is_subscribed?: boolean;
+        is_me?: boolean;
+      }[]
+    >(`/hashtags/${encodeURIComponent(name)}?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(
+      ({ data, headers }) => ({
+        items: data,
+        nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+      })
     ),
   notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<

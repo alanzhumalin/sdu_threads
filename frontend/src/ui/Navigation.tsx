@@ -8,7 +8,7 @@ import {
   User,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { useNotificationStore } from "../store/notifications";
 
 type NavItem = { label: string; path: string; icon: string };
@@ -33,35 +33,14 @@ const icons: Record<string, JSX.Element> = {
 
 export default function Navigation({ items, onClick, activePath }: Props) {
   const navRef = useRef<HTMLDivElement | null>(null);
-  const [left, setLeft] = useState<number>(24);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
-
-  useEffect(() => {
-    const updatePosition = () => {
-      const target =
-        document.querySelector<HTMLElement>("[data-feed-root]") ||
-        document.querySelector<HTMLElement>("[data-page-root]");
-      const navEl = navRef.current;
-      if (!target || !navEl) return;
-      const feedRect = target.getBoundingClientRect();
-      const navWidth = navEl.offsetWidth;
-      const nextLeft = feedRect.left - navWidth - 20; // 20px gap слева от ленты
-      setLeft(Math.max(16, nextLeft)); // не прижимаем к самому краю
-    };
-    const raf = requestAnimationFrame(updatePosition);
-    window.addEventListener("resize", updatePosition);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [activePath]);
 
   return (
     <>
       {/* Desktop sidebar */}
       <nav
         ref={navRef}
-        style={{ left }}
+        style={{ left: "max(16px, calc(50% - 336px - 80px))" }}
         className="hidden md:flex fixed top-32 z-30 flex-col items-center space-y-2.5 p-2 rounded-2xl border border-white/10 bg-black/80 backdrop-blur"
       >
         {items.map((item) => (

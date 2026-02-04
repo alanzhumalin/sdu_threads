@@ -53,3 +53,7 @@ func (s *FollowService) Counters(ctx context.Context, userID string) (followers,
 	following, err = s.follows.FollowingCount(ctx, userID)
 	return
 }
+
+func (s *FollowService) TopFollowed(ctx context.Context, limit int) ([]repository.TopUser, error) {
+	return s.follows.TopFollowed(ctx, limit)
+}

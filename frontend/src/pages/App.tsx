@@ -52,8 +52,8 @@ export default function App() {
         <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
       )}
       <div className="mx-auto max-w-6xl px-3 md:px-8 md:h-screen md:overflow-hidden">
-        <div className="pb-20 md:pb-6 md:overflow-y-auto md:h-screen">
-          <Routes>
+        <div key={location.pathname} className="pb-20 md:pb-6 md:overflow-y-auto md:h-screen">
+          <Routes location={location}>
             <Route
               path="/"
               element={

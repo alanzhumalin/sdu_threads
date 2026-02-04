@@ -251,7 +251,7 @@ export default function NotificationsPage() {
   const current = data[tab];
 
   return (
-    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4">
+    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-white/60">Уведомления</p>
@@ -308,8 +308,11 @@ export default function NotificationsPage() {
       )}
 
       {!current.loading && current.items.length === 0 && !current.error && (
-        <div className="card p-6 text-white/70 text-sm">Уведомлений пока нет.</div>
+        <div className="card p-6 text-white/70 text-sm flex items-center justify-center h-32">
+          Уведомлений пока нет.
+        </div>
       )}
+
 
       <div className="space-y-3">
         {current.items.map((n) => (
@@ -363,7 +366,7 @@ export default function NotificationsPage() {
         ))}
       </div>
 
-      <div ref={sentinelRef} className="h-10 flex items-center justify-center text-white/60 text-sm">
+      <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
         {current.loadingMore ? (
           <span className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" /> Загружаем...

@@ -131,3 +131,35 @@ func (r *FollowRepository) FollowingMap(ctx context.Context, followerID string, 
 	}
 	return result, nil
 }
+
+type TopUser struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	FullName  string `json:"full_name"`
+	AvatarURL string `json:"avatar_url"`
+	Followers int64  `json:"followers"`
+}
+
+func (r *FollowRepository) TopFollowed(ctx context.Context, limit int) ([]TopUser, error) {
+	if limit <= 0 {
+		limit = 3
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	var res []TopUser
+	q := `
+SELECT u.id, u.username, u.full_name, u.avatar_url, COUNT(f.followee_id) AS followers
+FROM users u
+LEFT JOIN follows f ON f.followee_id = u.id
+GROUP BY u.id, u.username, u.full_name, u.avatar_url
+ORDER BY followers DESC, u.full_name ASC
+LIMIT ?`
+	if err := r.db.WithContext(ctx).Raw(q, limit).Scan(&res).Error; err != nil {
+		return nil, err
+	}
+	if res == nil {
+		res = []TopUser{}
+	}
+	return res, nil
+}

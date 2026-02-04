@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/auth";
 import { Heart, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
+import { useFeedStore } from "../store/feed";
 
 function timeAgo(iso: string) {
   const date = new Date(iso);
@@ -29,6 +30,7 @@ function timeAgo(iso: string) {
 export default function ProfileUserPage() {
   const token = useAuthStore((s) => s.token);
   const { username } = useParams();
+  const feedStore = useFeedStore();
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -88,6 +90,11 @@ export default function ProfileUserPage() {
         p.id === id ? { ...p, liked_by_me: !liked, like_count: p.like_count + (liked ? -1 : 1) } : p
       )
     );
+    feedStore.updateItem(id, {
+      liked_by_me: !liked,
+      like_count:
+        (feedStore.items.find((p) => p.id === id)?.like_count ?? 0) + (liked ? -1 : 1),
+    });
     try {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
@@ -97,13 +104,15 @@ export default function ProfileUserPage() {
           p.id === id ? { ...p, liked_by_me: liked, like_count: p.like_count + (liked ? 1 : -1) } : p
         )
       );
+      const original = feedStore.items.find((p) => p.id === id);
+      if (original) feedStore.updateItem(id, { liked_by_me: liked, like_count: original.like_count });
     }
   };
 
   if (!token) return null;
 
   return (
-    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6">
+    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
       {error && <p className="text-red-400 text-sm">{error}</p>}
       {profile && (
         <div className="rounded-2xl border border-white/10 overflow-hidden bg-black shadow-xl">
@@ -129,6 +138,10 @@ export default function ProfileUserPage() {
                 <div className="mt-12 space-y-2">
                   <p className="text-xl font-semibold text-white">{profile.full_name || ""}</p>
                   <p className="text-white/60">@{profile.username}</p>
+                  {/* убираем вывод username, оставляем только fullname */}
+                  <p className="text-white/50 text-sm">
+                    На сайте с {profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "--"}
+                  </p>
                   {profile.major && <p className="text-white/70 text-sm">{profile.major}</p>}
                   <div className="flex items-center gap-5 text-white/80 pt-1 text-sm">
                     <div className="flex items-baseline gap-1">
@@ -203,7 +216,7 @@ export default function ProfileUserPage() {
                 </div>
                 <div>
                   <p className="text-white font-semibold leading-tight">{profile?.full_name}</p>
-                  <p className="text-sm text-white/60">@{profile?.username} · {timeAgo(p.created_at)}</p>
+                  <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
                 </div>
               </div>
 

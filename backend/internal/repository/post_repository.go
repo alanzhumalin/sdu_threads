@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -204,14 +205,20 @@ func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offs
 
 	var items []FeedItem
 	q := `
+WITH ids AS (
+    SELECT DISTINCT p.id
+    FROM posts p
+    LEFT JOIN post_hashtags ph ON ph.post_id = p.id
+    LEFT JOIN hashtags h ON h.id = ph.hashtag_id
+    WHERE h.name = ? OR LOWER(p.content) LIKE ?
+)
 SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
        p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
 FROM posts p
-JOIN post_hashtags ph ON ph.post_id = p.id
-JOIN hashtags h ON h.id = ph.hashtag_id AND h.name = ?
+JOIN ids ON ids.id = p.id
 JOIN users u ON u.id = p.user_id
 LEFT JOIN (
     SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
@@ -225,7 +232,41 @@ LEFT JOIN (
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 
-	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, name, viewer, limit, offset).Scan(&items).Error; err != nil {
+	pattern := "%" + strings.ToLower("#"+name) + "%"
+	if err := r.db.WithContext(ctx).Raw(q, name, pattern, viewerPresent, viewer, limit, offset).Scan(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *PostRepository) LikedByUser(ctx context.Context, userID string, limit, offset int, viewerID *string) ([]FeedItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var items []FeedItem
+	q := `
+SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
+       p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       TRUE AS liked_by_me
+FROM likes li
+JOIN posts p ON p.id = li.post_id
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+WHERE li.user_id = ?
+ORDER BY li.created_at DESC
+LIMIT ? OFFSET ?`
+
+	if err := r.db.WithContext(ctx).Raw(q, userID, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
