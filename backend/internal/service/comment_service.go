@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 
+	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
 )
@@ -12,13 +14,33 @@ type CommentService struct {
 	comments *repository.CommentRepository
 	posts    *repository.PostRepository
 	likes    *repository.LikeRepository
+	users    *repository.UserRepository
+	tags     *repository.HashtagRepository
 }
 
-func NewCommentService(comments *repository.CommentRepository, posts *repository.PostRepository, likes *repository.LikeRepository) *CommentService {
-	return &CommentService{comments: comments, posts: posts, likes: likes}
+func NewCommentService(comments *repository.CommentRepository, posts *repository.PostRepository, likes *repository.LikeRepository, users *repository.UserRepository, tags *repository.HashtagRepository) *CommentService {
+	return &CommentService{comments: comments, posts: posts, likes: likes, users: users, tags: tags}
 }
 
-func (s *CommentService) Create(ctx context.Context, postID, userID string, body string, replyTo *string) error {
+func normalizeTagsLocal(raw []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(raw))
+	for _, t := range raw {
+		t = strings.TrimSpace(strings.TrimPrefix(t, "#"))
+		t = strings.ToLower(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+func (s *CommentService) Create(ctx context.Context, postID, userID string, body string, replyTo *string, hashtags []string) error {
 	if postID == "" || userID == "" {
 		return errors.New("post_id and user_id are required")
 	}
@@ -38,15 +60,111 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 		Body:             body,
 		ReplyToCommentID: replyTo,
 	}
-	return s.comments.Create(ctx, &comment)
+	if err := s.comments.Create(ctx, &comment); err != nil {
+		return err
+	}
+	// upsert hashtags mentioned in comment text
+	if s.tags != nil {
+		_ = func() error {
+			cands := normalizeTagsLocal(hashtags)
+			if len(cands) == 0 {
+				return nil
+			}
+			_, err := s.tags.Upsert(ctx, cands)
+			return err
+		}()
+	}
+	return nil
 }
 
-func (s *CommentService) List(ctx context.Context, postID string, limit, offset int, viewerID string) ([]repository.CommentWithUser, error) {
-	return s.comments.ListByPost(ctx, postID, limit, offset, viewerID)
+func (s *CommentService) List(ctx context.Context, postID string, limit, offset int, viewerID string) ([]dto.CommentResponse, error) {
+	items, err := s.comments.ListByPost(ctx, postID, limit, offset, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]dto.CommentResponse, 0, len(items))
+	for _, c := range items {
+		mentions := []string{}
+		hashtags := []string{}
+		if s.users != nil {
+			if allowed, err := filterExistingUsernames(ctx, s.users, extractMentionCandidates(c.Body)); err == nil && len(allowed) > 0 {
+				for u := range allowed {
+					mentions = append(mentions, u)
+				}
+			}
+		}
+		if s.tags != nil {
+			if allowed, err := filterExistingHashtags(ctx, s.tags, extractHashtagCandidates(c.Body)); err == nil && len(allowed) > 0 {
+				for t := range allowed {
+					hashtags = append(hashtags, t)
+				}
+			}
+		}
+		resp = append(resp, dto.CommentResponse{
+			ID:               c.ID,
+			PostID:           c.PostID,
+			UserID:           c.UserID,
+			Username:         c.Username,
+			FullName:         c.FullName,
+			Body:             c.Body,
+			CreatedAt:        c.CreatedAt,
+			LikedByMe:        c.LikedByMe,
+			LikeCount:        c.LikeCount,
+			RepliesCount:     c.RepliesCount,
+			ReplyToCommentID: c.ReplyToCommentID,
+			ReplyToFullName:  c.ReplyToFullName,
+			ReplyToUsername:  c.ReplyToUsername,
+			Replies:          []dto.CommentResponse{},
+			Mentions:         mentions,
+			Hashtags:         hashtags,
+		})
+	}
+	return resp, nil
 }
 
-func (s *CommentService) ListReplies(ctx context.Context, commentID string, limit, offset int, viewerID string) ([]repository.CommentWithUser, error) {
-	return s.comments.ListReplies(ctx, commentID, limit, offset, viewerID)
+func (s *CommentService) ListReplies(ctx context.Context, commentID string, limit, offset int, viewerID string) ([]dto.CommentResponse, error) {
+	items, err := s.comments.ListReplies(ctx, commentID, limit, offset, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]dto.CommentResponse, 0, len(items))
+	for _, c := range items {
+		mentions := []string{}
+		hashtags := []string{}
+		if s.users != nil {
+			if allowed, err := filterExistingUsernames(ctx, s.users, extractMentionCandidates(c.Body)); err == nil && len(allowed) > 0 {
+				for u := range allowed {
+					mentions = append(mentions, u)
+				}
+			}
+		}
+		if s.tags != nil {
+			if allowed, err := filterExistingHashtags(ctx, s.tags, extractHashtagCandidates(c.Body)); err == nil && len(allowed) > 0 {
+				for t := range allowed {
+					hashtags = append(hashtags, t)
+				}
+			}
+		}
+		resp = append(resp, dto.CommentResponse{
+			ID:               c.ID,
+			PostID:           c.PostID,
+			UserID:           c.UserID,
+			Username:         c.Username,
+			FullName:         c.FullName,
+			Body:             c.Body,
+			CreatedAt:        c.CreatedAt,
+			LikedByMe:        c.LikedByMe,
+			LikeCount:        c.LikeCount,
+			RepliesCount:     c.RepliesCount,
+			ReplyToCommentID: c.ReplyToCommentID,
+			ReplyToFullName:  c.ReplyToFullName,
+			ReplyToUsername:  c.ReplyToUsername,
+			Replies:          []dto.CommentResponse{},
+			Mentions:         mentions,
+			Hashtags:         hashtags,
+		})
+	}
+	return resp, nil
 }
 
 func (s *CommentService) Delete(ctx context.Context, commentID, userID string) error {

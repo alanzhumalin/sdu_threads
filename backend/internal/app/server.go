@@ -38,12 +38,12 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 
 	// services
 	userService := service.NewUserService(userRepo)
-	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo)
+	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo)
 	authService := service.NewAuthService(userRepo, jwtMgr)
-	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo)
+	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo, userRepo, tagRepo)
 	followService := service.NewFollowService(followRepo, userRepo)
 	profileService := service.NewProfileService(userRepo, followRepo)
-	hashtagService := service.NewHashtagService(tagRepo, postRepo)
+	hashtagService := service.NewHashtagService(tagRepo, postRepo, userRepo)
 	notificationService := service.NewNotificationService(client.DB, userRepo)
 	searchHandler := handler.NewSearchHandler(userRepo)
 
@@ -53,7 +53,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewUserHandler(userService).Register(mux)
 	handler.NewPostHandler(postService, viewService, jwtMgr).Register(mux)
 	handler.NewCommentHandler(commentService, jwtMgr).Register(mux)
-	handler.NewFollowHandler(followService, profileService, jwtMgr).Register(mux)
+	handler.NewFollowHandler(followService, profileService, postService, jwtMgr).Register(mux)
 	handler.NewHashtagHandler(hashtagService, jwtMgr).Register(mux)
 	handler.NewNotificationHandler(notificationService, jwtMgr).Register(mux)
 	searchHandler.Register(mux)

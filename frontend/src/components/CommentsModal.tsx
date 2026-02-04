@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { X, Heart, Paperclip, SendHorizontal, MessageCircle, Eye } from "lucide-react";
@@ -20,6 +21,8 @@ type Comment = {
   replies?: Comment[];
   reply_to_full_name?: string;
   reply_to_username?: string;
+  mentions?: string[];
+  hashtags?: string[];
 };
 
 export type PostMeta = {
@@ -34,6 +37,10 @@ export type PostMeta = {
   liked_by_me: boolean;
   view_count: number;
   comment_count?: number;
+  mentions?: string[];
+  hashtags?: string[];
+  is_subscribed?: boolean;
+  is_me?: boolean;
 };
 
 type Props = {
@@ -44,6 +51,79 @@ type Props = {
 };
 
 const PAGE = 20;
+const punctOrSpace = /[\s.,!?;:()[\]{}"']/;
+const emailLike = /@[^@\s]+\.[A-Za-z]{2,}$/;
+
+const highlightInlineHashtags = (
+  text: string,
+  ignoredHashtagStarts?: Set<number>,
+  ignoredMentionStarts?: Set<number>
+) => {
+  const nodes: JSX.Element[] = [];
+  const regex = /[#@][\p{L}\p{N}._-]*/gu;
+  let last = 0;
+  for (const match of text.matchAll(regex)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (start > last) {
+      nodes.push(<span key={last}>{text.slice(last, start)}</span>);
+    }
+    const token = match[0];
+    const looksLikeEmail = emailLike.test(token);
+    if (token.startsWith("#") && !ignoredHashtagStarts?.has(start)) {
+      nodes.push(
+        <span key={`${start}-#`} className="text-sky-400">
+          {token}
+        </span>
+      );
+    } else if (token.startsWith("@") && !looksLikeEmail && !ignoredMentionStarts?.has(start)) {
+      nodes.push(
+        <span key={`${start}-@`} className="text-purple-400">
+          {token}
+        </span>
+      );
+    } else {
+      nodes.push(<span key={`${start}-t`}>{token}</span>);
+    }
+    last = end;
+  }
+  if (last < text.length) {
+    nodes.push(<span key={last}>{text.slice(last)}</span>);
+  }
+  if (nodes.length === 0) return [<span key="empty">&nbsp;</span>];
+  return nodes;
+};
+
+const findActiveHashtag = (text: string, cursor: number) => {
+  try {
+    const beforeCursor = text.slice(0, cursor);
+    const hashIndex = beforeCursor.lastIndexOf("#");
+    if (hashIndex === -1) return null;
+    const afterHash = beforeCursor.slice(hashIndex);
+    const match = afterHash.match(/^#([\p{L}\p{N}_-]*)$/u);
+    if (!match) return null;
+    const query = match[1] || "";
+    return { start: hashIndex, end: cursor, query };
+  } catch {
+    return null;
+  }
+};
+
+const findActiveMention = (text: string, cursor: number) => {
+  try {
+    const beforeCursor = text.slice(0, cursor);
+    const atIndex = beforeCursor.lastIndexOf("@");
+    if (atIndex === -1) return null;
+    const afterAt = beforeCursor.slice(atIndex);
+    const match = afterAt.match(/^@([\p{L}\p{N}._-]*)$/u);
+    if (!match) return null;
+    if (emailLike.test(afterAt)) return null;
+    const query = match[1] || "";
+    return { start: atIndex, end: cursor, query };
+  } catch {
+    return null;
+  }
+};
 
 const timeAgo = (iso: string) => {
   const date = new Date(iso);
@@ -79,8 +159,42 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
     Record<string, { items: Comment[]; offset: number; total: number | null; loading: boolean }>
   >({});
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mirrorRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const commentRefs = useRef<Record<string, HTMLElement | null>>({});
+  const [cursor, setCursor] = useState(0);
+  const [activeTag, setActiveTag] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [activeMention, setActiveMention] = useState<{ start: number; end: number; query: string } | null>(null);
+  const suppressNextDetection = useRef(false);
+  const [suggestions, setSuggestions] = useState<{ id: number; name: string }[]>([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [mentionSuggestions, setMentionSuggestions] = useState<
+    { id: string; username: string; full_name: string; avatar_url?: string; major?: string }[]
+  >([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null);
+  const [mentionPos, setMentionPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const mentionListRef = useRef<HTMLUListElement | null>(null);
+  const [suppressedHashtags, setSuppressedHashtags] = useState<Set<number>>(new Set());
+  const [suppressedMentions, setSuppressedMentions] = useState<Set<number>>(new Set());
+  const MIN_TA_HEIGHT = 64;
+
+  const toSet = (arr?: string[]) => (arr && arr.length > 0 ? new Set(arr.map((m) => m.toLowerCase())) : undefined);
+
+  const autoResize = () => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const next = Math.max(ta.scrollHeight, MIN_TA_HEIGHT);
+    ta.style.height = `${next}px`;
+  };
+
+  useEffect(() => {
+    autoResize();
+  }, [body]);
 
   const load = async (append = false) => {
     if (loading) return;
@@ -122,15 +236,202 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
     setReplyMode(false);
     setReplyTo(null);
     setBody("");
+    setActiveTag(null);
+    setActiveMention(null);
+    setSuppressedHashtags(new Set());
+    setSuppressedMentions(new Set());
   }, [post]);
 
+  const replaceActiveHashtag = (name: string) => {
+    if (!activeTag) return;
+    setSuggestionsOpen(false);
+    setActiveTag(null);
+    setSuppressedHashtags((prev) => {
+      const next = new Set(prev);
+      next.delete(activeTag.start);
+      return next;
+    });
+    suppressNextDetection.current = true;
+    setBody((prev) => {
+      const before = prev.slice(0, activeTag.start);
+      const after = prev.slice(activeTag.end);
+      return `${before}#${name}${after}`;
+    });
+    const pos = activeTag.start + name.length + 1;
+    setCursor(pos);
+  };
+
+  const replaceActiveMention = (username: string) => {
+    if (!activeMention) return;
+    setMentionOpen(false);
+    setActiveMention(null);
+    suppressNextDetection.current = true;
+    setBody((prev) => {
+      const before = prev.slice(0, activeMention.start);
+      const after = prev.slice(activeMention.end);
+      return `${before}@${username} ${after}`;
+    });
+    const pos = activeMention.start + username.length + 2;
+    setCursor(pos);
+  };
+
   useEffect(() => {
-    if (!focusCommentId) return;
-    const target = commentRefs.current[focusCommentId];
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (suppressNextDetection.current) {
+      suppressNextDetection.current = false;
+      return;
     }
-  }, [comments, focusCommentId]);
+    const tag = findActiveHashtag(body, cursor);
+    const mention = findActiveMention(body, cursor);
+    if (!tag || suppressedHashtags.has(tag.start)) {
+      setActiveTag(null);
+      setSuggestionsOpen(false);
+    } else {
+      setActiveTag(tag);
+    }
+    if (!mention || suppressedMentions.has(mention.start)) {
+      setActiveMention(null);
+      setMentionOpen(false);
+    } else {
+      setActiveMention(mention);
+    }
+  }, [body, cursor, suppressedHashtags, suppressedMentions]);
+
+  useEffect(() => {
+    if (!activeTag) {
+      setSuggestions([]);
+      setSuggestionsOpen(false);
+      return;
+    }
+    let cancelled = false;
+    setSuggestionsLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        let res: any[] = [];
+        if (activeTag.query.trim() === "") {
+          res = await api.popularHashtags(8);
+        } else {
+          res = await api.searchHashtags(activeTag.query, 8);
+        }
+        if (!cancelled) {
+          setSuggestions(Array.isArray(res) ? res : []);
+          setSuggestionsOpen(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setSuggestions([]);
+          setSuggestionsOpen(false);
+        }
+      } finally {
+        if (!cancelled) setSuggestionsLoading(false);
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [activeTag?.query]);
+
+  useEffect(() => {
+    if (!activeMention) {
+      setMentionSuggestions([]);
+      setMentionOpen(false);
+      setMentionNextOffset(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchPage = async (offset = 0, append = false) => {
+      setMentionLoading(true);
+      try {
+        const { items, nextOffset } = await api.searchUsersPaged(activeMention.query, 8, offset);
+        if (cancelled) return;
+        setMentionNextOffset(nextOffset);
+        setMentionSuggestions((prev) => {
+          const seen = new Set((append ? prev : []).map((u) => u.id));
+          const base = append ? [...prev] : [];
+          items.forEach((u) => {
+            if (!seen.has(u.id)) {
+              base.push(u);
+              seen.add(u.id);
+            }
+          });
+          return base;
+        });
+        setMentionOpen(true);
+      } catch {
+        if (!cancelled) {
+          setMentionSuggestions([]);
+          setMentionOpen(false);
+          setMentionNextOffset(null);
+        }
+      } finally {
+        if (!cancelled) setMentionLoading(false);
+      }
+    };
+    fetchPage(0, false);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMention?.query]);
+
+useEffect(() => {
+  if (!focusCommentId) return;
+  const target = commentRefs.current[focusCommentId];
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}, [comments, focusCommentId]);
+
+const updateOverlayPos = (start: number, symbol: string, setter: (pos: { top: number; left: number }) => void) => {
+  const ta = textareaRef.current;
+  const mirror = mirrorRef.current;
+  if (!ta || !mirror) return;
+  const style = window.getComputedStyle(ta);
+  mirror.style.position = "fixed";
+  mirror.style.visibility = "hidden";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordBreak = "break-word";
+  mirror.style.font = style.font;
+  mirror.style.lineHeight = style.lineHeight;
+  mirror.style.padding = style.padding;
+  mirror.style.border = style.border;
+  mirror.style.width = `${ta.clientWidth}px`;
+  mirror.style.left = `${ta.getBoundingClientRect().left}px`;
+  mirror.style.top = `${ta.getBoundingClientRect().top}px`;
+  mirror.textContent = body.slice(0, start);
+  const marker = document.createElement("span");
+  marker.textContent = symbol;
+  mirror.appendChild(marker);
+  const after = document.createTextNode(body.slice(start + 1));
+  mirror.appendChild(after);
+  document.body.appendChild(mirror);
+  const rect = marker.getBoundingClientRect();
+    setter({ top: rect.top - 7, left: rect.left });
+    mirror.textContent = "";
+  };
+
+useLayoutEffect(() => {
+  if (!suggestionsOpen || !activeTag) return;
+  const update = () => updateOverlayPos(activeTag.start, "#", setDropdownPos);
+  update();
+  window.addEventListener("resize", update);
+  window.addEventListener("scroll", update, true);
+  return () => {
+    window.removeEventListener("resize", update);
+    window.removeEventListener("scroll", update, true);
+  };
+}, [suggestionsOpen, activeTag, body]);
+
+useLayoutEffect(() => {
+  if (!mentionOpen || !activeMention) return;
+  const update = () => updateOverlayPos(activeMention.start, "@", setMentionPos);
+  update();
+  window.addEventListener("resize", update);
+  window.addEventListener("scroll", update, true);
+  return () => {
+    window.removeEventListener("resize", update);
+    window.removeEventListener("scroll", update, true);
+  };
+}, [mentionOpen, activeMention, body]);
 
   const loadReplies = async (commentId: string, reset = false) => {
     setReplies((prev) => ({
@@ -179,8 +480,21 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const send = async () => {
     if (!body.trim() || !token) return;
     try {
-      await api.createComment(post.id, body.trim(), replyMode ? replyTo?.id : undefined, token);
+      const tags = (() => {
+        const regex = /#([\p{L}\p{N}_-]+)/gu;
+        const uniq = new Set<string>();
+        for (const m of body.matchAll(regex)) {
+          const start = m.index ?? -1;
+          if (start >= 0 && suppressedHashtags.has(start)) continue;
+          const word = m[1]?.toLowerCase();
+          if (word) uniq.add(word);
+        }
+        return Array.from(uniq);
+      })();
+      await api.createComment(post.id, body.trim(), replyMode ? replyTo?.id : undefined, tags, token);
       setBody("");
+      setSuppressedHashtags(new Set());
+      setSuppressedMentions(new Set());
       setReplyTo(null);
       setReplyMode(false);
       if (replyMode && replyTo) {
@@ -230,23 +544,6 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
 
   const remaining = total !== null ? Math.max(total - comments.length, 0) : null;
   const moreLabel = remaining !== null ? Math.min(remaining, PAGE) : PAGE;
-
-  const adjustTextarea = () => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const styles = window.getComputedStyle(el);
-    const lineHeight = parseInt(styles.lineHeight, 10) || 20;
-    const minHeight = lineHeight * 2;
-    const maxHeight = lineHeight * 4;
-    el.style.height = "auto";
-    const next = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
-    el.style.height = `${next}px`;
-    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
-  };
-
-  useEffect(() => {
-    adjustTextarea();
-  }, [body]);
 
   const togglePostLike = () => {
     if (!token) return;
@@ -322,12 +619,17 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
         }}
         className={`border border-white/10 rounded-xl p-3 flex gap-3 ${depth > 0 ? "bg-white/5" : ""}`}
       >
-        <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white">
+        <Link
+          to={`/u/${c.username}`}
+          className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white hover:opacity-90"
+        >
           {(c.full_name || c.username || "?")[0]?.toUpperCase() || "?"}
-        </div>
+        </Link>
         <div className="flex-1">
           <div className="flex items-center justify-between text-sm text-white/70">
-            <span className="font-semibold text-white">{displayName}</span>
+            <Link to={`/u/${c.username}`} className="font-semibold text-white hover:underline">
+              {displayName}
+            </Link>
             <span>{timeAgo(c.created_at)}</span>
           </div>
           {replyTarget && (
@@ -339,10 +641,12 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
             {replyTarget ? (
               <>
                 <span className="text-sky-400 font-semibold">@{replyTarget}</span>
-                <span className="ml-1">{highlightHashtags(c.body)}</span>
+                <span className="ml-1">
+                  {highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))}
+                </span>
               </>
             ) : (
-              highlightHashtags(c.body)
+              highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))
             )}
           </div>
           <div className="mt-3 flex items-center justify-between text-sm text-white/60">
@@ -416,7 +720,9 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
               <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
             </div>
           </div>
-          <p className="mt-3 text-white leading-relaxed break-words">{highlightHashtags(post.content)}</p>
+          <p className="mt-3 text-white leading-relaxed break-words">
+            {highlightHashtags(post.content, toSet(post.mentions), toSet(post.hashtags))}
+          </p>
           {post.media_url && (
             <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
               <img src={post.media_url} alt="media" className="w-full h-auto object-cover" />
@@ -482,14 +788,78 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
               <Paperclip className="w-5 h-5" />
             </button>
             <div className="flex-1 relative">
+              <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2">
+                <div className="pointer-events-none whitespace-pre-wrap break-words text-white relative z-0 min-h-[48px]">
+                  {body.trim().length === 0 ? (
+                    <span className="text-white/40">
+                      {replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
+                    </span>
+                  ) : (
+                    highlightInlineHashtags(body, suppressedHashtags, suppressedMentions)
+                  )}
+                </div>
+              </div>
               <textarea
                 ref={textareaRef}
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white placeholder:text-white/40 focus:border-white/30 outline-none transition resize-none"
+                className="w-full rounded-xl border-0 bg-transparent px-3 py-2 text-transparent caret-white placeholder:text-transparent focus:border-0 focus:ring-0 focus:outline-none transition absolute inset-0 z-10 resize-none overflow-hidden"
                 rows={2}
                 placeholder={replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
-                onInput={adjustTextarea}
+                onChange={(e) => {
+                  let val = e.target.value;
+                  const pos = e.target.selectionStart ?? val.length;
+                  if (pos >= 2 && val[pos - 1] === " " && val[pos - 2] === "#") {
+                    val = val.slice(0, pos - 2) + val.slice(pos);
+                    e.target.value = val;
+                    e.target.selectionStart = pos - 2;
+                    e.target.selectionEnd = pos - 2;
+                  }
+                  setBody(val);
+                  setCursor(e.target.selectionStart ?? val.length);
+                  autoResize();
+                }}
+                onSelect={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+                onKeyUp={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+                onClick={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && activeTag) {
+                    e.preventDefault();
+                    const tagText = activeTag.query.trim();
+                    const finalTag = tagText.length > 0 ? tagText : "";
+                    const tagToInsert = `#${finalTag}`;
+                    setBody((prev) => {
+                      const before = prev.slice(0, activeTag.start);
+                      const after = prev.slice(activeTag.end);
+                      return `${before}${tagToInsert} ${after}`;
+                    });
+                    const nextPos = activeTag.start + tagToInsert.length + 1;
+                    setCursor(nextPos);
+                    setActiveTag(null);
+                    setSuggestionsOpen(false);
+                    suppressNextDetection.current = true;
+                    return;
+                  }
+                  if (e.key === "Enter" && activeMention) {
+                    e.preventDefault();
+                    const mentionText = activeMention.query.trim() || mentionSuggestions[0]?.username || "";
+                    if (!mentionText) return;
+                    const pos = activeMention.start + mentionText.length + 2;
+                    setBody((prev) => {
+                      const before = prev.slice(0, activeMention.start);
+                      const after = prev.slice(activeMention.end);
+                      return `${before}@${mentionText} ${after}`;
+                    });
+                    setCursor(pos);
+                    setActiveMention(null);
+                    setMentionOpen(false);
+                    suppressNextDetection.current = true;
+                  }
+                }}
+              />
+              <div
+                ref={mirrorRef}
+                className="pointer-events-none invisible absolute whitespace-pre-wrap break-words"
+                aria-hidden="true"
               />
             </div>
             <button
@@ -503,6 +873,174 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
           </div>
         </div>
       </div>
+      {suggestionsOpen &&
+        createPortal(
+          <div
+            className="z-[999] overflow-hidden rounded-xl border border-white/10 bg-[#0f1116] shadow-xl"
+            style={{
+              position: "fixed",
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              width: 300,
+              transform: "translateY(-100%)",
+            }}
+          >
+            <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
+              <span>Хэштеги</span>
+              <button
+                type="button"
+                className="text-white/60 hover:text-white"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setSuggestionsOpen(false);
+                  setActiveTag(null);
+                  setSuppressedHashtags((prev) => {
+                    if (!activeTag) return prev;
+                    const next = new Set(prev);
+                    next.add(activeTag.start);
+                    return next;
+                  });
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {suggestions.length > 0 ? (
+              <ul className="max-h-52 overflow-y-auto divide-y divide-white/5 text-sm scrollbar-hide">
+                {suggestions.map((tag) => (
+                  <li key={tag.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-white hover:bg-white/5"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        replaceActiveHashtag(tag.name);
+                      }}
+                    >
+                      <span className="text-white/60">#</span>
+                      <span className="font-semibold text-sky-400">{tag.name}</span>
+                    </button>
+                  </li>
+                ))}
+                {suggestionsLoading && <li className="px-3 py-2 text-sm text-white/60">Поиск...</li>}
+              </ul>
+            ) : (
+              <div className="px-3 py-2 text-sm text-white/60">
+                {suggestionsLoading
+                  ? "Поиск..."
+                  : `Нажмите Enter, чтобы создать хэштег #${activeTag?.query ?? ""}`}
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
+
+      {mentionOpen &&
+        createPortal(
+          <div
+            className="z-[999] overflow-hidden rounded-xl border border-white/10 bg-[#0f1116] shadow-xl"
+            style={{
+              position: "fixed",
+              top: mentionPos.top,
+              left: mentionPos.left,
+              width: 300,
+              transform: "translateY(-100%)",
+            }}
+          >
+            <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
+              <span>Упоминания</span>
+              <button
+                type="button"
+                className="text-white/60 hover:text-white"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setMentionOpen(false);
+                  setActiveMention(null);
+                  setSuppressedMentions((prev) => {
+                    if (!activeMention) return prev;
+                    const next = new Set(prev);
+                    next.add(activeMention.start);
+                    return next;
+                  });
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {mentionSuggestions.length > 0 ? (
+              <ul
+                ref={mentionListRef}
+                className="max-h-60 overflow-y-auto divide-y divide-white/5 text-sm scrollbar-hide"
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  if (
+                    mentionNextOffset !== null &&
+                    !mentionLoading &&
+                    el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+                  ) {
+                    (async () => {
+                      setMentionLoading(true);
+                      try {
+                        const { items, nextOffset } = await api.searchUsersPaged(
+                          activeMention?.query || "",
+                          8,
+                          mentionNextOffset
+                        );
+                        setMentionNextOffset(nextOffset);
+                        setMentionSuggestions((prev) => {
+                          const seen = new Set(prev.map((u) => u.id));
+                          const merged = [...prev];
+                          items.forEach((u) => {
+                            if (!seen.has(u.id)) {
+                              merged.push(u);
+                              seen.add(u.id);
+                            }
+                          });
+                          return merged;
+                        });
+                      } finally {
+                        setMentionLoading(false);
+                      }
+                    })();
+                  }
+                }}
+              >
+                {mentionSuggestions.map((u) => (
+                  <li key={u.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 px-3 py-2 text-left text-white hover:bg-white/5"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        replaceActiveMention(u.username);
+                      }}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">
+                        {u.avatar_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={u.avatar_url} alt={u.username} className="w-8 h-8 rounded-full object-cover" />
+                        ) : (
+                          (u.full_name || u.username || "U")[0]?.toUpperCase() || "U"
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold truncate">{u.full_name || u.username}</p>
+                        <p className="text-white/60 text-sm truncate">@{u.username}</p>
+                        {u.major && <p className="text-white/50 text-xs truncate">{u.major}</p>}
+                      </div>
+                    </button>
+                  </li>
+                ))}
+                {mentionLoading && <li className="px-3 py-2 text-sm text-white/60">Загрузка...</li>}
+              </ul>
+            ) : (
+              <div className="px-3 py-2 text-sm text-white/60">
+                {mentionLoading ? "Поиск..." : "Введите имя пользователя"}
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
     </div>,
     document.body
   );

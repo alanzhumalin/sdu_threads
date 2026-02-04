@@ -1,9 +1,10 @@
 package dto
 
 type CreateCommentRequest struct {
-	PostID  string  `json:"post_id"`
-	Content string  `json:"content"`
-	ReplyTo *string `json:"reply_to_comment_id,omitempty"`
+	PostID   string   `json:"post_id"`
+	Content  string   `json:"content"`
+	ReplyTo  *string  `json:"reply_to_comment_id,omitempty"`
+	Hashtags []string `json:"hashtags,omitempty"`
 }
 
 type CommentResponse struct {
@@ -21,4 +22,6 @@ type CommentResponse struct {
 	ReplyToCommentID *string           `json:"reply_to_comment_id,omitempty"`
 	ReplyToFullName  *string           `json:"reply_to_full_name,omitempty"`
 	ReplyToUsername  *string           `json:"reply_to_username,omitempty"`
+	Mentions         []string          `json:"mentions,omitempty"`
+	Hashtags         []string          `json:"hashtags,omitempty"`
 }

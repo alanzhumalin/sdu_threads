@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Bell, MessageCircle, UserPlus, Hash, Heart, Loader2, ImageIcon } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -185,22 +186,21 @@ export default function NotificationsPage() {
   }, [data, tab]);
 
   const renderMessage = (n: NotificationItem) => {
-    const name = n.actor_full_name || n.actor_username || "Кто-то";
     switch (n.type) {
       case "like":
-        return `${name} понравился ваш пост`;
+        return `понравился ваш пост`;
       case "comment":
-        return `${name} прокомментировал ваш пост`;
+        return `прокомментировал ваш пост`;
       case "follow":
-        return `${name} подписался на вас`;
+        return `подписался на вас`;
       case "mention_post":
-        return `${name} упомянул вас в посте`;
+        return `упомянул вас в посте`;
       case "mention_comment":
-        return `${name} упомянул вас в комментарии`;
+        return `упомянул вас в комментарии`;
       case "reply_comment":
-        return `${name} ответил на ваш комментарий`;
+        return `ответил на ваш комментарий`;
       default:
-        return `${name} сделал действие`;
+        return `сделал действие`;
     }
   };
 
@@ -324,11 +324,20 @@ export default function NotificationsPage() {
               {!n.read && (
                 <span className="absolute -left-1 top-1 w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_0_4px_rgba(79,168,255,0.12)]" />
               )}
-              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+              <Link
+                to={`/u/${n.actor_username}`}
+                onClick={(e) => e.stopPropagation()}
+                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+              >
                 {n.actor_full_name?.[0]?.toUpperCase() || n.actor_username?.[0]?.toUpperCase() || "U"}
-              </div>
+              </Link>
               <div className="space-y-1 flex-1">
-                <p className="text-white font-semibold">{renderMessage(n)}</p>
+                <p className="text-white font-semibold">
+                  <Link to={`/u/${n.actor_username}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
+                    {n.actor_full_name || n.actor_username}
+                  </Link>{" "}
+                  {renderMessage(n)}
+                </p>
                 <p className="text-white/50 text-sm">{timeAgo(n.created_at)}</p>
                 {n.comment_body && (
                   <p className="text-white/70 text-sm border-l border-white/10 pl-2 overflow-hidden text-ellipsis">

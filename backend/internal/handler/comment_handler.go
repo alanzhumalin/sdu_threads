@@ -46,7 +46,7 @@ func (h *CommentHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := h.comments.Create(r.Context(), req.PostID, userID, req.Content, req.ReplyTo); err != nil {
+	if err := h.comments.Create(r.Context(), req.PostID, userID, req.Content, req.ReplyTo, req.Hashtags); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -68,47 +68,13 @@ func (h *CommentHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	resp := make([]dto.CommentResponse, 0, len(items))
-	for _, c := range items {
-		replies, _ := h.comments.ListReplies(ctx, c.ID, 1, 0, viewerID)
-		replyDtos := make([]dto.CommentResponse, 0, len(replies))
-		for _, rc := range replies {
-			replyDtos = append(replyDtos, dto.CommentResponse{
-				ID:               rc.ID,
-				PostID:           rc.PostID,
-				UserID:           rc.UserID,
-				Username:         rc.Username,
-				FullName:         rc.FullName,
-				Body:             rc.Body,
-				CreatedAt:        rc.CreatedAt,
-				LikedByMe:        rc.LikedByMe,
-				LikeCount:        rc.LikeCount,
-				RepliesCount:     rc.RepliesCount,
-				ReplyToCommentID: rc.ReplyToCommentID,
-				ReplyToFullName:  rc.ReplyToFullName,
-				ReplyToUsername:  rc.ReplyToUsername,
-				Replies:          []dto.CommentResponse{},
-			})
-		}
-		resp = append(resp, dto.CommentResponse{
-			ID:               c.ID,
-			PostID:           c.PostID,
-			UserID:           c.UserID,
-			Username:         c.Username,
-			FullName:         c.FullName,
-			Body:             c.Body,
-			CreatedAt:        c.CreatedAt,
-			LikedByMe:        c.LikedByMe,
-			LikeCount:        c.LikeCount,
-			RepliesCount:     c.RepliesCount,
-			ReplyToCommentID: c.ReplyToCommentID,
-			ReplyToFullName:  c.ReplyToFullName,
-			ReplyToUsername:  c.ReplyToUsername,
-			Replies:          replyDtos,
-		})
+	// Attach a single reply preview with mentions preserved
+	for i := range items {
+		replies, _ := h.comments.ListReplies(ctx, items[i].ID, 1, 0, viewerID)
+		items[i].Replies = replies
 	}
-	setNextOffset(w, offset, limit, len(resp))
-	writeJSON(w, http.StatusOK, resp)
+	setNextOffset(w, offset, limit, len(items))
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
@@ -172,27 +138,8 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		resp := make([]dto.CommentResponse, 0, len(items))
-		for _, c := range items {
-			resp = append(resp, dto.CommentResponse{
-				ID:               c.ID,
-				PostID:           c.PostID,
-				UserID:           c.UserID,
-				Username:         c.Username,
-				FullName:         c.FullName,
-				Body:             c.Body,
-				CreatedAt:        c.CreatedAt,
-				LikedByMe:        c.LikedByMe,
-				LikeCount:        c.LikeCount,
-				RepliesCount:     c.RepliesCount,
-				ReplyToCommentID: c.ReplyToCommentID,
-				ReplyToFullName:  c.ReplyToFullName,
-				ReplyToUsername:  c.ReplyToUsername,
-				Replies:          []dto.CommentResponse{},
-			})
-		}
-		setNextOffset(w, offset, limit, len(resp))
-		writeJSON(w, http.StatusOK, resp)
+		setNextOffset(w, offset, limit, len(items))
+		writeJSON(w, http.StatusOK, items)
 		return
 	}
 }

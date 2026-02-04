@@ -93,6 +93,10 @@ const feedPageFn = (
       liked_by_me: boolean;
       view_count: number;
       comment_count?: number;
+      mentions?: string[];
+      hashtags?: string[];
+      is_subscribed?: boolean;
+      is_me?: boolean;
     }[]
   >(`/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
     items: data,
@@ -120,7 +124,24 @@ export const api = {
       followers: number;
       following: number;
       created_at: string;
+      is_me?: boolean;
+      is_subscribed?: boolean;
     }>("/users/me", "GET", undefined, token),
+  profileByUsername: (username: string, token?: string | null) =>
+    request<{
+      id: string;
+      email: string;
+      username: string;
+      full_name: string;
+      major: string;
+      avatar_url?: string;
+      background_url?: string;
+      followers: number;
+      following: number;
+      created_at: string;
+      is_me?: boolean;
+      is_subscribed?: boolean;
+    }>(`/users/${encodeURIComponent(username)}`, "GET", undefined, token),
   updateProfile: (
     payload: { full_name?: string; major?: string; avatar_url?: string; background_url?: string },
     token: string
@@ -139,6 +160,29 @@ export const api = {
     }>("/users/me", "PATCH", payload, token),
   feedPage: feedPageFn,
   feed: (token?: string | null) => feedPageFn(20, 0, token).then((r) => r.items),
+  userPosts: (userId: string, limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        user_id: string;
+        content: string;
+        username: string;
+        full_name: string;
+        created_at: string;
+        media_url?: string;
+        like_count: number;
+      liked_by_me: boolean;
+      view_count: number;
+      comment_count?: number;
+      mentions?: string[];
+      hashtags?: string[];
+      is_subscribed?: boolean;
+      is_me?: boolean;
+    }[]
+  >(`/users/${userId}/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+    items: data,
+    nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+  })),
   createPost: (payload: { content: string; media_url?: string; hashtags?: string[] }, token: string) =>
     request<{ status: string }>("/posts", "POST", payload, token),
   searchHashtags: (q: string, limit = 8) =>
@@ -193,6 +237,21 @@ export const api = {
     request<{ status: string }>(`/notifications/${id}/read`, "POST", undefined, token),
   markAllNotificationsRead: (token?: string | null) =>
     request<{ status: string; updated?: number }>(`/notifications-read-all`, "POST", undefined, token),
+  searchUsersPaged: (q: string, limit = 10, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        username: string;
+        full_name: string;
+        avatar_url?: string;
+        major?: string;
+      }[]
+    >(`/users/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`, "GET", undefined, token).then(
+      ({ data, headers }) => ({
+        items: data,
+        nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+      })
+    ),
   postById: (postId: string, token?: string | null) =>
     request<{
       id: string;
@@ -207,6 +266,10 @@ export const api = {
       liked_by_me: boolean;
       view_count: number;
       comment_count?: number;
+      mentions?: string[];
+      hashtags?: string[];
+      is_subscribed?: boolean;
+      is_me?: boolean;
     }>(`/posts/${postId}`, "GET", undefined, token),
   searchUsers: (q: string, limit = 20, offset = 0, token?: string | null) =>
     request<
@@ -231,44 +294,54 @@ export const api = {
         id: string;
         post_id: string;
         user_id: string;
-        username: string;
-        full_name?: string;
-        body: string;
-        created_at: string;
-        liked_by_me: boolean;
-        like_count: number;
-        replies_count: number;
-        reply_to_comment_id?: string;
-        replies?: any[];
-        reply_to_full_name?: string;
-        reply_to_username?: string;
-      }[]
-    >(`/comments?post_id=${postId}&limit=${limit}&offset=${offset}`, "GET", undefined, token),
+      username: string;
+      full_name?: string;
+      body: string;
+      created_at: string;
+      liked_by_me: boolean;
+      like_count: number;
+      replies_count: number;
+      reply_to_comment_id?: string;
+      replies?: any[];
+      reply_to_full_name?: string;
+      reply_to_username?: string;
+      mentions?: string[];
+      hashtags?: string[];
+    }[]
+  >(`/comments?post_id=${postId}&limit=${limit}&offset=${offset}`, "GET", undefined, token),
   listReplies: (commentId: string, limit = 20, offset = 0, token?: string | null) =>
     request<
       {
         id: string;
         post_id: string;
         user_id: string;
-        username: string;
-        body: string;
-        created_at: string;
-        liked_by_me: boolean;
-        like_count: number;
-        replies_count: number;
-        reply_to_comment_id?: string;
-        replies?: any[];
-      }[]
-    >(`/comments/${commentId}/replies?limit=${limit}&offset=${offset}`, "GET", undefined, token),
-  createComment: (postId: string, body: string, replyTo?: string, token?: string | null) =>
+      username: string;
+      body: string;
+      created_at: string;
+      liked_by_me: boolean;
+      like_count: number;
+      replies_count: number;
+      reply_to_comment_id?: string;
+      replies?: any[];
+      mentions?: string[];
+      hashtags?: string[];
+    }[]
+  >(`/comments/${commentId}/replies?limit=${limit}&offset=${offset}`, "GET", undefined, token),
+  createComment: (postId: string, body: string, replyTo?: string, hashtags?: string[], token?: string | null) =>
     request<{ status: string }>(
       `/comments`,
       "POST",
-      replyTo ? { post_id: postId, content: body, reply_to_comment_id: replyTo } : { post_id: postId, content: body },
+      replyTo
+        ? { post_id: postId, content: body, reply_to_comment_id: replyTo, hashtags }
+        : { post_id: postId, content: body, hashtags },
       token || undefined
     ),
   likeComment: (commentId: string, token: string) =>
     request<{ status: string }>(`/comments/${commentId}/like`, "POST", undefined, token),
   unlikeComment: (commentId: string, token: string) =>
     request<{ status: string }>(`/comments/${commentId}/like`, "DELETE", undefined, token),
+  followUser: (userId: string, token: string) =>
+    request<{ status: string }>(`/users/${userId}/follow`, "POST", undefined, token),
+  unfollowUser: (userId: string, token: string) =>
+    request<{ status: string }>(`/users/${userId}/follow`, "DELETE", undefined, token),
 };

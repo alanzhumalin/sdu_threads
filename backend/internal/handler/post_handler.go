@@ -56,25 +56,8 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		resp := make([]dto.FeedResponseItem, 0, len(items))
-		for _, it := range items {
-			resp = append(resp, dto.FeedResponseItem{
-				ID:           it.ID,
-				UserID:       it.UserID,
-				Username:     it.Username,
-				FullName:     it.FullName,
-				Content:      it.Content,
-				MediaURL:     it.MediaURL,
-				CreatedAt:    it.CreatedAt,
-				UpdatedAt:    it.UpdatedAt,
-				LikeCount:    it.LikeCount,
-				LikedByMe:    it.LikedByMe,
-				ViewCount:    it.ViewCount,
-				CommentCount: it.CommentCount,
-			})
-		}
-		setNextOffset(w, offset, limit, len(resp))
-		writeJSON(w, http.StatusOK, resp)
+		setNextOffset(w, offset, limit, len(items))
+		writeJSON(w, http.StatusOK, items)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -101,21 +84,7 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		resp := dto.FeedResponseItem{
-			ID:           post.ID,
-			UserID:       post.UserID,
-			Username:     post.Username,
-			FullName:     post.FullName,
-			Content:      post.Content,
-			MediaURL:     post.MediaURL,
-			CreatedAt:    post.CreatedAt,
-			UpdatedAt:    post.UpdatedAt,
-			LikeCount:    post.LikeCount,
-			LikedByMe:    post.LikedByMe,
-			ViewCount:    post.ViewCount,
-			CommentCount: post.CommentCount,
-		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, post)
 		return
 	}
 

@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import PostComposer from "../components/PostComposer";
 import { CommentsModal } from "../components/CommentsModal";
+import { highlightHashtags } from "../utils/text";
 import {
   Heart,
   HeartOff,
@@ -26,20 +27,10 @@ type FeedItem = {
   liked_by_me: boolean;
   comment_count?: number;
   view_count: number;
-};
-
-const highlightHashtags = (text: string) => {
-  const parts = text.split(/(#[\p{L}\p{N}_-]+)/gu);
-  return parts.map((part, idx) => {
-    if (/^#[\p{L}\p{N}_-]+$/u.test(part)) {
-      return (
-        <span key={idx} className="text-sky-400 font-semibold">
-          {part}
-        </span>
-      );
-    }
-    return <span key={idx}>{part}</span>;
-  });
+  mentions?: string[];
+  hashtags?: string[];
+  is_subscribed?: boolean;
+  is_me?: boolean;
 };
 
 const isHalfVisible = (el: HTMLElement) => {
@@ -69,13 +60,13 @@ const timeAgo = (iso: string) => {
 };
 
 export default function FeedPage() {
-  const token = useAuthStore((s) => s.token);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
+  const token = useAuthStore((s) => s.token);
   const loadViewed = () => {
     try {
       const raw = localStorage.getItem("viewed_posts");
@@ -210,6 +201,21 @@ export default function FeedPage() {
     }
   };
 
+  const toggleFollow = async (post: FeedItem) => {
+    if (!token || post.is_me) return;
+    const nextState = !post.is_subscribed;
+    updatePost(post.id, { is_subscribed: nextState });
+    try {
+      if (nextState) {
+        await api.followUser(post.user_id, token);
+      } else {
+        await api.unfollowUser(post.user_id, token);
+      }
+    } catch {
+      updatePost(post.id, { is_subscribed: post.is_subscribed });
+    }
+  };
+
   const setPostRef = (id: string) => (el: HTMLElement | null) => {
     if (!observer.current || !el) return;
     observer.current.observe(el);
@@ -264,27 +270,54 @@ export default function FeedPage() {
           >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+                <Link
+                  to={`/u/${item.username}`}
+                  className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                >
                   {item.full_name?.[0]?.toUpperCase() || item.username[0].toUpperCase()}
-                </div>
+                </Link>
                 <div>
-                  <p className="text-white font-semibold leading-tight flex items-center gap-2">
+                  <Link
+                    to={`/u/${item.username}`}
+                    className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                  >
                     {item.full_name || "Без имени"}
-                  </p>
+                  </Link>
                   <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>
                 </div>
               </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpenId(menuOpenId === item.id ? null : item.id);
-                }}
-                className="text-white/50 hover:text-white rounded-full p-2"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                {item.is_me ? (
+                  <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
+                    Это вы
+                  </span>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFollow(item);
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs border transition ${
+                      item.is_subscribed
+                        ? "border-white/20 text-white/80 hover:border-white/40"
+                        : "border-white text-black bg-white hover:bg-white/90"
+                    }`}
+                  >
+                    {item.is_subscribed ? "Отписаться" : "Подписаться"}
+                  </button>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                  }}
+                  className="text-white/50 hover:text-white rounded-full p-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm6 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
+                  </svg>
+                </button>
+              </div>
 
               {menuOpenId === item.id && (
                 <div className="absolute right-3 top-10 bg-black/90 border border-white/10 rounded-xl shadow-2xl w-44 z-20 backdrop-blur">
@@ -301,7 +334,11 @@ export default function FeedPage() {
             </div>
 
             <p className="mt-3 text-white leading-relaxed break-words">
-              {highlightHashtags(item.content)}
+              {highlightHashtags(
+                item.content,
+                item.mentions ? new Set(item.mentions.map((m) => m.toLowerCase())) : undefined,
+                item.hashtags ? new Set(item.hashtags.map((h) => h.toLowerCase())) : undefined
+              )}
             </p>
 
             {item.media_url && (

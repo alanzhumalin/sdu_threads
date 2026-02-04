@@ -100,3 +100,66 @@ func (r *HashtagRepository) Popular(ctx context.Context, limit int) ([]PopularHa
 	}
 	return res, err
 }
+
+// ByPostIDs returns map postID -> []hashtagName (lowercase).
+func (r *HashtagRepository) ByPostIDs(ctx context.Context, postIDs []string) (map[string][]string, error) {
+	result := make(map[string][]string)
+	if len(postIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		PostID string
+		Name   string
+	}
+	if err := r.db.WithContext(ctx).
+		Raw(
+			`SELECT ph.post_id, h.name
+             FROM post_hashtags ph
+             JOIN hashtags h ON h.id = ph.hashtag_id
+             WHERE ph.post_id IN ?`,
+			postIDs,
+		).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, rrow := range rows {
+		result[rrow.PostID] = append(result[rrow.PostID], rrow.Name)
+	}
+	return result, nil
+}
+
+// Existing returns set of existing hashtag names (lowercase) from provided list.
+func (r *HashtagRepository) Existing(ctx context.Context, names []string) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(names) == 0 {
+		return result, nil
+	}
+	unique := make([]string, 0, len(names))
+	seen := make(map[string]struct{})
+	for _, n := range names {
+		n = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(n, "#")))
+		if n == "" {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		unique = append(unique, n)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+	var rows []string
+	if err := r.db.WithContext(ctx).
+		Model(&Hashtag{}).
+		Select("name").
+		Where("name IN ?", unique).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, n := range rows {
+		result[strings.ToLower(n)] = struct{}{}
+	}
+	return result, nil
+}

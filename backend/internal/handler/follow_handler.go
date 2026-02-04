@@ -13,11 +13,12 @@ import (
 type FollowHandler struct {
 	follows *service.FollowService
 	profile *service.ProfileService
+	posts   *service.PostService
 	jwt     *auth.JWTManager
 }
 
-func NewFollowHandler(f *service.FollowService, p *service.ProfileService, jwt *auth.JWTManager) *FollowHandler {
-	return &FollowHandler{follows: f, profile: p, jwt: jwt}
+func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts *service.PostService, jwt *auth.JWTManager) *FollowHandler {
+	return &FollowHandler{follows: f, profile: p, posts: posts, jwt: jwt}
 }
 
 func (h *FollowHandler) Register(mux *http.ServeMux) {
@@ -41,6 +42,8 @@ func (h *FollowHandler) handleFollowRoutes(w http.ResponseWriter, r *http.Reques
 	userID := parts[0]
 
 	switch parts[1] {
+	case "posts":
+		h.handleUserPosts(w, r, userID)
 	case "follow":
 		h.handleFollow(w, r, userID)
 	case "followers":
@@ -122,10 +125,20 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 		userID = idStr
 	}
 
+	var viewerID *string
+	if id, err := tryGetUserID(r, h.jwt); err == nil {
+		viewerID = &id
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		p, err := h.profile.Get(r.Context(), userID)
+		p, err := h.profile.Get(r.Context(), userID, viewerID)
 		if err != nil {
+			// try username fallback
+			if pu, err2 := h.profile.GetByUsername(r.Context(), userID, viewerID); err2 == nil {
+				writeJSON(w, http.StatusOK, pu)
+				return
+			}
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
@@ -154,4 +167,24 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (h *FollowHandler) handleUserPosts(w http.ResponseWriter, r *http.Request, userID string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := parseIntQuery(r, "limit", 20)
+	offset := parseIntQuery(r, "offset", 0)
+	var viewerID *string
+	if id, err := tryGetUserID(r, h.jwt); err == nil {
+		viewerID = &id
+	}
+	items, err := h.posts.ByUser(r.Context(), userID, limit, offset, viewerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setNextOffset(w, offset, limit, len(items))
+	writeJSON(w, http.StatusOK, items)
 }

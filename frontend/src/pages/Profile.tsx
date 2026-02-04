@@ -326,7 +326,11 @@ export default function ProfilePage() {
               </div>
 
               <p className="mt-3 text-white leading-relaxed break-words">
-                {highlightHashtags(p.content)}
+                {highlightHashtags(
+                  p.content,
+                  p.mentions ? new Set(p.mentions.map((m: string) => m.toLowerCase())) : undefined,
+                  p.hashtags ? new Set(p.hashtags.map((h: string) => h.toLowerCase())) : undefined
+                )}
               </p>
 
               {p.media_url && (

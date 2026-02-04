@@ -4,6 +4,7 @@ import LoginPage from "./Login";
 import RegisterPage from "./Register";
 import Placeholder from "./Placeholder";
 import ProfilePage from "./Profile";
+import ProfileUserPage from "./ProfileUser";
 import SearchPage from "./Search";
 import NotificationsPage from "./Notifications";
 import { useAuthStore } from "../store/auth";
@@ -82,6 +83,22 @@ export default function App() {
               element={
                 <Protected>
                   <ProfilePage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/u/:username"
+              element={
+                <Protected>
+                  <ProfileUserPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/u/:username"
+              element={
+                <Protected>
+                  <ProfileUserPage />
                 </Protected>
               }
             />

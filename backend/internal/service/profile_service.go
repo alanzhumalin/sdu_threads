@@ -29,9 +29,11 @@ type Profile struct {
 	Followers     int64  `json:"followers"`
 	Following     int64  `json:"following"`
 	CreatedAt     string `json:"created_at"`
+	IsMe          bool   `json:"is_me"`
+	IsSubscribed  bool   `json:"is_subscribed"`
 }
 
-func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, error) {
+func (s *ProfileService) Get(ctx context.Context, userID string, viewerID *string) (*Profile, error) {
 	u, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -44,6 +46,13 @@ func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, erro
 	if err != nil {
 		return nil, err
 	}
+	isMe := viewerID != nil && *viewerID == userID
+	isSubscribed := false
+	if viewerID != nil && !isMe {
+		if ok, err := s.follows.IsFollowing(ctx, *viewerID, userID); err == nil {
+			isSubscribed = ok
+		}
+	}
 	return &Profile{
 		ID:            u.ID,
 		Email:         u.Email,
@@ -55,6 +64,8 @@ func (s *ProfileService) Get(ctx context.Context, userID string) (*Profile, erro
 		Followers:     followers,
 		Following:     following,
 		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
+		IsMe:          isMe,
+		IsSubscribed:  isSubscribed,
 	}, nil
 }
 
@@ -77,5 +88,13 @@ func (s *ProfileService) Update(ctx context.Context, userID string, req dto.Upda
 		return nil, err
 	}
 
-	return s.Get(ctx, userID)
+	return s.Get(ctx, userID, &userID)
+}
+
+func (s *ProfileService) GetByUsername(ctx context.Context, username string, viewerID *string) (*Profile, error) {
+	u, err := s.users.GetByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, u.ID, viewerID)
 }

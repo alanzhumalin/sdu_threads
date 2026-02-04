@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"gorm.io/gorm"
 	"sduthreads/internal/models"
@@ -67,4 +68,41 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, id string, fields ma
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Updates(fields).Error
+}
+
+// ExistingUsernames returns a set of usernames that exist in DB (case-insensitive exact match).
+func (r *UserRepository) ExistingUsernames(ctx context.Context, usernames []string) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(usernames) == 0 {
+		return result, nil
+	}
+	unique := make([]string, 0, len(usernames))
+	seen := make(map[string]struct{})
+	for _, u := range usernames {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		u = strings.ToLower(u)
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		unique = append(unique, u)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+	var rows []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Select("username").
+		Where("LOWER(username) IN ?", unique).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, u := range rows {
+		result[strings.ToLower(u)] = struct{}{}
+	}
+	return result, nil
 }

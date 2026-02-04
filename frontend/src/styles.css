@@ -81,3 +81,11 @@ body {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 14px;
 }
+
+.scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}

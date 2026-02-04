@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Hash, Loader2, Search, User as UserIcon } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -172,8 +173,9 @@ export default function SearchPage() {
             )}
             {!loading &&
               users.map((user) => (
-                <div
+                <Link
                   key={user.id}
+                  to={`/u/${user.username}`}
                   className="card p-3 flex items-center justify-between hover:border-white/25 transition"
                 >
                   <div className="flex items-center gap-3">
@@ -189,7 +191,7 @@ export default function SearchPage() {
                     </div>
                   </div>
                   <UserIcon className="w-4 h-4 text-white/40" strokeWidth={1.6} />
-                </div>
+                </Link>
               ))}
           </div>
 

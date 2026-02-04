@@ -87,3 +87,47 @@ LIMIT ? OFFSET ?`
 	}
 	return res, nil
 }
+
+func (r *FollowRepository) IsFollowing(ctx context.Context, followerID, followeeID string) (bool, error) {
+	var exists bool
+	err := r.db.WithContext(ctx).
+		Raw(`SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?)`, followerID, followeeID).
+		Scan(&exists).Error
+	return exists, err
+}
+
+func (r *FollowRepository) FollowingMap(ctx context.Context, followerID string, followeeIDs []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(followeeIDs))
+	if len(followeeIDs) == 0 {
+		return result, nil
+	}
+	unique := make([]string, 0, len(followeeIDs))
+	seen := make(map[string]struct{})
+	for _, id := range followeeIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+	rows, err := r.db.WithContext(ctx).
+		Raw(`SELECT followee_id FROM follows WHERE follower_id = ? AND followee_id IN ?`, followerID, unique).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, nil
+}
