@@ -20,7 +20,6 @@ func NewProfileService(users *repository.UserRepository, follows *repository.Fol
 
 type Profile struct {
 	ID            string `json:"id"`
-	Email         string `json:"email"`
 	Username      string `json:"username"`
 	FullName      string `json:"full_name"`
 	Major         string `json:"major"`
@@ -55,7 +54,6 @@ func (s *ProfileService) Get(ctx context.Context, userID string, viewerID *strin
 	}
 	return &Profile{
 		ID:            u.ID,
-		Email:         u.Email,
 		Username:      u.Username,
 		FullName:      u.FullName,
 		Major:         u.Major,

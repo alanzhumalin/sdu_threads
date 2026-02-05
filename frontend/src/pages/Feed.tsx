@@ -3,15 +3,16 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
+import { usePostCacheStore } from "../store/postCache";
 import PostComposer from "../components/PostComposer";
 import { CommentsModal } from "../components/CommentsModal";
 import { TopUsers } from "../components/TopUsers";
+import { ReportModal } from "../components/ReportModal";
+import { ErrorMessage } from "../components/ErrorMessage";
 import { highlightHashtags } from "../utils/text";
 import {
   Heart,
-  HeartOff,
   MessageCircle,
-  MoreVertical,
   Share2,
   Flag,
   Eye,
@@ -71,13 +72,18 @@ export default function FeedPage() {
     updateItem: updateCacheItem,
     updateByUser: updateCacheByUser,
   } = useFeedStore();
+  const postPatches = usePostCacheStore((s) => s.byId);
+  const patchPost = usePostCacheStore((s) => s.patch);
   const [feed, setFeed] = useState<FeedItem[]>(cachedFeed);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(!initialized);
   const [nextOffset, setNextOffset] = useState<number | null>(cachedNext);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
+  const [reportPost, setReportPost] = useState<FeedItem | null>(null);
   const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
   const loadViewed = () => {
     try {
       const raw = localStorage.getItem("viewed_posts");
@@ -92,6 +98,18 @@ export default function FeedPage() {
   const viewedPersisted = useRef<Set<string>>(loadViewed());
   const pendingTimers = useRef<Map<string, number>>(new Map());
   const observer = useRef<IntersectionObserver | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 1800);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    };
+  }, []);
 
   const updatePost = (id: string, patch: Partial<FeedItem>) => {
     setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -267,17 +285,49 @@ export default function FeedPage() {
 
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
-    const current = feed.find((p) => p.id === id);
-    const nextCount = (current?.like_count ?? 0) + (liked ? -1 : 1);
+    const currentBase = feed.find((p) => p.id === id);
+    const currentPatch = postPatches[id];
+    const current = currentPatch ? { ...currentBase, ...currentPatch } : currentBase;
+    const currentLikeCount = current?.like_count ?? 0;
+    const nextCount = currentLikeCount + (liked ? -1 : 1);
     updatePost(id, { liked_by_me: !liked, like_count: nextCount });
+    patchPost(id, { liked_by_me: !liked, like_count: nextCount });
     try {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
     } catch (e: any) {
       setError(e.message || "Ошибка лайка");
       if (current) {
-        updatePost(id, { liked_by_me: liked, like_count: current.like_count });
+        updatePost(id, { liked_by_me: liked, like_count: currentLikeCount });
+        patchPost(id, { liked_by_me: liked, like_count: currentLikeCount });
       }
+    }
+  };
+
+  const sharePost = async (postId: string) => {
+    const url = `${window.location.origin}/p/${postId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Ссылка скопирована");
+      return;
+    } catch {
+      // Fallback for non-secure contexts / older browsers
+    }
+
+    try {
+      const el = document.createElement("textarea");
+      el.value = url;
+      el.setAttribute("readonly", "true");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      el.style.top = "0";
+      document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(el);
+      showToast(ok ? "Ссылка скопирована" : "Не удалось скопировать ссылку");
+    } catch {
+      showToast("Не удалось скопировать ссылку");
     }
   };
 
@@ -294,10 +344,14 @@ export default function FeedPage() {
         <PostComposer onCreated={refresh} />
 
         {loading && <p className="text-gray-400">Загрузка фида...</p>}
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        <ErrorMessage message={error} />
 
         <div className="space-y-3">
-          {feed.map((item) => (
+          {feed.map((item) => {
+            const patch = postPatches[item.id];
+            const p = patch ? { ...item, ...patch } : item;
+
+            return (
             <article
               key={item.id}
               ref={setPostRef(item.id)}
@@ -359,11 +413,27 @@ export default function FeedPage() {
 
               {menuOpenId === item.id && (
                 <div className="absolute right-3 top-10 bg-black/90 border border-white/10 rounded-xl shadow-2xl w-44 z-20 backdrop-blur">
-                  <button className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(null);
+                      sharePost(item.id);
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                  >
                     <Share2 className="w-4 h-4" strokeWidth={1.7} />
                     Поделиться
                   </button>
-                  <button className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(null);
+                      setReportPost(item);
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
+                  >
                     <Flag className="w-4 h-4" strokeWidth={1.7} />
                     Пожаловаться
                   </button>
@@ -393,35 +463,36 @@ export default function FeedPage() {
             <div className="mt-4 flex items-center justify-between text-sm text-white/60">
               <div className="flex items-center gap-6">
                 <button
-                  onClick={() => toggleLike(item.id, item.liked_by_me)}
+                  onClick={() => toggleLike(item.id, p.liked_by_me)}
                   className={`flex items-center gap-2 px-2 py-1 rounded-full transition ${
-                    item.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"
+                    p.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"
                   }`}
                 >
-                  {item.liked_by_me ? (
+                  {p.liked_by_me ? (
                     <Heart className="w-5 h-5 fill-current" strokeWidth={1.7} />
                   ) : (
                     <Heart className="w-5 h-5" strokeWidth={1.7} />
                   )}
-                  <span className="font-medium">{item.like_count}</span>
+                  <span className="font-medium">{p.like_count}</span>
                 </button>
 
                 <button
                   className="flex items-center gap-2 text-white/60 hover:text-white"
-                  onClick={() => setCommentsPost(item)}
+                  onClick={() => setCommentsPost(p)}
                 >
                   <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
-                  <span>{item.comment_count ?? 0}</span>
+                  <span>{p.comment_count ?? 0}</span>
                 </button>
               </div>
 
               <div className="flex items-center gap-2 text-white/60">
                 <Eye className="w-5 h-5" strokeWidth={1.7} />
-                <span>{item.view_count ?? 0}</span>
+                <span>{p.view_count ?? 0}</span>
               </div>
             </div>
           </article>
-        ))}
+            );
+          })}
 
           {!loading && feed.length === 0 && !error && (
             <div className="card p-6 text-white/70 space-y-3">
@@ -446,6 +517,21 @@ export default function FeedPage() {
         )}
       </div>
       <TopUsers />
+      {reportPost && (
+        <ReportModal
+          postId={reportPost.id}
+          userId={reportPost.user_id}
+          onSuccess={() => showToast("Жалоба отправлена")}
+          onClose={() => setReportPost(null)}
+        />
+      )}
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200]">
+          <div className="rounded-full border border-white/10 bg-black/90 backdrop-blur px-4 py-2 text-sm text-white/80 shadow-2xl">
+            {toast}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

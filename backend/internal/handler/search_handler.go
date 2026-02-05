@@ -38,7 +38,6 @@ func (h *SearchHandler) searchUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		resp = append(resp, dto.UserResponse{
 			ID:            u.ID,
-			Email:         u.Email,
 			Username:      u.Username,
 			FullName:      u.FullName,
 			Major:         u.Major,

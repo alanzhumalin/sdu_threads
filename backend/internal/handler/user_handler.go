@@ -54,7 +54,6 @@ func (h *UserHandler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	resp := dto.UserResponse{
 		ID:            user.ID,
-		Email:         user.Email,
 		Username:      user.Username,
 		FullName:      user.FullName,
 		Major:         user.Major,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
@@ -105,7 +106,13 @@ func (s *PostService) Create(ctx context.Context, userID string, content, mediaU
 		Content:  content,
 		MediaURL: mediaURL,
 	}
-	if err := s.posts.Create(ctx, &post); err != nil {
+	limits := repository.PostCreateLimits{
+		Cooldown:      60 * time.Second,
+		HourWindow:    60 * time.Minute,
+		HourMaxPosts:  10,
+		MediaCooldown: 120 * time.Second,
+	}
+	if err := s.posts.CreateWithRateLimit(ctx, &post, limits); err != nil {
 		return nil, err
 	}
 	return &post, nil

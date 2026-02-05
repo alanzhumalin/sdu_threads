@@ -6,6 +6,95 @@ const API_BASE = "/api";
 
 let redirecting = false;
 
+type ApiErrorShape =
+  | { error: string }
+  | { error: { code?: string; message?: string; retry_after_seconds?: number } }
+  | { message?: string };
+
+function normalizeBackendMessage(msg: string, status: number, code?: string) {
+  const raw = (msg || "").trim();
+  const lower = raw.toLowerCase();
+
+  if (status === 401 || status === 403 || code === "UNAUTHORIZED") {
+    return "Сессия истекла. Войдите снова.";
+  }
+
+  if (status === 429 || code === "RATE_LIMIT") {
+    return "Слишком часто. Попробуйте позже.";
+  }
+
+  if (code === "INVALID_CREDENTIALS" || lower.includes("invalid credentials")) {
+    return "Неверный логин или пароль";
+  }
+
+  if (lower.includes("rules must be accepted")) {
+    return "Нужно принять правила использования сайта";
+  }
+
+  if (lower.includes("email must be institutional")) {
+    return "Email должен быть в формате *@sdu.edu.kz";
+  }
+
+  if (lower.includes("email already registered")) {
+    return "Этот email уже зарегистрирован";
+  }
+
+  if (lower.includes("username already taken")) {
+    return "Этот username уже занят";
+  }
+
+  if (lower.includes("password must be at least")) {
+    return "Пароль должен быть минимум 8 символов";
+  }
+
+  if (
+    lower.includes("sqlstate") ||
+    lower.includes("invalid input syntax for type uuid") ||
+    lower.includes("pq:")
+  ) {
+    return "Что-то пошло не так. Попробуйте позже.";
+  }
+
+  if (raw.startsWith("HTTP ") || raw === "") {
+    if (status >= 500) return "Ошибка сервера. Попробуйте позже.";
+    if (status === 404) return "Не найдено";
+    if (status === 400) return "Некорректный запрос";
+    return "Что-то пошло не так. Попробуйте позже.";
+  }
+
+  return raw;
+}
+
+async function readError(
+  res: Response
+): Promise<{ message: string; code?: string; retryAfterSeconds?: number }> {
+  const text = (await res.text()).trim();
+  if (!text) return { message: `HTTP ${res.status}` };
+
+  try {
+    const data = JSON.parse(text) as ApiErrorShape;
+    const anyData = data as any;
+    if (typeof anyData?.error === "string") {
+      return { message: anyData.error };
+    }
+    if (anyData?.error && typeof anyData.error === "object") {
+      const code = typeof anyData.error.code === "string" ? anyData.error.code : undefined;
+      const msg = typeof anyData.error.message === "string" ? anyData.error.message : undefined;
+      const retryAfterSeconds =
+        typeof anyData.error.retry_after_seconds === "number"
+          ? anyData.error.retry_after_seconds
+          : undefined;
+      if (msg) return { message: msg, code, retryAfterSeconds };
+    }
+    if (typeof anyData?.message === "string" && anyData.message) {
+      return { message: anyData.message };
+    }
+    return { message: text };
+  } catch {
+    return { message: text };
+  }
+}
+
 async function request<T>(
   path: string,
   method: HttpMethod = "GET",
@@ -16,11 +105,16 @@ async function request<T>(
     "Content-Type": "application/json",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+  }
   if (res.status === 401 || res.status === 403) {
     if (!redirecting) {
       redirecting = true;
@@ -31,11 +125,14 @@ async function request<T>(
       }
       window.location.href = "/login";
     }
-    throw new Error("Unauthorized");
+    throw new Error("Сессия истекла. Войдите снова.");
   }
   if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || `HTTP ${res.status}`);
+    const { message, code, retryAfterSeconds } = await readError(res);
+    const err: any = new Error(normalizeBackendMessage(message, res.status, code));
+    if (code) err.code = code;
+    if (typeof retryAfterSeconds === "number") err.retry_after_seconds = retryAfterSeconds;
+    throw err;
   }
   return res.json();
 }
@@ -50,11 +147,16 @@ async function requestWithHeaders<T>(
     "Content-Type": "application/json",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+  }
   if (res.status === 401 || res.status === 403) {
     if (!redirecting) {
       redirecting = true;
@@ -65,11 +167,14 @@ async function requestWithHeaders<T>(
       }
       window.location.href = "/login";
     }
-    throw new Error("Unauthorized");
+    throw new Error("Сессия истекла. Войдите снова.");
   }
   if (!res.ok) {
-    const msg = await res.text();
-    throw new Error(msg || `HTTP ${res.status}`);
+    const { message, code, retryAfterSeconds } = await readError(res);
+    const err: any = new Error(normalizeBackendMessage(message, res.status, code));
+    if (code) err.code = code;
+    if (typeof retryAfterSeconds === "number") err.retry_after_seconds = retryAfterSeconds;
+    throw err;
   }
   const data = await res.json();
   return { data, headers: res.headers };
@@ -104,18 +209,18 @@ const feedPageFn = (
   }));
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<{ token: string }>("/auth/login", "POST", { email, password }),
+  login: (login: string, password: string) =>
+    request<{ token: string }>("/auth/login", "POST", { login, password }),
   register: (payload: {
     email: string;
     username: string;
     full_name: string;
     password: string;
+    accepted_rules: boolean;
   }) => request<{ token: string }>("/auth/register", "POST", payload),
   profileMe: (token?: string | null) =>
     request<{
       id: string;
-      email: string;
       username: string;
       full_name: string;
       major: string;
@@ -130,7 +235,6 @@ export const api = {
   profileByUsername: (username: string, token?: string | null) =>
     request<{
       id: string;
-      email: string;
       username: string;
       full_name: string;
       major: string;
@@ -148,7 +252,6 @@ export const api = {
   ) =>
     request<{
       id: string;
-      email: string;
       username: string;
       full_name: string;
       major: string;
@@ -335,7 +438,6 @@ export const api = {
     request<
       {
         id: string;
-        email: string;
         username: string;
         full_name?: string;
         major?: string;
@@ -404,4 +506,8 @@ export const api = {
     request<{ status: string }>(`/users/${userId}/follow`, "POST", undefined, token),
   unfollowUser: (userId: string, token: string) =>
     request<{ status: string }>(`/users/${userId}/follow`, "DELETE", undefined, token),
+  createReport: (
+    payload: { target_type: "post" | "user"; target_id: string; reason: string; details?: string },
+    token?: string | null
+  ) => request<{ status: string; id?: string }>(`/reports`, "POST", payload, token),
 };

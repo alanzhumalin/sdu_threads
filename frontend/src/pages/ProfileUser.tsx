@@ -7,6 +7,8 @@ import { Heart, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
 import { useFeedStore } from "../store/feed";
+import { ErrorMessage } from "../components/ErrorMessage";
+import { usePostCacheStore } from "../store/postCache";
 
 function timeAgo(iso: string) {
   const date = new Date(iso);
@@ -31,6 +33,8 @@ export default function ProfileUserPage() {
   const token = useAuthStore((s) => s.token);
   const { username } = useParams();
   const feedStore = useFeedStore();
+  const postPatches = usePostCacheStore((s) => s.byId);
+  const patchPost = usePostCacheStore((s) => s.patch);
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -85,27 +89,31 @@ export default function ProfileUserPage() {
 
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
+    const currentBase = posts.find((p) => p.id === id);
+    const currentPatch = postPatches[id];
+    const current = currentPatch ? { ...currentBase, ...currentPatch } : currentBase;
+    const currentLikeCount = current?.like_count ?? 0;
+    const nextLiked = !liked;
+    const nextCount = currentLikeCount + (nextLiked ? 1 : -1);
+
     setPosts((prev) =>
       prev.map((p) =>
-        p.id === id ? { ...p, liked_by_me: !liked, like_count: p.like_count + (liked ? -1 : 1) } : p
+        p.id === id ? { ...p, liked_by_me: nextLiked, like_count: nextCount } : p
       )
     );
-    feedStore.updateItem(id, {
-      liked_by_me: !liked,
-      like_count:
-        (feedStore.items.find((p) => p.id === id)?.like_count ?? 0) + (liked ? -1 : 1),
-    });
+    patchPost(id, { liked_by_me: nextLiked, like_count: nextCount });
+    feedStore.updateItem(id, { liked_by_me: nextLiked, like_count: nextCount });
     try {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
     } catch {
       setPosts((prev) =>
         prev.map((p) =>
-          p.id === id ? { ...p, liked_by_me: liked, like_count: p.like_count + (liked ? 1 : -1) } : p
+          p.id === id ? { ...p, liked_by_me: liked, like_count: currentLikeCount } : p
         )
       );
-      const original = feedStore.items.find((p) => p.id === id);
-      if (original) feedStore.updateItem(id, { liked_by_me: liked, like_count: original.like_count });
+      patchPost(id, { liked_by_me: liked, like_count: currentLikeCount });
+      feedStore.updateItem(id, { liked_by_me: liked, like_count: currentLikeCount });
     }
   };
 
@@ -113,7 +121,7 @@ export default function ProfileUserPage() {
 
   return (
     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      <ErrorMessage message={error} />
       {profile && (
         <div className="rounded-2xl border border-white/10 overflow-hidden bg-black shadow-xl">
           <div className="relative h-40 md:h-52 overflow-hidden">
@@ -203,7 +211,11 @@ export default function ProfileUserPage() {
               <p className="text-white/60 text-sm">Пока нет постов</p>
             </div>
           )}
-          {posts.map((p) => (
+          {posts.map((p) => {
+            const patch = postPatches[p.id];
+            const item = patch ? { ...p, ...patch } : p;
+
+            return (
             <article
               key={p.id}
               data-profile-post
@@ -237,35 +249,36 @@ export default function ProfileUserPage() {
               <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                 <div className="flex items-center gap-6">
                   <button
-                    onClick={() => toggleLike(p.id, p.liked_by_me)}
+                    onClick={() => toggleLike(item.id, item.liked_by_me)}
                     className={`flex items-center gap-2 px-2 py-1 rounded-full transition ${
-                      p.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"
+                      item.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"
                     }`}
                   >
-                    {p.liked_by_me ? (
+                    {item.liked_by_me ? (
                       <Heart className="w-5 h-5 fill-current" strokeWidth={1.7} />
                     ) : (
                       <Heart className="w-5 h-5" strokeWidth={1.7} />
                     )}
-                    <span className="font-medium">{p.like_count}</span>
+                    <span className="font-medium">{item.like_count}</span>
                   </button>
 
                   <button
                     className="flex items-center gap-2 text-white/60 hover:text-white"
-                    onClick={() => setCommentsPost(p)}
+                    onClick={() => setCommentsPost(item)}
                   >
                     <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
-                    <span>{p.comment_count ?? 0}</span>
+                    <span>{item.comment_count ?? 0}</span>
                   </button>
                 </div>
 
                 <div className="flex items-center gap-2 text-white/60">
                   <Eye className="w-5 h-5" strokeWidth={1.7} />
-                  <span>{p.view_count ?? 0}</span>
+                  <span>{item.view_count ?? 0}</span>
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       </div>
 

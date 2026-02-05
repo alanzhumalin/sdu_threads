@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { CommentsModal, PostMeta } from "../components/CommentsModal";
 import { useNotificationStore } from "../store/notifications";
+import { ErrorMessage } from "../components/ErrorMessage";
 
 type NotificationItem = {
   id: string;
@@ -291,7 +292,7 @@ export default function NotificationsPage() {
         </button>
       </div>
 
-      {current.error && <p className="text-red-400 text-sm">{current.error}</p>}
+      <ErrorMessage message={current.error} />
 
       {current.loading && current.items.length === 0 && (
         <div className="space-y-2">

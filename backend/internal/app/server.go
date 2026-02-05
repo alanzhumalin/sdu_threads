@@ -34,6 +34,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	commentRepo := repository.NewCommentRepository(client.DB)
 	followRepo := repository.NewFollowRepository(client.DB)
 	tagRepo := repository.NewHashtagRepository(client.DB)
+	reportRepo := repository.NewReportRepository(client.DB)
 	viewService := service.NewViewService(postRepo, cfg.ViewTTLMin)
 
 	// services
@@ -45,8 +46,10 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	profileService := service.NewProfileService(userRepo, followRepo)
 	hashtagService := service.NewHashtagService(tagRepo, postRepo, userRepo, followRepo)
 	notificationService := service.NewNotificationService(client.DB, userRepo)
+	reportService := service.NewReportService(reportRepo, userRepo, postRepo)
 	searchHandler := handler.NewSearchHandler(userRepo)
 	topUsersHandler := handler.NewTopUsersHandler(followService)
+	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
 
 	// handlers
 	handler.NewHealthHandler().Register(mux)
@@ -59,6 +62,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewNotificationHandler(notificationService, jwtMgr).Register(mux)
 	searchHandler.Register(mux)
 	topUsersHandler.Register(mux)
+	reportHandler.Register(mux)
 
 	// path-aware rate limiting: stricter for auth endpoints
 	pathLimiter := middleware.NewPathRateLimiter(cfg.RateLimitRPM, map[string]int{

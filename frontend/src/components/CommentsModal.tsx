@@ -5,6 +5,8 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { X, Heart, Paperclip, SendHorizontal, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
+import { ErrorMessage } from "./ErrorMessage";
+import { usePostCacheStore } from "../store/postCache";
 
 type Comment = {
   id: string;
@@ -146,7 +148,9 @@ const timeAgo = (iso: string) => {
 
 export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: Props) {
   const token = useAuthStore((s) => s.token);
-  const [postMeta, setPostMeta] = useState(post);
+  const patchPost = usePostCacheStore((s) => s.patch);
+  const postPatch = usePostCacheStore((s) => s.byId[post.id]);
+  const [postMeta, setPostMeta] = useState(() => ({ ...post, ...(postPatch || {}) }));
   const [comments, setComments] = useState<Comment[]>([]);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
@@ -177,6 +181,12 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null);
   const [mentionPos, setMentionPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  // Keep modal post meta in sync with global post cache (likes, counts, etc).
+  useEffect(() => {
+    if (!postPatch) return;
+    setPostMeta((prev) => ({ ...prev, ...postPatch }));
+  }, [postPatch]);
   const mentionListRef = useRef<HTMLUListElement | null>(null);
   const [suppressedHashtags, setSuppressedHashtags] = useState<Set<number>>(new Set());
   const [suppressedMentions, setSuppressedMentions] = useState<Set<number>>(new Set());
@@ -555,6 +565,7 @@ useLayoutEffect(() => {
       };
       const previous = prev;
 
+      patchPost(prev.id, patch);
       onUpdatePost?.(prev.id, patch);
 
       (async () => {
@@ -563,6 +574,7 @@ useLayoutEffect(() => {
           else await api.unlikePost(prev.id, token);
         } catch {
           setPostMeta(previous);
+          patchPost(prev.id, { liked_by_me: previous.liked_by_me, like_count: previous.like_count });
           onUpdatePost?.(prev.id, { liked_by_me: previous.liked_by_me, like_count: previous.like_count });
         }
       })();
@@ -755,7 +767,7 @@ useLayoutEffect(() => {
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {comments.map((c) => renderComment(c, 0))}
           {comments.length === 0 && !loading && <p className="text-white/60">Комментариев нет</p>}
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <ErrorMessage message={error} />
           {remaining !== null && remaining > 0 && (
             <button
               onClick={() => load(true)}

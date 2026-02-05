@@ -17,6 +17,17 @@ func NewPostRepository(db *gorm.DB) *PostRepository {
 	return &PostRepository{db: db}
 }
 
+func viewerArgs(viewerID *string) (bool, any) {
+	if viewerID == nil {
+		return false, nil
+	}
+	v := strings.TrimSpace(*viewerID)
+	if v == "" {
+		return false, nil
+	}
+	return true, v
+}
+
 func (r *PostRepository) Create(ctx context.Context, post *models.Post) error {
 	return r.db.WithContext(ctx).Create(post).Error
 }
@@ -44,12 +55,7 @@ func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *
 		limit = 100
 	}
 
-	viewerPresent := false
-	var viewer string
-	if viewerID != nil {
-		viewerPresent = true
-		viewer = *viewerID
-	}
+	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
 	q := `
@@ -82,12 +88,7 @@ func (r *PostRepository) Get(ctx context.Context, postID string, viewerID *strin
 	limit := 1
 	offset := 0
 
-	viewerPresent := false
-	var viewer string
-	if viewerID != nil {
-		viewerPresent = true
-		viewer = *viewerID
-	}
+	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
 	q := `
@@ -153,12 +154,7 @@ func (r *PostRepository) ByUser(ctx context.Context, userID string, limit, offse
 		limit = 100
 	}
 
-	viewerPresent := false
-	var viewer string
-	if viewerID != nil {
-		viewerPresent = true
-		viewer = *viewerID
-	}
+	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
 	q := `
@@ -196,12 +192,7 @@ func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offs
 		limit = 100
 	}
 
-	viewerPresent := false
-	var viewer string
-	if viewerID != nil {
-		viewerPresent = true
-		viewer = *viewerID
-	}
+	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
 	q := `

@@ -2,10 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"sduthreads/internal/apperror"
 	"sduthreads/internal/auth"
 	"sduthreads/internal/dto"
 	"sduthreads/internal/service"
@@ -41,6 +43,16 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, req.MediaURL, req.Hashtags); err != nil {
+			var rl *apperror.RateLimitError
+			if errors.As(err, &rl) {
+				w.Header().Set("Retry-After", strconv.Itoa(rl.RetryAfterSeconds))
+				writeErrorPayload(w, http.StatusTooManyRequests, errorPayload{
+					Code:              rl.Code,
+					Message:           rl.Message,
+					RetryAfterSeconds: rl.RetryAfterSeconds,
+				})
+				return
+			}
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

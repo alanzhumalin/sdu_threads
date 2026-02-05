@@ -2,7 +2,11 @@ import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
-import { Image as ImageIcon } from "lucide-react";
+import { usePostCooldownStore } from "../store/postCooldown";
+import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush } from "lucide-react";
+import { DrawingModal } from "./DrawingModal";
+import { ErrorMessage } from "./ErrorMessage";
+import FabricImageEditor from "./FabricImageEditor";
 
 type Props = {
   onCreated?: () => void;
@@ -30,6 +34,12 @@ const extractHashtags = (text: string, ignoredStarts?: Set<number>) => {
 };
 
 const emailLike = /@[^@\s]+\.[A-Za-z]{2,}$/;
+
+type MediaItem = {
+  id: string;
+  file: File;
+  url: string;
+};
 
 const highlightInlineHashtags = (
   text: string,
@@ -105,6 +115,9 @@ const findActiveMention = (text: string, cursor: number) => {
 
 export default function PostComposer({ onCreated }: Props) {
   const token = useAuthStore((s) => s.token);
+  const cooldownUntilMs = usePostCooldownStore((s) => s.untilMs);
+  const setCooldownUntilMs = usePostCooldownStore((s) => s.setUntilMs);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -137,7 +150,55 @@ export default function PostComposer({ onCreated }: Props) {
   const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null);
   const [mentionPos, setMentionPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const mentionListRef = useRef<HTMLUListElement | null>(null);
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [mediaError, setMediaError] = useState("");
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [drawingOpen, setDrawingOpen] = useState(false);
+  const mediaRef = useRef<MediaItem[]>([]);
   const MIN_TA_HEIGHT = 72;
+  const MAX_MEDIA = 5;
+
+  const remainingMs = Math.max(0, cooldownUntilMs - nowMs);
+  const remainingSec = Math.ceil(remainingMs / 1000);
+  const formatTimer = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+
+  useEffect(() => {
+    if (cooldownUntilMs <= Date.now()) return;
+    const id = window.setInterval(() => {
+      const n = Date.now();
+      setNowMs(n);
+      if (n >= cooldownUntilMs) window.clearInterval(id);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [cooldownUntilMs]);
+
+  useEffect(() => {
+    mediaRef.current = media;
+  }, [media]);
+
+  useEffect(() => {
+    return () => {
+      mediaRef.current.forEach((m) => URL.revokeObjectURL(m.url));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!previewId) setEditing(false);
+  }, [previewId]);
+
+  useEffect(() => {
+    if (!previewId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewId]);
 
   const autoResize = () => {
     const ta = textareaRef.current;
@@ -334,14 +395,61 @@ export default function PostComposer({ onCreated }: Props) {
     setCursor(pos);
   };
 
+  const handleFiles = (fileList: FileList | null) => {
+    if (!fileList) return;
+    const incoming = Array.from(fileList);
+    const valid: MediaItem[] = [];
+    const allowed = /^image\//i;
+    const currentCount = media.length;
+    let rejected = false;
+
+    for (const f of incoming) {
+      if (!allowed.test(f.type)) {
+        rejected = true;
+        continue;
+      }
+      if (currentCount + valid.length >= MAX_MEDIA) {
+        rejected = true;
+        break;
+      }
+      valid.push({ id: crypto.randomUUID(), file: f, url: URL.createObjectURL(f) });
+    }
+
+    if (rejected) {
+      setMediaError("Можно добавить только изображения (максимум 5 вложений)");
+      setTimeout(() => setMediaError(""), 3000);
+    }
+
+    if (valid.length) {
+      setMedia((prev) => [...prev, ...valid]);
+    }
+  };
+
+  const removeMedia = (id: string) => {
+    setMedia((prev) => {
+      const next = prev.filter((m) => m.id !== id);
+      const removed = prev.find((m) => m.id === id);
+      if (removed) URL.revokeObjectURL(removed.url);
+      return next;
+    });
+    setPreviewId((prev) => (prev === id ? null : prev));
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
+    if (remainingSec > 0) return;
     setLoading(true);
     setError("");
     try {
       const tags = extractHashtags(content, suppressedHashtags);
+      const hasMedia = mediaRef.current.length > 0;
       await api.createPost({ content, hashtags: tags }, token);
+      setCooldownUntilMs(Date.now() + (hasMedia ? 120 : 60) * 1000);
+      setMedia((prev) => {
+        prev.forEach((m) => URL.revokeObjectURL(m.url));
+        return [];
+      });
       setContent("");
       setSuggestions([]);
       setActiveTag(null);
@@ -349,11 +457,19 @@ export default function PostComposer({ onCreated }: Props) {
       setSuppressedMentions(new Set());
       onCreated?.();
     } catch (err: any) {
-      setError(err.message || "Не удалось создать пост");
+      const retry = Number(err?.retry_after_seconds);
+      if (Number.isFinite(retry) && retry > 0) {
+        setCooldownUntilMs(Date.now() + retry * 1000);
+        setError(`Слишком часто. Попробуйте через ${retry} сек.`);
+      } else {
+        setError(err.message || "Не удалось создать пост");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  const previewItem = previewId ? media.find((m) => m.id === previewId) : null;
 
   return (
     <form
@@ -366,6 +482,28 @@ export default function PostComposer({ onCreated }: Props) {
           <span className="font-semibold text-white">Поделиться чем-то новым</span>
         </div>
       </div>
+      <ErrorMessage message={mediaError} />
+      {media.length > 0 && (
+        <div className={`grid gap-2 ${media.length <= 2 ? "grid-cols-2" : "grid-cols-3"}`}>
+          {media.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              onClick={() => setPreviewId(m.id)}
+              className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30 aspect-video group"
+            >
+              <img
+                src={m.url}
+                alt="preview"
+                className="w-full h-full object-cover group-hover:opacity-90 transition"
+              />
+              <span className="absolute top-1 right-1 text-xs bg-black/70 text-white px-2 py-0.5 rounded-full opacity-0 group-hover:opacity-100 transition">
+                Просмотр
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="relative">
         <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3">
           <div className="pointer-events-none whitespace-pre-wrap break-words text-white font-medium relative z-0 min-h-[72px]">
@@ -609,21 +747,148 @@ export default function PostComposer({ onCreated }: Props) {
           aria-hidden="true"
         />
       </div>
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      <ErrorMessage message={error} />
       <div className="flex items-center justify-between">
         <div className="flex gap-2 text-white/50">
-          <button type="button" className="nav-icon bg-white/5 border border-white/10">
+          <label className="nav-icon bg-white/5 border border-white/10 cursor-pointer">
             <ImageIcon className="w-5 h-5" strokeWidth={1.7} />
+            <input
+              type="file"
+              accept="image/*,image/gif"
+              className="hidden"
+              multiple
+              onChange={(e) => {
+                handleFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="nav-icon bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/25"
+            title="Рисование"
+            onClick={() => {
+              if (mediaRef.current.length >= MAX_MEDIA) {
+                setMediaError("Можно добавить максимум 5 вложений");
+                setTimeout(() => setMediaError(""), 3000);
+                return;
+              }
+              setDrawingOpen(true);
+            }}
+          >
+            <Paintbrush className="w-5 h-5" strokeWidth={1.7} />
           </button>
         </div>
-        <button
-          type="submit"
-          disabled={loading || !content.trim()}
-          className="rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
-        >
-          {loading ? "Публикуем..." : "Опубликовать"}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          {remainingSec > 0 && (
+            <span className="text-xs text-white/50">
+              Можно публиковать через {formatTimer(remainingSec)}
+            </span>
+          )}
+          <button
+            type="submit"
+            disabled={loading || !content.trim() || remainingSec > 0}
+            className="rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
+          >
+            {loading ? "Публикуем..." : "Опубликовать"}
+          </button>
+        </div>
       </div>
+
+      {previewItem &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1000] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setPreviewId(null)}
+          >
+            <div
+              className="relative bg-black border border-white/10 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {editing ? (
+                <FabricImageEditor
+                  src={previewItem.url}
+                  fileName={previewItem.file.name}
+                  onCancel={() => setEditing(false)}
+                  onSave={(nextFile) => {
+                    const current = mediaRef.current.find((m) => m.id === previewItem.id);
+                    if (!current) {
+                      setEditing(false);
+                      return;
+                    }
+                    const oldUrl = current.url;
+                    const nextUrl = URL.createObjectURL(nextFile);
+                    setMedia((prev) =>
+                      prev.map((m) => (m.id === previewItem.id ? { ...m, file: nextFile, url: nextUrl } : m))
+                    );
+                    window.setTimeout(() => URL.revokeObjectURL(oldUrl), 0);
+                    setEditing(false);
+                  }}
+                />
+              ) : (
+                <div className="flex-1 flex items-center justify-center overflow-hidden p-4">
+                  <div className="relative inline-block max-w-full">
+                    <img
+                      src={previewItem.url}
+                      alt="preview"
+                      className="max-h-[76vh] max-w-full object-contain rounded-xl"
+                    />
+                    <div className="absolute top-2 right-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        title="Редактировать"
+                        className="w-10 h-10 rounded-full bg-black/70 border border-white/15 backdrop-blur flex items-center justify-center hover:bg-black/80"
+                        onClick={() => setEditing(true)}
+                      >
+                        <Edit3 className="w-5 h-5 text-sky-400" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Удалить"
+                        className="w-10 h-10 rounded-full bg-black/70 border border-white/15 backdrop-blur flex items-center justify-center hover:bg-black/80"
+                        onClick={() => removeMedia(previewItem.id)}
+                      >
+                        <Trash2 className="w-5 h-5 text-red-400" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Закрыть"
+                        className="w-10 h-10 rounded-full bg-black/70 border border-white/15 backdrop-blur flex items-center justify-center hover:bg-black/80"
+                        onClick={() => setPreviewId(null)}
+                      >
+                        <X className="w-6 h-6 text-white" />
+                      </button>
+                    </div>
+                    <div className="absolute bottom-2 right-2 text-xs bg-black/70 text-white/80 px-2 py-1 rounded-full border border-white/10">
+                      {media.findIndex((m) => m.id === previewItem.id) + 1} / {media.length}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {drawingOpen && (
+        <DrawingModal
+          onClose={() => setDrawingOpen(false)}
+          onSave={(file) => {
+            if (mediaRef.current.length >= MAX_MEDIA) {
+              setMediaError("Можно добавить максимум 5 вложений");
+              setTimeout(() => setMediaError(""), 3000);
+              return;
+            }
+            const item: MediaItem = {
+              id: crypto.randomUUID(),
+              file,
+              url: URL.createObjectURL(file),
+            };
+            setMedia((prev) => [...prev, item]);
+            setDrawingOpen(false);
+          }}
+        />
+      )}
     </form>
   );
 }

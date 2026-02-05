@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Crown } from "lucide-react";
 import { api } from "../api/client";
 
 type TopUser = {
@@ -35,13 +36,20 @@ export function TopUsers() {
         <div className="space-y-3">
           {users.length === 0 && <p className="text-white/60 text-sm">Нет данных</p>}
 
-          {users.map((u) => (
+          {users.map((u, idx) => (
             <div key={u.id} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold overflow-hidden">
-                {u.avatar_url ? (
-                  <img src={u.avatar_url} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  (u.full_name?.[0] || u.username?.[0] || "U").toUpperCase()
+              <div className="relative w-10 h-10 shrink-0">
+                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold overflow-hidden">
+                  {u.avatar_url ? (
+                    <img src={u.avatar_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    (u.full_name?.[0] || u.username?.[0] || "U").toUpperCase()
+                  )}
+                </div>
+                {idx === 0 && (
+                  <span className="absolute -top-2 -left-2 z-10 w-6 h-6 rounded-full bg-black/80 border border-white/10 grid place-items-center pointer-events-none">
+                    <Crown className="w-3.5 h-3.5 text-amber-300" strokeWidth={2} />
+                  </span>
                 )}
               </div>
 

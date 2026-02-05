@@ -1,0 +1,3 @@
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS accepted_rules_at TIMESTAMPTZ;
+

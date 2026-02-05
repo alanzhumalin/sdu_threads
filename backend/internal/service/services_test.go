@@ -31,6 +31,7 @@ CREATE TABLE users (
     major text,
     avatar_url text,
     background_url text,
+    accepted_rules_at datetime,
     created_at datetime,
     updated_at datetime
 );`

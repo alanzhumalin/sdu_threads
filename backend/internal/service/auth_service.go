@@ -17,7 +17,7 @@ type AuthService struct {
 	jwt   *auth.JWTManager
 }
 
-var ErrInvalidCredentials = errors.New("invalid email or password")
+var ErrInvalidCredentials = errors.New("invalid credentials")
 
 func NewAuthService(users *repository.UserRepository, jwt *auth.JWTManager) *AuthService {
 	return &AuthService{users: users, jwt: jwt}
@@ -37,10 +37,16 @@ func (s *AuthService) Register(ctx context.Context, input models.User, password 
 	return s.jwt.Generate(user.ID)
 }
 
-func (s *AuthService) Login(ctx context.Context, email, password string) (string, error) {
-	email = strings.TrimSpace(strings.ToLower(email))
+func (s *AuthService) Login(ctx context.Context, login, password string) (string, error) {
+	login = strings.TrimSpace(strings.ToLower(login))
 	var user *models.User
-	u, err := s.users.GetByEmail(ctx, email)
+	var u *models.User
+	var err error
+	if strings.Contains(login, "@") {
+		u, err = s.users.GetByEmail(ctx, login)
+	} else {
+		u, err = s.users.GetByUsername(ctx, login)
+	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", ErrInvalidCredentials
