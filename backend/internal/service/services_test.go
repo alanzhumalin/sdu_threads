@@ -28,9 +28,10 @@ CREATE TABLE users (
     username text NOT NULL UNIQUE,
     full_name text NOT NULL,
     password_hash text NOT NULL,
-    major text,
+    bio text,
     avatar_url text,
     background_url text,
+    social_links text,
     accepted_rules_at datetime,
     created_at datetime,
     updated_at datetime

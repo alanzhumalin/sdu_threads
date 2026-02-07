@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
 import { useProfileMeStore } from "../store/profileMe";
+import { useUserStatsStore } from "../store/userStats";
 import PostComposer from "../components/PostComposer";
 import { DrawingModal } from "../components/DrawingModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
-import { Heart, MessageCircle, Eye, X, Plus, Paintbrush } from "lucide-react";
+import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2 } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
+import { SocialLinksOverlay, type SocialLinks, type SocialType } from "../components/SocialLinks";
+import { MentionPreview } from "../components/MentionPreview";
+import { FollowListModal } from "../components/FollowListModal";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -53,6 +58,7 @@ export default function ProfilePage() {
   const setCachedProfile = useProfileMeStore((s) => s.setProfile);
   const setCachedMyPosts = useProfileMeStore((s) => s.setMyPosts);
   const setCachedLikedPosts = useProfileMeStore((s) => s.setLikedPosts);
+  const setCounts = useUserStatsStore((s) => s.setCounts);
 
   const postPatches = usePostCacheStore((s) => s.byId);
   const patchPost = usePostCacheStore((s) => s.patch);
@@ -63,12 +69,19 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(!cachedProfile);
   const [commentsPost, setCommentsPost] = useState<any | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [followListMode, setFollowListMode] = useState<"followers" | "following" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [form, setForm] = useState({
     full_name: "",
-    major: "",
+    bio: "",
   });
+  const [socialLinks, setSocialLinks] = useState<{ type: SocialType; username: string }[]>([]);
+  const [socialErrors, setSocialErrors] = useState<Partial<Record<SocialType, string>>>({});
+  const [socialDraftOpen, setSocialDraftOpen] = useState(false);
+  const [socialDraftType, setSocialDraftType] = useState<SocialType>("instagram");
+  const [socialDraftUsername, setSocialDraftUsername] = useState("");
+  const [socialDraftError, setSocialDraftError] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [bgPreview, setBgPreview] = useState<string>("");
   const [drawingTarget, setDrawingTarget] = useState<"background" | "avatar" | null>(null);
@@ -115,6 +128,7 @@ export default function ProfilePage() {
       const p = await api.profileMe(token);
       setProfile(p);
       setCachedProfile(p);
+      setCounts(p.id, { followers: p.followers, following: p.following });
       setError("");
       loadMyPosts(p.id, 0, false);
     } catch (e: any) {
@@ -137,6 +151,17 @@ export default function ProfilePage() {
     // Если профиль уже загружен — не делаем лишний refetch при навигации.
     if (cachedProfile) {
       setProfile(cachedProfile);
+      // Don't overwrite counts that may have been updated optimistically elsewhere in the app.
+      const existing = useUserStatsStore.getState().byUserId[cachedProfile.id];
+      if (
+        typeof existing?.followers !== "number" ||
+        typeof existing?.following !== "number"
+      ) {
+        setCounts(cachedProfile.id, {
+          followers: cachedProfile.followers,
+          following: cachedProfile.following,
+        });
+      }
       setError("");
       setLoadingProfile(false);
 
@@ -168,14 +193,187 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  const stats = useUserStatsStore((s) => (profile?.id ? s.byUserId[profile.id] : undefined));
+  const followersCount = typeof stats?.followers === "number" ? stats.followers : profile?.followers ?? 0;
+  const followingCount = typeof stats?.following === "number" ? stats.following : profile?.following ?? 0;
+
   const postsToShow = activeTab === "posts" ? myPosts.items : likedPosts.items;
+
+  const socialTypeOrder: SocialType[] = ["instagram", "telegram", "github", "linkedin"];
+  const socialLabel: Record<SocialType, string> = {
+    instagram: "Instagram",
+    telegram: "Telegram",
+    github: "GitHub",
+    linkedin: "LinkedIn",
+  };
+  const socialBaseUrl: Record<SocialType, string> = {
+    instagram: "https://instagram.com/",
+    telegram: "https://t.me/",
+    github: "https://github.com/",
+    linkedin: "https://www.linkedin.com/in/",
+  };
+  const socialPlaceholder: Record<SocialType, string> = {
+    instagram: "username",
+    telegram: "username или @username",
+    github: "username",
+    linkedin: "https://www.linkedin.com/in/username",
+  };
+
+  const normalizeSocialUsername = (
+    type: SocialType,
+    raw: string
+  ): { username: string; url: string } | { error: string } => {
+    const original = String(raw || "").trim();
+    if (!original) {
+      return {
+        error:
+          type === "linkedin"
+            ? "Введите ссылку LinkedIn или удалите соцсеть"
+            : "Введите username или удалите соцсеть",
+      };
+    }
+
+    // LinkedIn: only full URL, no username-mode.
+    if (type === "linkedin") {
+      if (!original.startsWith("https://www.linkedin.com/")) {
+        return { error: "Ссылка должна начинаться с https://www.linkedin.com/" };
+      }
+      try {
+        const u = new URL(original);
+        if (u.protocol !== "https:" || u.hostname.toLowerCase() !== "www.linkedin.com") {
+          return { error: "Ссылка должна начинаться с https://www.linkedin.com/" };
+        }
+      } catch {
+        return { error: "Неверная ссылка" };
+      }
+      return { username: original, url: original };
+    }
+
+    const toUrl = (hostAndPath: string) => {
+      if (/^https?:\/\//i.test(hostAndPath)) return hostAndPath;
+      return `https://${hostAndPath.replace(/^\/+/, "")}`;
+    };
+
+    const stripWww = (host: string) => host.toLowerCase().replace(/^www\./, "");
+
+    const extractFromUrl = (u: URL): { username: string } | { error: string } => {
+      if (u.protocol !== "https:") return { error: "Ссылка должна начинаться с https://" };
+      const host = stripWww(u.hostname);
+      const parts = u.pathname.split("/").filter(Boolean);
+
+      if (type === "instagram") {
+        if (host !== "instagram.com") return { error: "Ссылка должна вести на instagram.com" };
+        const username = parts[0] || "";
+        if (!username || username === "p" || username === "reel" || username === "tv" || username === "stories") {
+          return { error: "Укажите username профиля Instagram" };
+        }
+        return { username };
+      }
+
+      if (type === "telegram") {
+        if (host !== "t.me" && host !== "telegram.me") return { error: "Ссылка должна вести на t.me" };
+        const username = (parts[0] === "s" ? parts[1] : parts[0]) || "";
+        if (!username || username.startsWith("+")) return { error: "Укажите username профиля Telegram" };
+        return { username: username.replace(/^@+/, "") };
+      }
+
+      if (type === "github") {
+        if (host !== "github.com") return { error: "Ссылка должна вести на github.com" };
+        const username = parts[0] || "";
+        if (!username) return { error: "Укажите username профиля GitHub" };
+        return { username };
+      }
+
+      if (type === "linkedin") {
+        if (host !== "linkedin.com") return { error: "Ссылка должна вести на linkedin.com" };
+        const username = parts[0] === "in" ? parts[1] || "" : "";
+        if (!username) return { error: "Укажите username профиля LinkedIn" };
+        return { username };
+      }
+
+      return { error: "Неизвестный тип соцсети" };
+    };
+
+    const fromUrlMaybe = () => {
+      // if user pasted domain without scheme, URL() will fail - add https://.
+      const v = original.replace(/\s+/g, "");
+      const looksLikeUrl =
+        /^https?:\/\//i.test(v) ||
+        v.startsWith("www.") ||
+        v.includes("instagram.com") ||
+        v.includes("t.me") ||
+        v.includes("telegram.me") ||
+        v.includes("github.com") ||
+        v.includes("linkedin.com");
+      if (!looksLikeUrl) return null;
+      try {
+        const u = new URL(toUrl(v));
+        return extractFromUrl(u);
+      } catch {
+        return { error: "Неверная ссылка" } as const;
+      }
+    };
+
+    let username = original.trim();
+
+    const urlParsed = fromUrlMaybe();
+    if (urlParsed) {
+      if ("error" in urlParsed) return urlParsed;
+      username = urlParsed.username;
+    }
+
+    username = username.trim().replace(/^@+/, "");
+
+    const invalid = () =>
+      ({ error: "Некорректный username: используйте буквы/цифры и допустимые символы" }) as const;
+
+    if (type === "github") {
+      // GitHub: alnum and hyphen; can't start/end with hyphen; max 39 chars.
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(username)) return invalid();
+    } else if (type === "telegram") {
+      // Telegram: letters/digits/underscore.
+      if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) return invalid();
+    } else if (type === "instagram") {
+      // Instagram: letters/digits/._ (underscore allowed).
+      if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) return invalid();
+    } else if (type === "linkedin") {
+      // LinkedIn slug is usually letters/digits/hyphen.
+      if (!/^[A-Za-z0-9-]{1,100}$/.test(username)) return invalid();
+    }
+
+    return { username, url: `${socialBaseUrl[type]}${username}` };
+  };
+
+  const extractSocialUsername = (type: SocialType, url: string): string => {
+    const v = String(url || "").trim();
+    if (!v) return "";
+    if (type === "linkedin") return v;
+    try {
+      const u = new URL(v);
+      const res = normalizeSocialUsername(type, u.toString());
+      return "error" in res ? "" : res.username;
+    } catch {
+      return "";
+    }
+  };
 
   const openEdit = () => {
     if (!profile) return;
     setForm({
       full_name: profile.full_name || "",
-      major: profile.major || "",
+      bio: profile.bio || "",
     });
+    const links = (profile.social_links || {}) as SocialLinks;
+    const nextSocial = socialTypeOrder.flatMap((t) => {
+      const url = typeof links?.[t] === "string" ? String(links[t]).trim() : "";
+      const username = url ? extractSocialUsername(t, url) : "";
+      return username ? [{ type: t, username }] : [];
+    });
+    setSocialLinks(nextSocial);
+    setSocialErrors({});
+    setSocialDraftOpen(false);
+    setSocialDraftUsername("");
+    setSocialDraftError("");
     setAvatarPreview(profile.avatar_url || "");
     setBgPreview(profile.background_url || "");
     setDrawingTarget(null);
@@ -226,11 +424,32 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     if (!token || !profile) return;
-    setSaving(true);
     setSaveError("");
+    const nextErrors: Partial<Record<SocialType, string>> = {};
+    const normalizedList: { type: SocialType; username: string }[] = [];
+    const social_links: SocialLinks = {} as SocialLinks;
+    socialLinks.forEach((it) => {
+      const res = normalizeSocialUsername(it.type, it.username);
+      if ("error" in res) {
+        nextErrors[it.type] = res.error;
+        normalizedList.push(it);
+        return;
+      }
+      social_links[it.type] = res.url;
+      normalizedList.push({ type: it.type, username: res.username });
+    });
+    setSocialErrors(nextErrors);
+    setSocialLinks(normalizedList);
+    if (Object.keys(nextErrors).length > 0) {
+      setSaveError("Проверьте ссылки на соцсети");
+      return;
+    }
+
+    setSaving(true);
     const payload = {
       full_name: form.full_name.trim(),
-      major: form.major.trim(),
+      bio: form.bio.trim(),
+      social_links,
     };
     try {
       const updated = await api.updateProfile(payload, token);
@@ -447,6 +666,8 @@ export default function ProfilePage() {
   }
 
   const postsLoading = activeTab === "posts" ? myPosts.loading : likedPosts.loading;
+  const usedSocialTypes = new Set(socialLinks.map((l) => l.type));
+  const availableSocialTypes = socialTypeOrder.filter((t) => !usedSocialTypes.has(t));
 
   return (
     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -475,16 +696,30 @@ export default function ProfilePage() {
                 <p className="text-xl font-semibold text-white">{profile?.full_name || ""}</p>
                 <p className="text-white/60">@{profile?.username}</p>
                 <p className="text-white/50 text-sm">На сайте с {profile?.created_at ? formatDate(profile.created_at) : "--"}</p>
-                {profile?.major && <p className="text-white/70 text-sm">{profile.major}</p>}
+                {profile?.bio ? (
+                  <p className="text-white/70 text-sm">{profile.bio}</p>
+                ) : (
+                  <p className="text-white/40 text-sm">Нет описания</p>
+                )}
                 <div className="flex items-center gap-5 text-white/80 pt-1 text-sm">
-                  <div className="flex items-baseline gap-1">
-                    <span className="font-semibold text-white text-base">{profile?.followers ?? 0}</span>
-                    <span className="text-white/60">Подписчики</span>
-                  </div>
-                  <div className="flex items-baseline gap-1">
-                    <span className="font-semibold text-white text-base">{profile?.following ?? 0}</span>
-                    <span className="text-white/60">Подписки</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFollowListMode("followers")}
+                    className="flex items-baseline gap-1 hover:text-white transition cursor-pointer"
+                    title="Посмотреть подписчиков"
+                  >
+                    <span className="font-semibold text-white text-base">{followersCount}</span>
+                    <span className="text-white/60 hover:underline">Подписчики</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFollowListMode("following")}
+                    className="flex items-baseline gap-1 hover:text-white transition cursor-pointer"
+                    title="Посмотреть подписки"
+                  >
+                    <span className="font-semibold text-white text-base">{followingCount}</span>
+                    <span className="text-white/60 hover:underline">Подписки</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -497,6 +732,10 @@ export default function ProfilePage() {
               Редактировать
             </button>
           </div>
+          <SocialLinksOverlay
+            links={profile?.social_links}
+            className="absolute bottom-4 right-4 flex items-center gap-2"
+          />
         </div>
       </div>
 
@@ -576,13 +815,21 @@ export default function ProfilePage() {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+                    <Link
+                      to={`/u/${p.username}`}
+                      className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                    >
                       {p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}
-                    </div>
+                    </Link>
                     <div>
-                      <p className="text-white font-semibold leading-tight flex items-center gap-2">
-                        {p.full_name || "Без имени"}
-                      </p>
+                      <MentionPreview username={p.username} className="">
+                        <Link
+                          to={`/u/${p.username}`}
+                          className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                        >
+                          {p.full_name || "Без имени"}
+                        </Link>
+                      </MentionPreview>
                       <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
                     </div>
                   </div>
@@ -654,6 +901,14 @@ export default function ProfilePage() {
                 : ""}
         </div>
       </div>
+
+      <FollowListModal
+        open={followListMode !== null}
+        mode={followListMode || "followers"}
+        userId={profile?.id || ""}
+        token={token}
+        onClose={() => setFollowListMode(null)}
+      />
       {commentsPost && (
         <CommentsModal
           post={commentsPost}
@@ -664,9 +919,9 @@ export default function ProfilePage() {
 
       {editOpen &&
         createPortal(
-          <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-md">
+          <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-md overflow-y-auto">
             <div className="min-h-screen w-full flex items-center justify-center px-4 py-8">
-              <div className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-lg p-7 shadow-2xl relative flex flex-col gap-5">
+              <div className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden">
                 <button
                   className="absolute top-3 right-3 text-white/60 hover:text-white"
                   onClick={() => {
@@ -676,84 +931,41 @@ export default function ProfilePage() {
                 >
                   <X className="w-5 h-5" />
                 </button>
-                <h3 className="text-lg font-semibold text-white">Редактировать профиль</h3>
+                <div className="px-7 pt-7 pb-4 shrink-0">
+                  <h3 className="text-lg font-semibold text-white">Редактировать профиль</h3>
+                </div>
 
-                <div className="space-y-5">
-                  <div className="space-y-2">
-                    <p className="text-sm text-white/60">Фон</p>
-                    <div className="relative overflow-visible">
-                      <div className="relative h-36 rounded-xl overflow-hidden bg-gradient-to-r from-slate-800 via-slate-700 to-slate-900">
-                        {bgPreview ? (
-                          <img src={bgPreview} alt="background" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full" />
-                        )}
-                        <div className="absolute right-3 bottom-3 flex items-center gap-2">
-                          <button
-                            className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
-                            onClick={() => setDrawingTarget("background")}
-                            aria-label="Рисовать фон"
-                            disabled={imageSaving === "background"}
-                          >
-                            <Paintbrush className="w-4 h-4" />
-                          </button>
-                          <button
-                            className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
-                            onClick={() => bgInputRef.current?.click()}
-                            aria-label={bgPreview ? "Изменить фон" : "Добавить фон"}
-                            disabled={imageSaving === "background"}
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                        <input
-                          ref={bgInputRef}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            e.currentTarget.value = "";
-                            try {
-                              const dataUrl = await fileToDataUrl(file);
-                              await applyProfileImage("background", dataUrl);
-                            } catch (err: any) {
-                              setSaveError(err?.message || "Не удалось загрузить изображение");
-                            }
-                          }}
-                        />
-                      </div>
-
-                      <div className="absolute left-0 bottom-0 translate-y-1/2 z-10">
-                        <div className="relative w-[88px] h-[88px]">
-                          <div className="w-full h-full rounded-full bg-black flex items-center justify-center text-2xl font-semibold text-white overflow-hidden relative z-10 shadow-lg shadow-black/40">
-                            {avatarPreview ? (
-                              <img src={avatarPreview} alt="avatar" className="w-full h-full object-cover" />
-                            ) : (
-                              <span>{form.full_name?.[0]?.toUpperCase() || "?"}</span>
-                            )}
-                          </div>
-                          <div className="absolute -right-2 bottom-0 flex flex-col gap-2 z-20">
+                <div className="px-7 pb-6 overflow-y-auto overflow-x-hidden flex-1">
+                  <div className="space-y-5">
+                    <div className="space-y-2">
+                      <p className="text-sm text-white/60">Фон</p>
+                      <div className="relative overflow-visible">
+                        <div className="relative h-36 rounded-xl overflow-hidden bg-gradient-to-r from-slate-800 via-slate-700 to-slate-900">
+                          {bgPreview ? (
+                            <img src={bgPreview} alt="background" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full" />
+                          )}
+                          <div className="absolute right-3 bottom-3 flex items-center gap-2">
                             <button
-                              className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
-                              onClick={() => setDrawingTarget("avatar")}
-                              aria-label="Рисовать аватар"
-                              disabled={imageSaving === "avatar"}
+                              className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
+                              onClick={() => setDrawingTarget("background")}
+                              aria-label="Рисовать фон"
+                              disabled={imageSaving === "background"}
                             >
                               <Paintbrush className="w-4 h-4" />
                             </button>
                             <button
-                              className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
-                              onClick={() => avatarInputRef.current?.click()}
-                              aria-label={avatarPreview ? "Изменить аватар" : "Добавить аватар"}
-                              disabled={imageSaving === "avatar"}
+                              className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
+                              onClick={() => bgInputRef.current?.click()}
+                              aria-label={bgPreview ? "Изменить фон" : "Добавить фон"}
+                              disabled={imageSaving === "background"}
                             >
                               <Plus className="w-4 h-4" />
                             </button>
                           </div>
                           <input
-                            ref={avatarInputRef}
+                            ref={bgInputRef}
                             type="file"
                             accept="image/*"
                             className="hidden"
@@ -763,46 +975,298 @@ export default function ProfilePage() {
                               e.currentTarget.value = "";
                               try {
                                 const dataUrl = await fileToDataUrl(file);
-                                await applyProfileImage("avatar", dataUrl);
+                                await applyProfileImage("background", dataUrl);
                               } catch (err: any) {
                                 setSaveError(err?.message || "Не удалось загрузить изображение");
                               }
                             }}
                           />
                         </div>
+
+                        <div className="absolute left-0 bottom-0 translate-y-1/2 z-10">
+                          <div className="relative w-[88px] h-[88px]">
+                            <div className="w-full h-full rounded-full bg-black flex items-center justify-center text-2xl font-semibold text-white overflow-hidden relative z-10 shadow-lg shadow-black/40">
+                              {avatarPreview ? (
+                                <img src={avatarPreview} alt="avatar" className="w-full h-full object-cover" />
+                              ) : (
+                                <span>{form.full_name?.[0]?.toUpperCase() || "?"}</span>
+                              )}
+                            </div>
+                            <div className="absolute -right-2 bottom-0 flex flex-col gap-2 z-20">
+                              <button
+                                className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
+                                onClick={() => setDrawingTarget("avatar")}
+                                aria-label="Рисовать аватар"
+                                disabled={imageSaving === "avatar"}
+                              >
+                                <Paintbrush className="w-4 h-4" />
+                              </button>
+                              <button
+                                className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
+                                onClick={() => avatarInputRef.current?.click()}
+                                aria-label={avatarPreview ? "Изменить аватар" : "Добавить аватар"}
+                                disabled={imageSaving === "avatar"}
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                            <input
+                              ref={avatarInputRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                e.currentTarget.value = "";
+                                try {
+                                  const dataUrl = await fileToDataUrl(file);
+                                  await applyProfileImage("avatar", dataUrl);
+                                } catch (err: any) {
+                                  setSaveError(err?.message || "Не удалось загрузить изображение");
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 mt-14 md:mt-16">
+                    <div className="mt-0">
+                      <label className="block text-sm text-white/60 mb-1.5">Полное имя</label>
+                      <input
+                        value={form.full_name}
+                        onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
+                        className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
+                        placeholder="Ваше имя"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-white/60 mb-1.5">Описание</label>
+                      <textarea
+                        value={form.bio}
+                        onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
+                        maxLength={240}
+                        rows={3}
+                        className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none resize-none"
+                        placeholder="Например, чем вы занимаетесь или что вам интересно"
+                      />
+                      <p className="mt-1 text-xs text-white/40">{form.bio.length}/240</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-sm text-white/60">Социальные сети</label>
+
+                      {socialLinks.length > 0 && (
+                        <div className="space-y-3">
+                          {socialLinks.map((it) => (
+                            <div key={it.type} className="flex items-start gap-2">
+                              <div className="w-24 pt-2 text-xs text-white/60">
+                                {socialLabel[it.type]}
+                              </div>
+                              <div className="flex-1">
+                                <input
+                                  value={it.username}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setSocialLinks((prev) =>
+                                      prev.map((p) =>
+                                        p.type === it.type ? { ...p, username: v } : p
+                                      )
+                                    );
+                                    setSocialErrors((prev) => {
+                                      if (!prev[it.type]) return prev;
+                                      const next = { ...prev };
+                                      delete next[it.type];
+                                      return next;
+                                    });
+                                  }}
+                                  onBlur={(e) => {
+                                    const res = normalizeSocialUsername(it.type, e.target.value);
+                                    setSocialErrors((prev) => {
+                                      const next = { ...prev };
+                                      if ("error" in res) next[it.type] = res.error;
+                                      else delete next[it.type];
+                                      return next;
+                                    });
+                                    if (!("error" in res)) {
+                                      setSocialLinks((prev) =>
+                                        prev.map((p) =>
+                                          p.type === it.type ? { ...p, username: res.username } : p
+                                        )
+                                      );
+                                    }
+                                  }}
+                                  className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none text-sm"
+                                  placeholder={socialPlaceholder[it.type]}
+                                />
+                                {socialErrors[it.type] && (
+                                  <p className="mt-1 text-xs text-red-300">
+                                    {socialErrors[it.type]}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSocialLinks((prev) =>
+                                    prev.filter((p) => p.type !== it.type)
+                                  );
+                                  setSocialErrors((prev) => {
+                                    const next = { ...prev };
+                                    delete next[it.type];
+                                    return next;
+                                  });
+                                }}
+                                className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 grid place-items-center text-red-300 hover:text-red-200 transition"
+                                aria-label="Удалить"
+                                title="Удалить"
+                              >
+                                <Trash2 className="w-4 h-4" strokeWidth={1.7} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4 mt-8">
-                  <div className="mt-0">
-                    <label className="block text-sm text-white/60 mb-1.5">Полное имя</label>
-                    <input
-                      value={form.full_name}
-                      onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-                      className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                      placeholder="Ваше имя"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-white/60 mb-1.5">Major</label>
-                    <input
-                      value={form.major}
-                      onChange={(e) => setForm((f) => ({ ...f, major: e.target.value }))}
-                      className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                      placeholder="Например, Computer Science"
-                    />
-                  </div>
+                <div className="px-7 py-4 border-t border-white/10 bg-[#0b0b0f] shrink-0 space-y-3">
                   <ErrorMessage message={saveError} />
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="w-full bg-white text-black rounded-lg py-2.5 font-semibold hover:bg-white/90 disabled:opacity-60"
-                  >
-                    {saving ? "Сохранение..." : "Сохранить"}
-                  </button>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-white/50">
+                      {socialLinks.length >= 4 ? "Можно добавить не более 4 соцсетей" : ""}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (socialLinks.length >= 4 || availableSocialTypes.length === 0) return;
+                          setSocialDraftType(availableSocialTypes[0]);
+                          setSocialDraftUsername("");
+                          setSocialDraftError("");
+                          setSocialDraftOpen(true);
+                        }}
+                        disabled={socialLinks.length >= 4 || availableSocialTypes.length === 0}
+                        className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition disabled:opacity-50"
+                      >
+                        Добавить соцсеть
+                      </button>
+                      <button
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
+                      >
+                        {saving ? "Сохранение..." : "Сохранить"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
+                {socialDraftOpen && (
+                  <div
+                    className="absolute inset-0 z-30 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+                    onMouseDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      setSocialDraftOpen(false);
+                      setSocialDraftError("");
+                      setSocialDraftUsername("");
+                    }}
+                  >
+                    <div
+                      className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-3"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-white font-semibold">Добавить соцсеть</p>
+                        <button
+                          type="button"
+                          className="text-white/60 hover:text-white"
+                          onClick={() => {
+                            setSocialDraftOpen(false);
+                            setSocialDraftError("");
+                            setSocialDraftUsername("");
+                          }}
+                          aria-label="Закрыть"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={socialDraftType}
+                          onChange={(e) => {
+                            setSocialDraftType(e.target.value as SocialType);
+                            setSocialDraftError("");
+                          }}
+                          className="rounded-lg bg-black/40 border border-white/10 px-3 py-2.5 text-white/90 outline-none text-sm"
+                        >
+                          {(availableSocialTypes.includes(socialDraftType)
+                            ? availableSocialTypes
+                            : ([socialDraftType, ...availableSocialTypes] as SocialType[])
+                          ).map((t) => (
+                            <option key={t} value={t}>
+                              {socialLabel[t]}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={socialDraftUsername}
+                          onChange={(e) => {
+                            setSocialDraftUsername(e.target.value);
+                            setSocialDraftError("");
+                          }}
+                          className="flex-1 rounded-lg bg-black/40 border border-white/10 px-3 py-2.5 text-white outline-none text-sm"
+                          placeholder={socialPlaceholder[socialDraftType]}
+                        />
+                      </div>
+
+                      {socialDraftError && (
+                        <p className="text-xs text-red-300">{socialDraftError}</p>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSocialDraftOpen(false);
+                            setSocialDraftError("");
+                            setSocialDraftUsername("");
+                          }}
+                          className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition"
+                        >
+                          Отмена
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const res = normalizeSocialUsername(
+                              socialDraftType,
+                              socialDraftUsername
+                            );
+                            if ("error" in res) {
+                              setSocialDraftError(res.error);
+                              return;
+                            }
+                            setSocialLinks((prev) => [
+                              ...prev,
+                              { type: socialDraftType, username: res.username },
+                            ]);
+                            setSocialDraftOpen(false);
+                            setSocialDraftError("");
+                            setSocialDraftUsername("");
+                          }}
+                          className="rounded-full bg-white text-black px-3 py-2 text-sm font-semibold hover:bg-white/90 transition"
+                        >
+                          Добавить
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>,

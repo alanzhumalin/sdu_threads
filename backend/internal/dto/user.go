@@ -4,7 +4,7 @@ type CreateUserRequest struct {
 	Email         string `json:"email"`
 	Username      string `json:"username"`
 	FullName      string `json:"full_name"`
-	Major         string `json:"major"`
+	Bio           string `json:"bio"`
 	AvatarURL     string `json:"avatar_url"`
 	BackgroundURL string `json:"background_url"`
 }
@@ -13,7 +13,7 @@ type UserResponse struct {
 	ID            string `json:"id"`
 	Username      string `json:"username"`
 	FullName      string `json:"full_name"`
-	Major         string `json:"major,omitempty"`
+	Bio           string `json:"bio,omitempty"`
 	AvatarURL     string `json:"avatar_url,omitempty"`
 	BackgroundURL string `json:"background_url,omitempty"`
 }

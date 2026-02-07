@@ -1,19 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Hash, Loader2, Search, User as UserIcon, Heart, MessageCircle, Eye } from "lucide-react";
+import { Hash, Search, User as UserIcon, Heart, MessageCircle, Eye } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
+import { useProfileMeStore } from "../store/profileMe";
+import { useSubscriptionsStore } from "../store/subscriptions";
+import { useUserStatsStore } from "../store/userStats";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { MentionPreview } from "../components/MentionPreview";
 
 type UserResult = {
   id: string;
   username: string;
   full_name?: string;
-  major?: string;
+  bio?: string;
   avatar_url?: string;
 };
 
@@ -66,6 +70,10 @@ export default function SearchPage() {
   const feedStore = useFeedStore();
   const postPatches = usePostCacheStore((s) => s.byId);
   const patchPost = usePostCacheStore((s) => s.patch);
+  const setSubsFromPosts = useSubscriptionsStore((s) => s.setManyFromPosts);
+  const setFollow = useSubscriptionsStore((s) => s.setFollow);
+  const subs = useSubscriptionsStore((s) => s.byUserId);
+  const patchCounts = useUserStatsStore((s) => s.patchCounts);
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState<UserResult[]>([]);
   const [hashtags, setHashtags] = useState<TagResult[]>([]);
@@ -183,6 +191,7 @@ export default function SearchPage() {
     setTagLoading(true);
     try {
       const { items, nextOffset } = await api.postsByHashtag(name, 20, offset, token);
+      setSubsFromPosts(items as any[]);
       setTagPosts((prev) => (append ? mergePosts(prev, items) : items));
       setTagNextOffset(nextOffset);
       setTagError("");
@@ -246,11 +255,16 @@ export default function SearchPage() {
     }
   };
 
-  const toggleFollow = async (post: FeedItem) => {
+  const toggleFollow = async (post: FeedItem, currentIsSubscribed: boolean) => {
     if (!token || post.is_me) return;
-    const next = !post.is_subscribed;
-    setTagPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, is_subscribed: next } : p)));
+    const next = !currentIsSubscribed;
+    const delta = next ? 1 : -1;
+    const meId = useProfileMeStore.getState().profile?.id;
+    patchCounts(post.user_id, { followers: delta });
+    if (meId) patchCounts(meId, { following: delta });
+    setTagPosts((prev) => prev.map((p) => (p.user_id === post.user_id ? { ...p, is_subscribed: next } : p)));
     feedStore.updateByUser(post.user_id, { is_subscribed: next });
+    setFollow(post.user_id, next);
     try {
       if (next) {
         await api.followUser(post.user_id, token);
@@ -258,8 +272,13 @@ export default function SearchPage() {
         await api.unfollowUser(post.user_id, token);
       }
     } catch {
-      setTagPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, is_subscribed: post.is_subscribed } : p)));
-      feedStore.updateByUser(post.user_id, { is_subscribed: post.is_subscribed });
+      patchCounts(post.user_id, { followers: -delta });
+      if (meId) patchCounts(meId, { following: -delta });
+      setTagPosts((prev) =>
+        prev.map((p) => (p.user_id === post.user_id ? { ...p, is_subscribed: currentIsSubscribed } : p))
+      );
+      feedStore.updateByUser(post.user_id, { is_subscribed: currentIsSubscribed });
+      setFollow(post.user_id, currentIsSubscribed);
     }
   };
 
@@ -288,36 +307,45 @@ export default function SearchPage() {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-white">Популярные хэштеги</h2>
-            {popularLoading && (
-              <span className="text-white/50 text-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Загрузка...
-              </span>
-            )}
           </div>
           <ErrorMessage message={popularError} />
           {!popularLoading && popular.length === 0 && !popularError && (
             <div className="card p-4 text-white/60 text-sm">Пока нет популярных хэштегов.</div>
           )}
           <div className="space-y-2">
-            {popular.map((tag) => (
-              <div
-                key={tag.id}
-                className="card p-3 flex items-center justify-between hover:border-white/25 transition cursor-pointer"
-                onClick={() => selectTag(tag.name)}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
-                    <Hash className="w-5 h-5 text-white" strokeWidth={1.7} />
-                  </div>
-                  <div>
-                    <p className="text-white font-semibold">#{tag.name}</p>
-                    <p className="text-white/50 text-sm">
-                      {tag.post_count ? `${tag.post_count} постов` : "Постов пока нет"}
-                    </p>
+            {popularLoading &&
+              [1, 2, 3, 4].map((n) => (
+                <div key={n} className="card p-3 flex items-center justify-between animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/10" />
+                    <div className="space-y-2">
+                      <div className="h-3 bg-white/10 rounded-full w-28" />
+                      <div className="h-2 bg-white/5 rounded-full w-20" />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+
+            {!popularLoading &&
+              popular.map((tag) => (
+                <div
+                  key={tag.id}
+                  className="card p-3 flex items-center justify-between hover:border-white/25 transition cursor-pointer"
+                  onClick={() => selectTag(tag.name)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                      <Hash className="w-5 h-5 text-white" strokeWidth={1.7} />
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold">#{tag.name}</p>
+                      <p className="text-white/50 text-sm">
+                        {tag.post_count ? `${tag.post_count} постов` : "Постов пока нет"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
           </div>
         </section>
       )}
@@ -358,9 +386,13 @@ export default function SearchPage() {
                         "U"}
                     </div>
                     <div>
-                      <p className="text-white font-semibold">{user.full_name || "Без имени"}</p>
+                      <p className="text-white font-semibold">
+                        <MentionPreview username={user.username} className="">
+                          <span>{user.full_name || "Без имени"}</span>
+                        </MentionPreview>
+                      </p>
                       <p className="text-white/50 text-sm">@{user.username}</p>
-                      {user.major && <p className="text-white/50 text-xs mt-1">{user.major}</p>}
+                      {user.bio && <p className="text-white/50 text-xs mt-1">{user.bio}</p>}
                     </div>
                   </div>
                   <UserIcon className="w-4 h-4 text-white/40" strokeWidth={1.6} />
@@ -435,42 +467,47 @@ export default function SearchPage() {
             {tagPosts.map((p) => {
               const patch = postPatches[p.id];
               const item = patch ? { ...p, ...patch } : p;
+              const isMe = item.is_me === true;
+              const isSub = !isMe && (subs[item.user_id] ?? item.is_subscribed ?? false);
+              const postMeta = { ...item, is_subscribed: isSub, is_me: isMe };
 
               return (
-              <article key={p.id} className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden">
+              <article key={item.id} className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <Link
-                      to={`/u/${p.username}`}
+                      to={`/u/${item.username}`}
                       className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
                     >
-                      {p.full_name?.[0]?.toUpperCase() || p.username?.[0]?.toUpperCase() || "U"}
+                      {item.full_name?.[0]?.toUpperCase() || item.username?.[0]?.toUpperCase() || "U"}
                     </Link>
                     <div>
-                      <Link
-                        to={`/u/${p.username}`}
-                        className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
-                      >
-                        {p.full_name || "Без имени"}
-                      </Link>
-                      <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
+                      <MentionPreview username={item.username} className="">
+                        <Link
+                          to={`/u/${item.username}`}
+                          className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                        >
+                          {item.full_name || "Без имени"}
+                        </Link>
+                      </MentionPreview>
+                      <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {p.is_me ? (
+                    {isMe ? (
                       <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
                         Это вы
                       </span>
                     ) : (
                       <button
-                        onClick={() => toggleFollow(p)}
+                        onClick={() => toggleFollow(postMeta, isSub)}
                         className={`px-3 py-1 rounded-full text-xs border transition ${
-                          p.is_subscribed
+                          isSub
                             ? "border-white/20 text-white/80 hover:border-white/40"
                             : "border-white text-black bg-white hover:bg-white/90"
                         }`}
                       >
-                        {p.is_subscribed ? "Отписаться" : "Подписаться"}
+                        {isSub ? "Отписаться" : "Подписаться"}
                       </button>
                     )}
                   </div>
@@ -478,15 +515,15 @@ export default function SearchPage() {
 
                 <p className="mt-3 text-white leading-relaxed break-words">
                   {highlightHashtags(
-                    p.content,
-                    p.mentions ? new Set(p.mentions.map((m) => m.toLowerCase())) : undefined,
-                    p.hashtags ? new Set(p.hashtags.map((h) => h.toLowerCase())) : undefined
+                    item.content,
+                    item.mentions ? new Set(item.mentions.map((m) => m.toLowerCase())) : undefined,
+                    item.hashtags ? new Set(item.hashtags.map((h) => h.toLowerCase())) : undefined
                   )}
                 </p>
 
-                {p.media_url && (
+                {item.media_url && (
                   <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                    <img src={p.media_url} alt="media" className="w-full h-auto object-cover" />
+                    <img src={item.media_url} alt="media" className="w-full h-auto object-cover" />
                   </div>
                 )}
 
@@ -506,14 +543,14 @@ export default function SearchPage() {
                       <span className="font-medium">{item.like_count}</span>
                     </button>
 
-                    <button
-                      className="flex items-center gap-2 text-white/60 hover:text-white"
-                      onClick={() => setCommentsPost(item)}
-                    >
-                      <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
-                      <span>{item.comment_count ?? 0}</span>
-                    </button>
-                  </div>
+                  <button
+                    className="flex items-center gap-2 text-white/60 hover:text-white"
+                    onClick={() => setCommentsPost(postMeta)}
+                  >
+                    <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
+                    <span>{item.comment_count ?? 0}</span>
+                  </button>
+                </div>
 
                   <div className="flex items-center gap-2 text-white/60">
                     <Eye className="w-5 h-5" strokeWidth={1.7} />

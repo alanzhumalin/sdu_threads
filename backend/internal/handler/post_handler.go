@@ -27,6 +27,7 @@ func (h *PostHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/posts", h.handlePosts)
 	mux.HandleFunc("/api/posts/", h.handlePostActions)
 	mux.HandleFunc("/api/posts-liked", h.handleLiked)
+	mux.HandleFunc("/api/feed/following", h.handleFollowingFeed)
 }
 
 func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +149,28 @@ func (h *PostHandler) handleFeed(w http.ResponseWriter, r *http.Request) {
 		viewerID = &id
 	}
 	items, err := h.service.Feed(r.Context(), limit, offset, viewerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setNextOffset(w, offset, limit, len(items))
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (h *PostHandler) handleFollowingFeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	limit := parseIntQuery(r, "limit", 20)
+	offset := parseIntQuery(r, "offset", 0)
+
+	items, err := h.service.FeedFollowing(r.Context(), userID, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

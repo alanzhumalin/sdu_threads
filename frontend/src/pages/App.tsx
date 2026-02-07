@@ -11,6 +11,8 @@ import NotificationsPage from "./Notifications";
 import PostPermalinkPage from "./PostPermalink";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
+import { useNotificationStore } from "../store/notifications";
+import { api } from "../api/client";
 
 function isJwtExpired(token: string, skewSeconds = 10): boolean {
   try {
@@ -40,6 +42,7 @@ function Protected({ children }: { children: JSX.Element }) {
 export default function App() {
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
+  const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
@@ -54,6 +57,26 @@ export default function App() {
       }
     }
   }, [token, isAuthed, setToken, navigate, location.pathname]);
+
+  // Глобальная инициализация индикатора уведомлений
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) {
+      setUnreadCount(0);
+      return;
+    }
+    api
+      .notificationsUnread(token)
+      .then((res) => {
+        if (!cancelled) setUnreadCount(res.unread_count || 0);
+      })
+      .catch(() => {
+        // тихо игнорируем, чтобы не мешать остальному UI
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, setUnreadCount]);
 
   const items = [
     { label: "Лента", path: "/" , icon: "feed"},
@@ -83,7 +106,10 @@ export default function App() {
         <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
       )}
       <div className="mx-auto max-w-6xl px-3 md:px-8 md:h-screen md:overflow-hidden">
-        <div key={location.pathname} className="pb-20 md:pb-6 md:overflow-y-auto md:h-screen">
+        <div
+          key={location.pathname}
+          className="pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6 md:overflow-y-auto md:h-screen"
+        >
           <Routes location={location}>
             <Route
               path="/"

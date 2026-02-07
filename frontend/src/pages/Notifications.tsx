@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/auth";
 import { CommentsModal, PostMeta } from "../components/CommentsModal";
 import { useNotificationStore } from "../store/notifications";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { MentionPreview } from "../components/MentionPreview";
 
 type NotificationItem = {
   id: string;
@@ -337,9 +338,15 @@ export default function NotificationsPage() {
               </Link>
               <div className="space-y-1 flex-1">
                 <p className="text-white font-semibold">
-                  <Link to={`/u/${n.actor_username}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
-                    {n.actor_full_name || n.actor_username}
-                  </Link>{" "}
+                  <MentionPreview username={n.actor_username} className="">
+                    <Link
+                      to={`/u/${n.actor_username}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="hover:underline"
+                    >
+                      {n.actor_full_name || n.actor_username}
+                    </Link>
+                  </MentionPreview>{" "}
                   {renderMessage(n)}
                 </p>
                 <p className="text-white/50 text-sm">{timeAgo(n.created_at)}</p>

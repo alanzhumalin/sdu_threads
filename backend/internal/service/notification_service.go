@@ -226,6 +226,71 @@ ON CONFLICT DO NOTHING;`
 	return res.RowsAffected, res.Error
 }
 
+func (s *NotificationService) UnreadCount(ctx context.Context, userID string) (int64, error) {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	username := strings.TrimSpace(user.Username)
+	pattern := "%@" + username + "%"
+
+	q := `
+WITH n AS (
+    SELECT CONCAT('like', ':', l.id) AS nid, l.created_at
+    FROM likes l
+    JOIN posts p ON p.id = l.post_id
+    WHERE p.user_id = ? AND l.user_id <> ?
+
+    UNION ALL
+    SELECT CONCAT('comment', ':', c.id) AS nid, c.created_at
+    FROM comments c
+    JOIN posts p ON p.id = c.post_id
+    WHERE p.user_id = ? AND c.user_id <> ?
+
+    UNION ALL
+    SELECT CONCAT('follow', ':', f.id) AS nid, f.created_at
+    FROM follows f
+    WHERE f.followee_id = ?
+
+    UNION ALL
+    SELECT CONCAT('mention_post', ':', p.id) AS nid, p.created_at
+    FROM posts p
+    WHERE p.content ILIKE ? AND p.user_id <> ?
+
+    UNION ALL
+    SELECT CONCAT('mention_comment', ':', c.id) AS nid, c.created_at
+    FROM comments c
+    JOIN posts p ON p.id = c.post_id
+    WHERE c.body ILIKE ? AND c.user_id <> ? AND (c.reply_to_comment_id IS NULL OR c.reply_to_comment_id NOT IN (SELECT id FROM comments WHERE user_id = ?))
+
+    UNION ALL
+    SELECT CONCAT('reply_comment', ':', c.id) AS nid, c.created_at
+    FROM comments c
+    JOIN comments parent ON parent.id = c.reply_to_comment_id
+    WHERE parent.user_id = ? AND c.user_id <> ?
+)
+SELECT COUNT(*)
+FROM n
+LEFT JOIN notification_reads r ON r.notification_id = n.nid AND r.user_id = ?
+WHERE r.notification_id IS NULL;`
+
+	var count int64
+	err = s.db.WithContext(ctx).Raw(
+		q,
+		userID, userID, // likes
+		userID, userID, // comments
+		userID,          // follows
+		pattern, userID, // mention posts
+		pattern, userID, userID, // mention comments
+		userID, userID, // replies
+		userID, // reads join
+	).Scan(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func derefString(s *string) string {
 	if s == nil {
 		return ""

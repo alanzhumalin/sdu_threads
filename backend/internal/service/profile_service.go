@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"sduthreads/internal/dto"
+	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
 )
 
@@ -19,17 +22,113 @@ func NewProfileService(users *repository.UserRepository, follows *repository.Fol
 }
 
 type Profile struct {
-	ID            string `json:"id"`
-	Username      string `json:"username"`
-	FullName      string `json:"full_name"`
-	Major         string `json:"major"`
-	AvatarURL     string `json:"avatar_url"`
-	BackgroundURL string `json:"background_url"`
-	Followers     int64  `json:"followers"`
-	Following     int64  `json:"following"`
-	CreatedAt     string `json:"created_at"`
-	IsMe          bool   `json:"is_me"`
-	IsSubscribed  bool   `json:"is_subscribed"`
+	ID            string            `json:"id"`
+	Username      string            `json:"username"`
+	FullName      string            `json:"full_name"`
+	Bio           string            `json:"bio"`
+	AvatarURL     string            `json:"avatar_url"`
+	BackgroundURL string            `json:"background_url"`
+	SocialLinks   map[string]string `json:"social_links,omitempty"`
+	Followers     int64             `json:"followers"`
+	Following     int64             `json:"following"`
+	CreatedAt     string            `json:"created_at"`
+	IsMe          bool              `json:"is_me"`
+	IsSubscribed  bool              `json:"is_subscribed"`
+}
+
+func validateSocialLinks(in map[string]string) (models.SocialLinks, error) {
+	allowed := map[string]struct{}{
+		"instagram": {},
+		"telegram":  {},
+		"github":    {},
+		"linkedin":  {},
+	}
+
+	label := func(kind string) string {
+		switch kind {
+		case "instagram":
+			return "Instagram"
+		case "telegram":
+			return "Telegram"
+		case "github":
+			return "GitHub"
+		case "linkedin":
+			return "LinkedIn"
+		default:
+			return kind
+		}
+	}
+
+	allowedDomainHint := func(kind string) string {
+		switch kind {
+		case "instagram":
+			return "instagram.com"
+		case "telegram":
+			return "t.me"
+		case "github":
+			return "github.com"
+		case "linkedin":
+			return "www.linkedin.com"
+		default:
+			return ""
+		}
+	}
+
+	hostOk := func(kind, host string) bool {
+		h := strings.ToLower(strings.TrimSpace(host))
+		switch kind {
+		case "instagram":
+			return h == "instagram.com" || h == "www.instagram.com"
+		case "telegram":
+			return h == "t.me" || h == "telegram.me"
+		case "github":
+			return h == "github.com" || h == "www.github.com"
+		case "linkedin":
+			// LinkedIn: require www to match frontend UX.
+			return h == "www.linkedin.com"
+		default:
+			return false
+		}
+	}
+
+	out := make(map[string]string)
+	for k, raw := range in {
+		kind := strings.ToLower(strings.TrimSpace(k))
+		if kind == "" {
+			continue
+		}
+		if _, ok := allowed[kind]; !ok {
+			return nil, fmt.Errorf("Некорректный тип соцсети")
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			// treat empty as "remove"
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("Неверный URL для %s", label(kind))
+		}
+		if strings.ToLower(u.Scheme) != "https" {
+			return nil, fmt.Errorf("%s: ссылка должна начинаться с https://", label(kind))
+		}
+		if !hostOk(kind, u.Host) {
+			hint := allowedDomainHint(kind)
+			if hint != "" {
+				return nil, fmt.Errorf("%s: ссылка должна вести на %s", label(kind), hint)
+			}
+			return nil, fmt.Errorf("Неверная ссылка для %s", label(kind))
+		}
+		out[kind] = raw
+	}
+
+	if len(out) > 4 {
+		return nil, fmt.Errorf("Можно добавить максимум 4 соцсети")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return models.SocialLinks(out), nil
 }
 
 func (s *ProfileService) Get(ctx context.Context, userID string, viewerID *string) (*Profile, error) {
@@ -52,13 +151,19 @@ func (s *ProfileService) Get(ctx context.Context, userID string, viewerID *strin
 			isSubscribed = ok
 		}
 	}
+
+	var social map[string]string
+	if u.SocialLinks != nil && len(u.SocialLinks) > 0 {
+		social = map[string]string(u.SocialLinks)
+	}
 	return &Profile{
 		ID:            u.ID,
 		Username:      u.Username,
 		FullName:      u.FullName,
-		Major:         u.Major,
+		Bio:           u.Bio,
 		AvatarURL:     u.AvatarURL,
 		BackgroundURL: u.BackgroundURL,
+		SocialLinks:   social,
 		Followers:     followers,
 		Following:     following,
 		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
@@ -72,14 +177,21 @@ func (s *ProfileService) Update(ctx context.Context, userID string, req dto.Upda
 	if req.FullName != nil {
 		fields["full_name"] = strings.TrimSpace(*req.FullName)
 	}
-	if req.Major != nil {
-		fields["major"] = strings.TrimSpace(*req.Major)
+	if req.Bio != nil {
+		fields["bio"] = strings.TrimSpace(*req.Bio)
 	}
 	if req.AvatarURL != nil {
 		fields["avatar_url"] = strings.TrimSpace(*req.AvatarURL)
 	}
 	if req.BackgroundURL != nil {
 		fields["background_url"] = strings.TrimSpace(*req.BackgroundURL)
+	}
+	if req.SocialLinks != nil {
+		links, err := validateSocialLinks(*req.SocialLinks)
+		if err != nil {
+			return nil, err
+		}
+		fields["social_links"] = links
 	}
 
 	if err := s.users.UpdateProfile(ctx, userID, fields); err != nil {

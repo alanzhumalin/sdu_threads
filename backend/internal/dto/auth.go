@@ -6,7 +6,7 @@ type RegisterRequest struct {
 	FullName      string `json:"full_name"`
 	Password      string `json:"password"`
 	AcceptedRules bool   `json:"accepted_rules"`
-	Major         string `json:"major"`
+	Bio           string `json:"bio"`
 	AvatarURL     string `json:"avatar_url"`
 	BackgroundURL string `json:"background_url"`
 }

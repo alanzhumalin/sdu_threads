@@ -4,12 +4,18 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
+import { useProfileMeStore } from "../store/profileMe";
 import PostComposer from "../components/PostComposer";
 import { CommentsModal } from "../components/CommentsModal";
 import { TopUsers } from "../components/TopUsers";
 import { ReportModal } from "../components/ReportModal";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { PostSkeleton } from "../components/PostSkeleton";
 import { highlightHashtags } from "../utils/text";
+import { MentionPreview } from "../components/MentionPreview";
+import { useSubscriptionsStore } from "../store/subscriptions";
+import { useFollowingFeedStore } from "../store/followingFeed";
+import { useUserStatsStore } from "../store/userStats";
 import {
   Heart,
   MessageCircle,
@@ -72,12 +78,29 @@ export default function FeedPage() {
     updateItem: updateCacheItem,
     updateByUser: updateCacheByUser,
   } = useFeedStore();
+  const {
+    items: cachedFollowing,
+    nextOffset: cachedFollowingNext,
+    initialized: followingInitialized,
+    setCache: setFollowingCache,
+  } = useFollowingFeedStore();
   const postPatches = usePostCacheStore((s) => s.byId);
   const patchPost = usePostCacheStore((s) => s.patch);
+  const setSubsFromPosts = useSubscriptionsStore((s) => s.setManyFromPosts);
+  const setFollow = useSubscriptionsStore((s) => s.setFollow);
+  const subs = useSubscriptionsStore((s) => s.byUserId);
+  const patchCounts = useUserStatsStore((s) => s.patchCounts);
+  const subsVersion = useSubscriptionsStore((s) => s.version);
+  const [tab, setTab] = useState<"popular" | "following">("popular");
   const [feed, setFeed] = useState<FeedItem[]>(cachedFeed);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(!initialized);
-  const [nextOffset, setNextOffset] = useState<number | null>(cachedNext);
+  const [popularError, setPopularError] = useState("");
+  const [popularLoading, setPopularLoading] = useState(!initialized);
+  const [popularNextOffset, setPopularNextOffset] = useState<number | null>(cachedNext);
+  const [followingFeed, setFollowingFeed] = useState<FeedItem[]>(cachedFollowing as FeedItem[]);
+  const [followingError, setFollowingError] = useState("");
+  const [followingLoading, setFollowingLoading] = useState(!followingInitialized);
+  const [followingNextOffset, setFollowingNextOffset] = useState<number | null>(cachedFollowingNext);
+  const [followingSeenVersion, setFollowingSeenVersion] = useState<number>(subsVersion);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
   const [reportPost, setReportPost] = useState<FeedItem | null>(null);
@@ -113,17 +136,22 @@ export default function FeedPage() {
 
   const updatePost = (id: string, patch: Partial<FeedItem>) => {
     setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    setFollowingFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     updateCacheItem(id, patch);
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
   };
 
   const updateAuthor = (userId: string, patch: Partial<FeedItem>) => {
+    if (typeof patch.is_subscribed === "boolean") {
+      setFollow(userId, patch.is_subscribed);
+    }
     setFeed((prev) => prev.map((p) => (p.user_id === userId ? { ...p, ...patch } : p)));
+    setFollowingFeed((prev) => prev.map((p) => (p.user_id === userId ? { ...p, ...patch } : p)));
     updateCacheByUser(userId, patch);
   };
 
-  const refresh = async () => {
-    setLoading(true);
+  const refreshPopular = async () => {
+    setPopularLoading(true);
     try {
       const prevIds = new Set(feed.map((p) => p.id));
       const { items, nextOffset } = await api.feedPage(20, 0, token);
@@ -135,27 +163,55 @@ export default function FeedPage() {
         setJustAdded(newIds);
         window.setTimeout(() => setJustAdded(new Set()), 700);
       }
+      setSubsFromPosts(items as any[]);
       setFeed(items);
-      setNextOffset(nextOffset);
+      setPopularNextOffset(nextOffset);
       setCache(items, nextOffset);
-      setError("");
+      setPopularError("");
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить ленту");
+      setPopularError(e.message || "Не удалось загрузить ленту");
     } finally {
-      setLoading(false);
+      setPopularLoading(false);
+    }
+  };
+
+  const refreshFollowing = async () => {
+    if (!token) return;
+    setFollowingLoading(true);
+    try {
+      const { items, nextOffset } = await api.followingFeedPage(20, 0, token);
+      setSubsFromPosts(items as any[]);
+      setFollowingFeed(items);
+      setFollowingNextOffset(nextOffset);
+      setFollowingCache(items, nextOffset);
+      setFollowingError("");
+      setFollowingSeenVersion(subsVersion);
+    } catch (e: any) {
+      setFollowingError(e.message || "Не удалось загрузить ленту подписок");
+    } finally {
+      setFollowingLoading(false);
     }
   };
 
   useEffect(() => {
     if (initialized && cachedFeed.length) {
       setFeed(cachedFeed);
-      setNextOffset(cachedNext);
-      setLoading(false);
+      setPopularNextOffset(cachedNext);
+      setPopularLoading(false);
       return;
     }
-    refresh();
+    refreshPopular();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    if (tab !== "following") return;
+    if (!token) return;
+    if (!followingInitialized || subsVersion !== followingSeenVersion) {
+      refreshFollowing();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, token, followingInitialized, subsVersion]);
 
   useEffect(() => {
     if (!token) return;
@@ -200,22 +256,43 @@ export default function FeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const loadMore = async () => {
-    if (loading || !token || nextOffset === null) return;
-    setLoading(true);
+  const loadMorePopular = async () => {
+    if (popularLoading || !token || popularNextOffset === null) return;
+    setPopularLoading(true);
     try {
-      const { items, nextOffset: n } = await api.feedPage(20, nextOffset, token);
+      const { items, nextOffset: n } = await api.feedPage(20, popularNextOffset, token);
       setFeed((prev) => {
         const merged = [...prev, ...items];
+        setSubsFromPosts(items as any[]);
         setCache(merged, n);
         return merged;
       });
-      setNextOffset(n);
-      setError("");
+      setPopularNextOffset(n);
+      setPopularError("");
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить ленту");
+      setPopularError(e.message || "Не удалось загрузить ленту");
     } finally {
-      setLoading(false);
+      setPopularLoading(false);
+    }
+  };
+
+  const loadMoreFollowing = async () => {
+    if (followingLoading || !token || followingNextOffset === null) return;
+    setFollowingLoading(true);
+    try {
+      const { items, nextOffset: n } = await api.followingFeedPage(20, followingNextOffset, token);
+      setFollowingFeed((prev) => {
+        const merged = [...prev, ...items];
+        setSubsFromPosts(items as any[]);
+        setFollowingCache(merged, n);
+        return merged;
+      });
+      setFollowingNextOffset(n);
+      setFollowingError("");
+    } catch (e: any) {
+      setFollowingError(e.message || "Не удалось загрузить ленту подписок");
+    } finally {
+      setFollowingLoading(false);
     }
   };
 
@@ -223,12 +300,14 @@ export default function FeedPage() {
 
   useEffect(() => {
     const sentinel = loadMoreRef.current;
-    if (!sentinel || nextOffset === null) return;
+    const activeNextOffset = tab === "popular" ? popularNextOffset : followingNextOffset;
+    if (!sentinel || activeNextOffset === null) return;
     const obs = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            loadMore();
+            if (tab === "popular") loadMorePopular();
+            else loadMoreFollowing();
           }
         });
       },
@@ -236,16 +315,22 @@ export default function FeedPage() {
     );
     obs.observe(sentinel);
     return () => obs.disconnect();
-  }, [nextOffset, token]);
+  }, [tab, popularNextOffset, followingNextOffset, token, popularLoading, followingLoading]);
 
   const sendView = async (postId: string) => {
     if (!token) return;
     if (viewedPersisted.current.has(postId)) return;
     try {
       await api.viewPost(postId, token);
-      setFeed((prev) =>
-        prev.map((p) => (p.id === postId ? { ...p, view_count: (p.view_count || 0) + 1 } : p))
-      );
+      const base = feed.find((p) => p.id === postId) || followingFeed.find((p) => p.id === postId);
+      const merged = postPatches[postId] ? { ...base, ...postPatches[postId] } : base;
+      const nextView = (merged?.view_count ?? 0) + 1;
+
+      patchPost(postId, { view_count: nextView });
+      updateCacheItem(postId, { view_count: nextView });
+      setFeed((prev) => prev.map((p) => (p.id === postId ? { ...p, view_count: nextView } : p)));
+      setFollowingFeed((prev) => prev.map((p) => (p.id === postId ? { ...p, view_count: nextView } : p)));
+      setCommentsPost((prev) => (prev?.id === postId ? { ...prev, view_count: nextView } : prev));
       viewedPersisted.current.add(postId);
       try {
         localStorage.setItem("viewed_posts", JSON.stringify(Array.from(viewedPersisted.current)));
@@ -257,9 +342,13 @@ export default function FeedPage() {
     }
   };
 
-  const toggleFollow = async (post: FeedItem) => {
+  const toggleFollow = async (post: FeedItem, currentIsSubscribed: boolean) => {
     if (!token || post.is_me) return;
-    const nextState = !post.is_subscribed;
+    const nextState = !currentIsSubscribed;
+    const delta = nextState ? 1 : -1;
+    const meId = useProfileMeStore.getState().profile?.id;
+    patchCounts(post.user_id, { followers: delta });
+    if (meId) patchCounts(meId, { following: delta });
     updateAuthor(post.user_id, { is_subscribed: nextState });
     try {
       if (nextState) {
@@ -268,7 +357,9 @@ export default function FeedPage() {
         await api.unfollowUser(post.user_id, token);
       }
     } catch {
-      updateAuthor(post.user_id, { is_subscribed: post.is_subscribed });
+      patchCounts(post.user_id, { followers: -delta });
+      if (meId) patchCounts(meId, { following: -delta });
+      updateAuthor(post.user_id, { is_subscribed: currentIsSubscribed });
     }
   };
 
@@ -283,22 +374,44 @@ export default function FeedPage() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
+  const setActiveError = (message: string) => {
+    if (tab === "popular") setPopularError(message);
+    else setFollowingError(message);
+  };
+
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
-    const currentBase = feed.find((p) => p.id === id);
+    const currentBase = feed.find((p) => p.id === id) || followingFeed.find((p) => p.id === id);
     const currentPatch = postPatches[id];
     const current = currentPatch ? { ...currentBase, ...currentPatch } : currentBase;
     const currentLikeCount = current?.like_count ?? 0;
     const nextCount = currentLikeCount + (liked ? -1 : 1);
-    updatePost(id, { liked_by_me: !liked, like_count: nextCount });
+    // optimistic update across both tabs + cache
+    setFeed((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, liked_by_me: !liked, like_count: nextCount } : p))
+    );
+    setFollowingFeed((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, liked_by_me: !liked, like_count: nextCount } : p))
+    );
+    updateCacheItem(id, { liked_by_me: !liked, like_count: nextCount });
+    setCommentsPost((prev) => (prev?.id === id ? { ...prev, liked_by_me: !liked, like_count: nextCount } : prev));
     patchPost(id, { liked_by_me: !liked, like_count: nextCount });
     try {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
     } catch (e: any) {
-      setError(e.message || "Ошибка лайка");
+      setActiveError(e.message || "Ошибка лайка");
       if (current) {
-        updatePost(id, { liked_by_me: liked, like_count: currentLikeCount });
+        setFeed((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, liked_by_me: liked, like_count: currentLikeCount } : p))
+        );
+        setFollowingFeed((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, liked_by_me: liked, like_count: currentLikeCount } : p))
+        );
+        updateCacheItem(id, { liked_by_me: liked, like_count: currentLikeCount });
+        setCommentsPost((prev) =>
+          prev?.id === id ? { ...prev, liked_by_me: liked, like_count: currentLikeCount } : prev
+        );
         patchPost(id, { liked_by_me: liked, like_count: currentLikeCount });
       }
     }
@@ -331,6 +444,19 @@ export default function FeedPage() {
     }
   };
 
+  const activeError = tab === "popular" ? popularError : followingError;
+  const activeLoading = tab === "popular" ? popularLoading : followingLoading;
+  const activeNextOffset = tab === "popular" ? popularNextOffset : followingNextOffset;
+  const activeItems = tab === "popular" ? feed : followingFeed;
+  const visibleItems =
+    tab === "following"
+      ? activeItems.filter((it) => {
+          if (it.is_me) return true;
+          const isSub = subs[it.user_id] ?? it.is_subscribed ?? false;
+          return isSub;
+        })
+      : activeItems;
+
   return (
     <main data-feed-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="space-y-4">
@@ -341,15 +467,57 @@ export default function FeedPage() {
           </div>
         </div>
 
-        <PostComposer onCreated={refresh} />
+        <PostComposer
+          onCreated={() => {
+            setTab("popular");
+            refreshPopular();
+          }}
+        />
 
-        {loading && <p className="text-gray-400">Загрузка фида...</p>}
-        <ErrorMessage message={error} />
+        <div className="flex items-center">
+          <div className="rounded-full border border-white/10 bg-black/60 p-1 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setTab("popular")}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
+                tab === "popular"
+                  ? "bg-white text-black"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              Популярное
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("following")}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
+                tab === "following"
+                  ? "bg-white text-black"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              Подписки
+            </button>
+          </div>
+        </div>
+
+        <ErrorMessage message={activeError} />
+
+        {activeLoading && visibleItems.length === 0 && !activeError && (
+          <div className="space-y-3">
+            {[1, 2, 3].map((n) => (
+              <PostSkeleton key={n} withMedia={n === 1} />
+            ))}
+          </div>
+        )}
 
         <div className="space-y-3">
-          {feed.map((item) => {
+          {visibleItems.map((item) => {
             const patch = postPatches[item.id];
             const p = patch ? { ...item, ...patch } : item;
+            const isMe = item.is_me === true;
+            const isSub = !isMe && (subs[item.user_id] ?? item.is_subscribed ?? false);
+            const postMeta = { ...p, is_subscribed: isSub, is_me: isMe };
 
             return (
             <article
@@ -357,10 +525,10 @@ export default function FeedPage() {
               ref={setPostRef(item.id)}
               data-post-id={item.id}
               className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${
-              justAdded.has(item.id) ? "animate-new-post" : ""
+              tab === "popular" && justAdded.has(item.id) ? "animate-new-post" : ""
             }`}
           >
-            <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <Link
                   to={`/u/${item.username}`}
@@ -369,17 +537,19 @@ export default function FeedPage() {
                   {item.full_name?.[0]?.toUpperCase() || item.username[0].toUpperCase()}
                 </Link>
                 <div>
-                  <Link
-                    to={`/u/${item.username}`}
-                    className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
-                  >
-                    {item.full_name || "Без имени"}
-                  </Link>
+                  <MentionPreview username={item.username} className="">
+                    <Link
+                      to={`/u/${item.username}`}
+                      className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                    >
+                      {item.full_name || "Без имени"}
+                    </Link>
+                  </MentionPreview>
                   <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {item.is_me ? (
+                {isMe ? (
                   <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
                     Это вы
                   </span>
@@ -387,15 +557,15 @@ export default function FeedPage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleFollow(item);
+                      toggleFollow(item, isSub);
                     }}
                     className={`px-3 py-1 rounded-full text-xs border transition ${
-                      item.is_subscribed
+                      isSub
                         ? "border-white/20 text-white/80 hover:border-white/40"
                         : "border-white text-black bg-white hover:bg-white/90"
                     }`}
                   >
-                    {item.is_subscribed ? "Отписаться" : "Подписаться"}
+                    {isSub ? "Отписаться" : "Подписаться"}
                   </button>
                 )}
                 <button
@@ -478,7 +648,7 @@ export default function FeedPage() {
 
                 <button
                   className="flex items-center gap-2 text-white/60 hover:text-white"
-                  onClick={() => setCommentsPost(p)}
+                  onClick={() => setCommentsPost(postMeta)}
                 >
                   <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
                   <span>{p.comment_count ?? 0}</span>
@@ -494,18 +664,31 @@ export default function FeedPage() {
             );
           })}
 
-          {!loading && feed.length === 0 && !error && (
-            <div className="card p-6 text-white/70 space-y-3">
-              <p>Постов пока нет.</p>
-              <p className="text-sm">
-                Создайте первый пост через кнопку «Опубликовать» выше.
-              </p>
+          {!activeLoading && visibleItems.length === 0 && !activeError && (
+            <div className="card p-6 space-y-2 text-center">
+              {tab === "following" ? (
+                <>
+                  <p className="text-white/80">
+                    Здесь будут появляться посты от людей, на которых вы подписаны
+                  </p>
+                  <p className="text-sm text-white/50">
+                    Подпишитесь на активных пользователей, чтобы видеть их посты
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-white/80">Постов пока нет</p>
+                  <p className="text-sm text-white/50">
+                    Создайте первый пост через кнопку &quot;Опубликовать&quot; выше
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>
-        {nextOffset !== null && (
+        {activeNextOffset !== null && (
           <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
-            {loading ? "Загрузка..." : "Подгружаем ещё..."}
+            {activeLoading ? "Загрузка..." : "Подгружаем ещё..."}
           </div>
         )}
         {commentsPost && (

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     full_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    major TEXT,
+    bio TEXT,
     avatar_url TEXT,
     background_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

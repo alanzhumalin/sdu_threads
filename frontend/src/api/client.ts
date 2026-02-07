@@ -6,6 +6,10 @@ const API_BASE = "/api";
 
 let redirecting = false;
 
+type SocialLinks = Partial<
+  Record<"instagram" | "telegram" | "github" | "linkedin", string>
+>;
+
 type ApiErrorShape =
   | { error: string }
   | { error: { code?: string; message?: string; retry_after_seconds?: number } }
@@ -208,6 +212,30 @@ const feedPageFn = (
     nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
   }));
 
+const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
+  requestWithHeaders<
+    {
+      id: string;
+      user_id: string;
+      content: string;
+      username: string;
+      full_name: string;
+      created_at: string;
+      media_url?: string;
+      like_count: number;
+      liked_by_me: boolean;
+      view_count: number;
+      comment_count?: number;
+      mentions?: string[];
+      hashtags?: string[];
+      is_subscribed?: boolean;
+      is_me?: boolean;
+    }[]
+  >(`/feed/following?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+    items: data,
+    nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+  }));
+
 export const api = {
   login: (login: string, password: string) =>
     request<{ token: string }>("/auth/login", "POST", { login, password }),
@@ -223,9 +251,10 @@ export const api = {
       id: string;
       username: string;
       full_name: string;
-      major: string;
+      bio: string;
       avatar_url?: string;
       background_url?: string;
+      social_links?: SocialLinks;
       followers: number;
       following: number;
       created_at: string;
@@ -237,9 +266,10 @@ export const api = {
       id: string;
       username: string;
       full_name: string;
-      major: string;
+      bio: string;
       avatar_url?: string;
       background_url?: string;
+      social_links?: SocialLinks;
       followers: number;
       following: number;
       created_at: string;
@@ -247,21 +277,31 @@ export const api = {
       is_subscribed?: boolean;
     }>(`/users/${encodeURIComponent(username)}`, "GET", undefined, token),
   updateProfile: (
-    payload: { full_name?: string; major?: string; avatar_url?: string; background_url?: string },
+    payload: {
+      full_name?: string;
+      bio?: string;
+      avatar_url?: string;
+      background_url?: string;
+      social_links?: SocialLinks;
+    },
     token: string
   ) =>
     request<{
       id: string;
       username: string;
       full_name: string;
-      major: string;
+      bio: string;
       avatar_url?: string;
       background_url?: string;
+      social_links?: SocialLinks;
       followers: number;
       following: number;
       created_at: string;
+      is_me?: boolean;
+      is_subscribed?: boolean;
     }>("/users/me", "PATCH", payload, token),
   feedPage: feedPageFn,
+  followingFeedPage: followingFeedPageFn,
   feed: (token?: string | null) => feedPageFn(20, 0, token).then((r) => r.items),
   userPosts: (userId: string, limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
@@ -283,6 +323,40 @@ export const api = {
       is_me?: boolean;
     }[]
     >(`/users/${userId}/posts?limit=${limit}&offset=${offset}`, "GET", undefined, token).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  followers: (userId: string, limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        username: string;
+        full_name: string;
+        avatar_url?: string;
+      }[]
+    >(
+      `/users/${encodeURIComponent(userId)}/followers?limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: data,
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  following: (userId: string, limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        username: string;
+        full_name: string;
+        avatar_url?: string;
+      }[]
+    >(
+      `/users/${encodeURIComponent(userId)}/following?limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
       items: data,
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
@@ -370,6 +444,8 @@ export const api = {
         nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
       })
     ),
+  notificationsUnread: (token?: string | null) =>
+    request<{ unread_count: number }>(`/notifications-unread`, "GET", undefined, token),
   notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {
@@ -407,7 +483,7 @@ export const api = {
         username: string;
         full_name: string;
         avatar_url?: string;
-        major?: string;
+        bio?: string;
       }[]
     >(`/users/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`, "GET", undefined, token).then(
       ({ data, headers }) => ({
@@ -440,7 +516,7 @@ export const api = {
         id: string;
         username: string;
         full_name?: string;
-        major?: string;
+        bio?: string;
         avatar_url?: string;
       }[]
     >(`/users/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`, "GET", undefined, token),

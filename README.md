@@ -43,7 +43,7 @@ Each user has a profile page that includes:
 - User details:
   - Full name
   - Username
-  - University major
+  - Bio (profile description)
 - Stats:
   - Subscribers (followers)
   - Subscriptions (following)

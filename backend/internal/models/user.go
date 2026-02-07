@@ -8,9 +8,10 @@ type User struct {
 	Username        string `gorm:"uniqueIndex;not null"`
 	FullName        string `gorm:"not null"`
 	PasswordHash    string `gorm:"not null"`
-	Major           string
+	Bio             string
 	AvatarURL       string
 	BackgroundURL   string
+	SocialLinks     SocialLinks `gorm:"type:jsonb"`
 	AcceptedRulesAt *time.Time
 	CreatedAt       time.Time `gorm:"not null;default:now()"`
 	UpdatedAt       time.Time `gorm:"not null;default:now()"`

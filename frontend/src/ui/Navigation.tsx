@@ -41,7 +41,7 @@ export default function Navigation({ items, onClick, activePath }: Props) {
       <nav
         ref={navRef}
         style={{ left: "max(16px, calc(50% - 336px - 80px))" }}
-        className="hidden md:flex fixed top-32 z-30 flex-col items-center space-y-2.5 p-2 rounded-2xl border border-white/10 bg-black/80 backdrop-blur"
+        className="hidden min-[871px]:flex fixed top-32 z-30 flex-col items-center space-y-2.5 p-2 rounded-2xl border border-white/10 bg-black/80 backdrop-blur"
       >
         {items.map((item) => (
           <button
@@ -77,20 +77,23 @@ export default function Navigation({ items, onClick, activePath }: Props) {
       </nav>
 
       {/* Mobile bottom bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t border-white/10 bg-black/90 backdrop-blur px-4 py-2 flex justify-around">
+      <nav
+        className="min-[871px]:hidden fixed bottom-0 left-0 right-0 z-[120] border-t border-white/10 bg-black/90 backdrop-blur px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] flex justify-around"
+      >
         {items.map((item) => (
           <button
             key={item.path}
             onClick={() => onClick(item.path)}
-            className={`flex flex-col items-center text-xs transition ${
+            className={`grid place-items-center w-12 h-12 rounded-full transition ${
               item.icon === "exit"
-                ? "text-red-400"
+                ? "text-red-400 hover:bg-white/5"
                 : activePath === item.path
-                  ? "text-black bg-white rounded-full px-3 py-2"
-                  : "text-white/60"
+                  ? "text-black bg-white"
+                  : "text-white/60 hover:text-white hover:bg-white/5"
             }`}
+            title={item.label}
           >
-            <span className="mb-1 relative grid place-items-center w-6 h-6">
+            <span className="relative grid place-items-center w-6 h-6">
               {icons[item.icon] || null}
               {item.icon === "bell" && unreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />

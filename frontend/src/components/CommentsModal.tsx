@@ -1,12 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useProfileMeStore } from "../store/profileMe";
 import { X, Heart, Paperclip, SendHorizontal, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { ErrorMessage } from "./ErrorMessage";
+import { CommentSkeleton } from "./CommentSkeleton";
 import { usePostCacheStore } from "../store/postCache";
+import { useSubscriptionsStore } from "../store/subscriptions";
+import { MentionPreview } from "./MentionPreview";
 
 type Comment = {
   id: string;
@@ -19,6 +23,7 @@ type Comment = {
   liked_by_me: boolean;
   like_count: number;
   replies_count: number;
+  pending?: boolean;
   reply_to_comment_id?: string;
   replies?: Comment[];
   reply_to_full_name?: string;
@@ -148,13 +153,21 @@ const timeAgo = (iso: string) => {
 
 export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: Props) {
   const token = useAuthStore((s) => s.token);
+  const me = useProfileMeStore((s) => s.profile);
   const patchPost = usePostCacheStore((s) => s.patch);
   const postPatch = usePostCacheStore((s) => s.byId[post.id]);
+  const setFollow = useSubscriptionsStore((s) => s.setFollow);
   const [postMeta, setPostMeta] = useState(() => ({ ...post, ...(postPatch || {}) }));
+  const authorSubscribed = useSubscriptionsStore((s) => {
+    const uid = postMeta.user_id;
+    if (!uid) return undefined;
+    return s.byUserId[uid];
+  });
   const [comments, setComments] = useState<Comment[]>([]);
   const [offset, setOffset] = useState(0);
-  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
   const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState<Comment | null>(null);
@@ -165,6 +178,8 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const commentsListRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const commentRefs = useRef<Record<string, HTMLElement | null>>({});
   const [cursor, setCursor] = useState(0);
   const [activeTag, setActiveTag] = useState<{ start: number; end: number; query: string } | null>(null);
@@ -175,7 +190,7 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [mentionSuggestions, setMentionSuggestions] = useState<
-    { id: string; username: string; full_name: string; avatar_url?: string; major?: string }[]
+    { id: string; username: string; full_name: string; avatar_url?: string; bio?: string }[]
   >([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -187,6 +202,21 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
     if (!postPatch) return;
     setPostMeta((prev) => ({ ...prev, ...postPatch }));
   }, [postPatch]);
+
+  // Keep local post follow state in sync with the global subscriptions store.
+  useEffect(() => {
+    if (!postMeta.user_id) return;
+    if (postMeta.is_me) return;
+    if (typeof authorSubscribed !== "boolean") return;
+    if (postMeta.is_subscribed === authorSubscribed) return;
+    setPostMeta((prev) => ({ ...prev, is_subscribed: authorSubscribed }));
+  }, [authorSubscribed, postMeta.user_id, postMeta.is_me, postMeta.is_subscribed]);
+
+  // Sync follow state to global store
+  useEffect(() => {
+    if (!postMeta?.user_id || typeof postMeta.is_subscribed !== "boolean") return;
+    setFollow(postMeta.user_id, postMeta.is_subscribed);
+  }, [postMeta.user_id, postMeta.is_subscribed, setFollow]);
   const mentionListRef = useRef<HTMLUListElement | null>(null);
   const [suppressedHashtags, setSuppressedHashtags] = useState<Set<number>>(new Set());
   const [suppressedMentions, setSuppressedMentions] = useState<Set<number>>(new Set());
@@ -207,11 +237,11 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   }, [body]);
 
   const load = async (append = false) => {
-    if (loading) return;
-    setLoading(true);
+    if (loading || loadingMore) return;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
       const data = await api.listComments(post.id, PAGE, append ? offset : 0, token);
-      setTotal((t) => (t === null ? data.length : t)); // rough total; server не отдаёт total
       setComments((prev) => (append ? [...prev, ...data] : data));
       setReplies((prev) => {
         const next = { ...prev };
@@ -228,18 +258,44 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
       });
       if (append) setOffset((o) => o + data.length);
       else setOffset(data.length);
+      setHasMore(data.length === PAGE);
       setError("");
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить комментарии");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
+    setComments([]);
+    setOffset(0);
+    setHasMore(true);
+    setLoadingMore(false);
+    setReplies({});
+    setError("");
     load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post.id]);
+
+  useEffect(() => {
+    const root = commentsListRef.current;
+    const sentinel = loadMoreRef.current;
+    if (!root || !sentinel) return;
+    if (!hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          load(true);
+        }
+      },
+      { root, rootMargin: "200px 0px" }
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, offset, post.id, loading, loadingMore]);
 
   useEffect(() => {
     setPostMeta(post);
@@ -489,11 +545,16 @@ useLayoutEffect(() => {
 
   const send = async () => {
     if (!body.trim() || !token) return;
+    const draft = body.trim();
+    const now = new Date().toISOString();
+    const tempId = `temp-${Date.now()}`;
+    const isReply = !!(replyMode && replyTo);
+    const replyParent = replyTo || null;
     try {
       const tags = (() => {
         const regex = /#([\p{L}\p{N}_-]+)/gu;
         const uniq = new Set<string>();
-        for (const m of body.matchAll(regex)) {
+        for (const m of draft.matchAll(regex)) {
           const start = m.index ?? -1;
           if (start >= 0 && suppressedHashtags.has(start)) continue;
           const word = m[1]?.toLowerCase();
@@ -501,39 +562,124 @@ useLayoutEffect(() => {
         }
         return Array.from(uniq);
       })();
-      await api.createComment(post.id, body.trim(), replyMode ? replyTo?.id : undefined, tags, token);
+
+      const optimistic: Comment = {
+        id: tempId,
+        post_id: post.id,
+        user_id: me?.id || "me",
+        username: me?.username || "me",
+        full_name: me?.full_name || me?.username || "Вы",
+        body: draft,
+        created_at: now,
+        liked_by_me: false,
+        like_count: 0,
+        replies_count: 0,
+        pending: true,
+        reply_to_comment_id: replyMode ? replyTo?.id : undefined,
+        reply_to_full_name: replyMode ? replyTo?.full_name : undefined,
+        reply_to_username: replyMode ? replyTo?.username : undefined,
+        hashtags: tags,
+      };
+
+      const bumpPostComments = (delta: number) => {
+        setPostMeta((prev) => {
+          const nextCount = (prev.comment_count ?? 0) + delta;
+          const patch = { comment_count: nextCount };
+          patchPost(prev.id, patch);
+          onUpdatePost?.(prev.id, patch);
+          return { ...prev, ...patch };
+        });
+      };
+
+      if (isReply && replyParent) {
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === replyParent.id ? { ...c, replies_count: (c.replies_count ?? 0) + 1 } : c
+          )
+        );
+        setReplies((prev) => {
+          const thread = prev[replyParent.id] || { items: [], offset: 0, total: 0, loading: false };
+          const next: typeof prev = { ...prev };
+          next[replyParent.id] = {
+            ...thread,
+            items: [optimistic, ...thread.items],
+            total: (thread.total ?? replyParent.replies_count ?? 0) + 1,
+            offset: thread.offset + 1,
+          };
+          return next;
+        });
+      } else {
+        setComments((prev) => [optimistic, ...prev]);
+        setOffset((o) => o + 1);
+      }
+
+      bumpPostComments(1);
       setBody("");
       setSuppressedHashtags(new Set());
       setSuppressedMentions(new Set());
       setReplyTo(null);
       setReplyMode(false);
-      if (replyMode && replyTo) {
-        setComments((prev) =>
-          prev.map((c) => (c.id === replyTo.id ? { ...c, replies_count: (c.replies_count ?? 0) + 1 } : c))
-        );
-        setReplies((prev) => {
-          const next: typeof prev = {};
-          Object.entries(prev).forEach(([id, thread]) => {
-            next[id] = {
-              ...thread,
-              items: thread.items.map((item) =>
-                item.id === replyTo.id ? { ...item, replies_count: (item.replies_count ?? 0) + 1 } : item
-              ),
+      await api.createComment(post.id, draft, isReply ? replyParent?.id : undefined, tags, token);
+
+      if (isReply && replyParent) {
+        const fresh = await api.listReplies(replyParent.id, 1, 0, token);
+        const latest = fresh[0];
+        if (latest) {
+          setReplies((prev) => {
+            const thread = prev[replyParent.id] || { items: [], offset: 0, total: 0, loading: false };
+            return {
+              ...prev,
+              [replyParent.id]: {
+                ...thread,
+                items: thread.items.map((item) => (item.id === tempId ? latest : item)),
+                offset: Math.max(thread.offset, thread.items.length),
+              },
             };
           });
-          next[replyTo.id] = {
-            items: [],
-            offset: 0,
-            total: (prev[replyTo.id]?.total ?? replyTo.replies_count ?? 0) + 1,
-            loading: false,
-          };
-          return next;
-        });
-        loadReplies(replyTo.id, true);
+        } else {
+          load(false);
+        }
       } else {
-        load(false);
+        const fresh = await api.listComments(post.id, 1, 0, token);
+        const latest = fresh[0];
+        if (latest) {
+          setComments((prev) => prev.map((c) => (c.id === tempId ? latest : c)));
+        } else {
+          load(false);
+        }
       }
     } catch (e: any) {
+      setComments((prev) => prev.filter((c) => c.id !== tempId));
+      if (!isReply) {
+        setOffset((o) => Math.max(o - 1, 0));
+      }
+      setReplies((prev) => {
+        const next: typeof prev = {};
+        for (const [key, thread] of Object.entries(prev)) {
+          const filtered = thread.items.filter((item) => item.id !== tempId);
+          const removed = thread.items.length - filtered.length;
+          next[key] = {
+            ...thread,
+            items: filtered,
+            offset: Math.max(thread.offset - removed, 0),
+          };
+        }
+        return next;
+      });
+      if (isReply && replyParent) {
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === replyParent.id ? { ...c, replies_count: Math.max((c.replies_count ?? 1) - 1, 0) } : c
+          )
+        );
+      }
+      setPostMeta((prev) => {
+        const nextCount = Math.max((prev.comment_count ?? 1) - 1, 0);
+        const patch = { comment_count: nextCount };
+        patchPost(prev.id, patch);
+        onUpdatePost?.(prev.id, patch);
+        return { ...prev, ...patch };
+      });
       setError(e.message || "Не удалось отправить комментарий");
     }
   };
@@ -551,9 +697,6 @@ useLayoutEffect(() => {
       if (prev) updateCommentLocal(c.id, { liked_by_me: prev.liked_by_me, like_count: prev.like_count });
     }
   };
-
-  const remaining = total !== null ? Math.max(total - comments.length, 0) : null;
-  const moreLabel = remaining !== null ? Math.min(remaining, PAGE) : PAGE;
 
   const togglePostLike = () => {
     if (!token) return;
@@ -611,17 +754,29 @@ useLayoutEffect(() => {
     });
   };
 
-  const renderComment = (c: Comment, depth = 0) => {
-    const thread = replies[c.id];
-    const items = thread?.items || [];
-    const total = (thread?.total ?? c.replies_count ?? 0) || 0;
-    const remaining = Math.max(total - items.length, 0);
-    const hasReplies = items.length > 0;
+  const renderCommentCard = (
+    c: Comment,
+    variant: "parent" | "reply",
+    after?: ReactNode
+  ) => {
     const displayName = c.full_name || c.username;
-    const replyTarget =
-      c.reply_to_full_name || c.reply_to_username
-        ? c.reply_to_full_name || c.reply_to_username
-        : null;
+    const replyTargetRaw = c.reply_to_full_name || c.reply_to_username || "";
+    const replyTarget = String(replyTargetRaw || "").trim() || null;
+    const replyPrefix = replyTarget ? `@${replyTarget}` : "";
+    const replyPrefixWithComma =
+      replyPrefix && replyPrefix.trimEnd().endsWith(",")
+        ? replyPrefix.trimEnd()
+        : replyPrefix
+          ? `${replyPrefix},`
+          : "";
+    const replyBody =
+      replyTarget && /^\s*,/.test(c.body || "")
+        ? String(c.body || "").replace(/^\s*,\s*/, "")
+        : c.body;
+    const pending = c.pending === true;
+
+    const base =
+      variant === "reply" ? "border border-white/10 bg-white/5" : "border border-white/10";
 
     return (
       <div
@@ -629,7 +784,7 @@ useLayoutEffect(() => {
         ref={(el) => {
           commentRefs.current[c.id] = el;
         }}
-        className={`border border-white/10 rounded-xl p-3 flex gap-3 ${depth > 0 ? "bg-white/5" : ""}`}
+        className={`rounded-xl p-3 flex gap-3 ${base} ${pending ? "opacity-70 pointer-events-none" : ""}`}
       >
         <Link
           to={`/u/${c.username}`}
@@ -637,25 +792,21 @@ useLayoutEffect(() => {
         >
           {(c.full_name || c.username || "?")[0]?.toUpperCase() || "?"}
         </Link>
-        <div className="flex-1">
-          <div className="flex items-center justify-between text-sm text-white/70">
-            <Link to={`/u/${c.username}`} className="font-semibold text-white hover:underline">
-              {displayName}
-            </Link>
-            <span>{timeAgo(c.created_at)}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 text-sm text-white/70 min-w-0">
+            <MentionPreview username={c.username} className="">
+              <Link to={`/u/${c.username}`} className="font-semibold text-white hover:underline break-words">
+                {displayName}
+              </Link>
+            </MentionPreview>
+            <span className="shrink-0">{timeAgo(c.created_at)}</span>
           </div>
-          {replyTarget && (
-            <div className="text-xs text-white/60 mt-1">
-              Ответ для @{replyTarget}
-            </div>
-          )}
-          <div className="mt-2 text-white leading-relaxed break-words">
+          {replyTarget && <div className="text-xs text-white/60 mt-1">Ответ для @{replyTarget}</div>}
+          <div className="mt-2 w-full max-w-full text-white leading-relaxed whitespace-pre-wrap break-words break-all">
             {replyTarget ? (
               <>
-                <span className="text-sky-400 font-semibold">@{replyTarget}</span>
-                <span className="ml-1">
-                  {highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))}
-                </span>
+                <span className="text-sky-400 font-semibold">{replyPrefixWithComma}</span>
+                <span className="ml-1">{highlightHashtags(replyBody || "", toSet(c.mentions), toSet(c.hashtags))}</span>
               </>
             ) : (
               highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))
@@ -682,34 +833,112 @@ useLayoutEffect(() => {
               </button>
             </div>
           </div>
-          {hasReplies && (
-            <div className="mt-3 space-y-2 pl-3 border-l border-white/10">
-              {items.map((r) => renderComment(r, depth + 1))}
-              {remaining > 0 && (
-                <button
-                  className="text-white/60 hover:text-white text-xs"
-                  onClick={() => loadReplies(c.id)}
-                  disabled={thread?.loading}
-                >
-                  Показать ещё {Math.min(remaining, 10)} ответов
-                </button>
-              )}
-            </div>
-          )}
-          {!hasReplies && remaining > 0 && (
-            <div className="mt-3">
-              <button
-                className="text-white/60 hover:text-white text-xs"
-                onClick={() => loadReplies(c.id)}
-                disabled={thread?.loading}
-              >
-                Показать ответы ({Math.min(remaining, 10)})
-              </button>
-            </div>
-          )}
+          {after}
         </div>
       </div>
     );
+  };
+
+  const renderRepliesFlat = (rootId: string) => {
+    const rootThread = replies[rootId];
+    const rootItems = rootThread?.items || [];
+    const rootTotal = (rootThread?.total ?? findCommentById(rootId)?.replies_count ?? 0) || 0;
+    const rootRemaining = Math.max(rootTotal - rootItems.length, 0);
+    const rootLoading = !!rootThread?.loading && rootItems.length === 0;
+
+    const seen = new Set<string>();
+    const build = (c: Comment): JSX.Element[] => {
+      if (seen.has(c.id)) return [];
+      seen.add(c.id);
+
+      const els: JSX.Element[] = [];
+      els.push(
+        <div key={`${c.id}-card`} className="">
+          {renderCommentCard(c, "reply")}
+        </div>
+      );
+
+      const thread = replies[c.id];
+      const items = thread?.items || [];
+      const total = (thread?.total ?? c.replies_count ?? 0) || 0;
+      const remaining = Math.max(total - items.length, 0);
+      const initialLoading = !!thread?.loading && items.length === 0;
+
+      if (initialLoading) {
+        els.push(
+          <div key={`${c.id}-skeleton`} className="space-y-2">
+            <CommentSkeleton className="bg-white/5" />
+            <CommentSkeleton className="bg-white/5" />
+          </div>
+        );
+      } else {
+        items.forEach((child) => {
+          els.push(...build(child));
+        });
+
+        if (remaining > 0) {
+          els.push(
+            <button
+              key={`${c.id}-more`}
+              className="text-white/60 hover:text-white text-xs"
+              onClick={() => loadReplies(c.id)}
+              disabled={thread?.loading}
+              type="button"
+            >
+              {items.length > 0
+                ? `Показать ещё ${Math.min(remaining, 10)} ответов`
+                : `Показать ответы (${Math.min(remaining, 10)})`}
+            </button>
+          );
+        }
+      }
+
+      return els;
+    };
+
+    if (rootLoading) {
+      return (
+        <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+          <CommentSkeleton className="bg-white/5" />
+          <CommentSkeleton className="bg-white/5" />
+        </div>
+      );
+    }
+
+    if (rootItems.length === 0) {
+      return rootRemaining > 0 ? (
+        <div className="mt-3">
+          <button
+            className="text-white/60 hover:text-white text-xs"
+            onClick={() => loadReplies(rootId)}
+            disabled={rootThread?.loading}
+            type="button"
+          >
+            Показать ответы ({Math.min(rootRemaining, 10)})
+          </button>
+        </div>
+      ) : null;
+    }
+
+    const els: JSX.Element[] = [];
+    rootItems.forEach((r) => {
+      els.push(...build(r));
+    });
+    if (rootRemaining > 0) {
+      els.push(
+        <button
+          key={`${rootId}-root-more`}
+          className="text-white/60 hover:text-white text-xs"
+          onClick={() => loadReplies(rootId)}
+          disabled={rootThread?.loading}
+          type="button"
+        >
+          Показать ещё {Math.min(rootRemaining, 10)} ответов
+        </button>
+      );
+    }
+
+    return <div className="mt-3 pt-3 border-t border-white/10 space-y-2">{els}</div>;
   };
 
   return createPortal(
@@ -724,11 +953,20 @@ useLayoutEffect(() => {
 
         <div className="px-4 pt-4 pb-2 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+            <Link
+              to={`/u/${post.username}`}
+              className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+            >
               {post.full_name?.[0]?.toUpperCase() || post.username[0].toUpperCase()}
-            </div>
+            </Link>
             <div>
-              <p className="text-white font-semibold">{post.full_name || post.username}</p>
+              <p className="text-white font-semibold">
+                <MentionPreview username={post.username} className="">
+                  <Link to={`/u/${post.username}`} className="hover:underline">
+                    {post.full_name || post.username}
+                  </Link>
+                </MentionPreview>
+              </p>
               <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
             </div>
           </div>
@@ -764,19 +1002,27 @@ useLayoutEffect(() => {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-          {comments.map((c) => renderComment(c, 0))}
-          {comments.length === 0 && !loading && <p className="text-white/60">Комментариев нет</p>}
-          <ErrorMessage message={error} />
-          {remaining !== null && remaining > 0 && (
-            <button
-              onClick={() => load(true)}
-              className="w-full rounded-full border border-white/10 text-white py-2 hover:bg-white/5"
-              disabled={loading}
-            >
-              Показать ещё {moreLabel} комментариев{total ? ` (всего ${total})` : ""}
-            </button>
+        <div ref={commentsListRef} className="flex-1 overflow-y-auto px-4 py-3">
+          {loading && comments.length === 0 && !error ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((n) => (
+                <CommentSkeleton key={n} />
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {comments.map((c) => (
+                  <div key={c.id}>{renderCommentCard(c, "parent", renderRepliesFlat(c.id))}</div>
+                ))}
+              </div>
+              {comments.length === 0 && !loading && <p className="text-white/60 py-3">Комментариев нет</p>}
+            </>
           )}
+          <ErrorMessage message={error} />
+          <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
+            {loadingMore ? "Загружаем..." : hasMore ? "Подгружаем ещё..." : ""}
+          </div>
         </div>
 
         <div className="border-t border-white/10 p-3 flex flex-col gap-3">
@@ -799,7 +1045,7 @@ useLayoutEffect(() => {
             <button className="nav-icon bg-white/5 border border-white/10 text-white/80 hover:text-white" type="button" aria-label="attach" disabled>
               <Paperclip className="w-5 h-5" />
             </button>
-            <div className="flex-1 relative">
+            <div className="flex-1 min-w-0 relative">
               <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2">
                 <div className="pointer-events-none whitespace-pre-wrap break-words text-white relative z-0 min-h-[48px]">
                   {body.trim().length === 0 ? (
@@ -813,7 +1059,7 @@ useLayoutEffect(() => {
               </div>
               <textarea
                 ref={textareaRef}
-                className="w-full rounded-xl border-0 bg-transparent px-3 py-2 text-transparent caret-white placeholder:text-transparent focus:border-0 focus:ring-0 focus:outline-none transition absolute inset-0 z-10 resize-none overflow-hidden"
+                className="w-full max-w-full box-border rounded-xl border-0 bg-transparent px-3 py-2 text-transparent caret-white placeholder:text-transparent focus:border-0 focus:ring-0 focus:outline-none transition absolute inset-0 z-10 resize-none overflow-hidden whitespace-pre-wrap break-words"
                 rows={2}
                 placeholder={replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
                 value={body}
@@ -1038,7 +1284,7 @@ useLayoutEffect(() => {
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold truncate">{u.full_name || u.username}</p>
                         <p className="text-white/60 text-sm truncate">@{u.username}</p>
-                        {u.major && <p className="text-white/50 text-xs truncate">{u.major}</p>}
+                        {u.bio && <p className="text-white/50 text-xs truncate">{u.bio}</p>}
                       </div>
                     </button>
                   </li>

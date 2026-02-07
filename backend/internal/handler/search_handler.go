@@ -40,7 +40,7 @@ func (h *SearchHandler) searchUsers(w http.ResponseWriter, r *http.Request) {
 			ID:            u.ID,
 			Username:      u.Username,
 			FullName:      u.FullName,
-			Major:         u.Major,
+			Bio:           u.Bio,
 			AvatarURL:     u.AvatarURL,
 			BackgroundURL: u.BackgroundURL,
 		})

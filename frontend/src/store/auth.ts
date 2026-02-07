@@ -4,6 +4,9 @@ import { useNotificationStore } from "./notifications";
 import { usePostCacheStore } from "./postCache";
 import { useProfileMeStore } from "./profileMe";
 import { usePostCooldownStore } from "./postCooldown";
+import { useSubscriptionsStore } from "./subscriptions";
+import { useFollowingFeedStore } from "./followingFeed";
+import { useUserStatsStore } from "./userStats";
 
 type AuthState = {
   token: string | null;
@@ -28,6 +31,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       useFeedStore.getState().setCache([], null);
       useNotificationStore.getState().setUnreadCount(0);
       usePostCooldownStore.getState().clear();
+      useSubscriptionsStore.getState().clear();
+      useUserStatsStore.getState().clear();
+      useFollowingFeedStore.getState().clear();
     }
   },
 }));

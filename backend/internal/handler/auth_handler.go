@@ -48,7 +48,7 @@ func (h *AuthHandler) register(w http.ResponseWriter, r *http.Request) {
 			t := time.Now().UTC()
 			return &t
 		}(),
-		Major:         req.Major,
+		Bio:           req.Bio,
 		AvatarURL:     req.AvatarURL,
 		BackgroundURL: req.BackgroundURL,
 	}, req.Password)

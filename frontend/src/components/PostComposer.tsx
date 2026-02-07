@@ -18,7 +18,7 @@ type UserSuggestion = {
   username: string;
   full_name: string;
   avatar_url?: string;
-  major?: string;
+  bio?: string;
 };
 
 const extractHashtags = (text: string, ignoredStarts?: Set<number>) => {
@@ -718,17 +718,17 @@ export default function PostComposer({ onCreated }: Props) {
                               className="w-8 h-8 rounded-full object-cover"
                             />
                           ) : (
-                            (u.full_name || u.username || "U")[0]?.toUpperCase() || "U"
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold truncate">{u.full_name || u.username}</p>
-                          <p className="text-white/60 text-sm truncate">@{u.username}</p>
-                          {u.major && <p className="text-white/50 text-xs truncate">{u.major}</p>}
-                        </div>
-                      </button>
-                    </li>
-                  ))}
+                          (u.full_name || u.username || "U")[0]?.toUpperCase() || "U"
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold truncate">{u.full_name || u.username}</p>
+                        <p className="text-white/60 text-sm truncate">@{u.username}</p>
+                        {u.bio && <p className="text-white/50 text-xs truncate">{u.bio}</p>}
+                      </div>
+                    </button>
+                  </li>
+                ))}
                   {mentionLoading && (
                     <li className="px-3 py-2 text-sm text-white/60">Загрузка...</li>
                   )}

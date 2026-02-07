@@ -175,6 +175,50 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 	return resp, nil
 }
 
+func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, offset int) ([]dto.FeedResponseItem, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, errors.New("user_id is required")
+	}
+	viewerID := strings.TrimSpace(userID)
+	items, err := s.posts.FeedFollowing(ctx, viewerID, limit, offset, &viewerID)
+	if err != nil {
+		return nil, err
+	}
+	mentionMap, err := s.enrichMentions(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	hashtagMap, err := s.enrichHashtags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	resp := make([]dto.FeedResponseItem, 0, len(items))
+	for _, it := range items {
+		isMe := viewerID == it.UserID
+		// By definition for this feed: if author != me, I'm following them.
+		isSub := !isMe
+		resp = append(resp, dto.FeedResponseItem{
+			ID:           it.ID,
+			UserID:       it.UserID,
+			Username:     it.Username,
+			FullName:     it.FullName,
+			Content:      it.Content,
+			MediaURL:     it.MediaURL,
+			CreatedAt:    it.CreatedAt,
+			UpdatedAt:    it.UpdatedAt,
+			LikeCount:    it.LikeCount,
+			LikedByMe:    it.LikedByMe,
+			ViewCount:    it.ViewCount,
+			CommentCount: it.CommentCount,
+			Mentions:     mentionMap[it.ID],
+			Hashtags:     hashtagMap[it.ID],
+			IsSubscribed: isSub,
+			IsMe:         isMe,
+		})
+	}
+	return resp, nil
+}
+
 func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) (*dto.FeedResponseItem, error) {
 	if postID == "" {
 		return nil, errors.New("post_id is required")

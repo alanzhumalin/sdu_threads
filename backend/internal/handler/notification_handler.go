@@ -21,6 +21,7 @@ func (h *NotificationHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/notifications", h.list)
 	mux.HandleFunc("/api/notifications/", h.markRead)
 	mux.HandleFunc("/api/notifications-read-all", h.markAllRead)
+	mux.HandleFunc("/api/notifications-unread", h.unreadCount)
 }
 
 func (h *NotificationHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -91,4 +92,22 @@ func (h *NotificationHandler) markAllRead(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "all_read", "updated": updated})
+}
+
+func (h *NotificationHandler) unreadCount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	count, err := h.service.UnreadCount(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"unread_count": count})
 }

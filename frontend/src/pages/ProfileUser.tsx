@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { Heart, MessageCircle, Eye } from "lucide-react";
@@ -9,6 +9,13 @@ import { CommentsModal } from "../components/CommentsModal";
 import { useFeedStore } from "../store/feed";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { usePostCacheStore } from "../store/postCache";
+import { ProfileSkeleton } from "../components/ProfileSkeleton";
+import { SocialLinksOverlay } from "../components/SocialLinks";
+import { useProfileMeStore } from "../store/profileMe";
+import { useSubscriptionsStore } from "../store/subscriptions";
+import { useUserStatsStore } from "../store/userStats";
+import { useFeedStore } from "../store/feed";
+import { MentionPreview } from "../components/MentionPreview";
 
 function timeAgo(iso: string) {
   const date = new Date(iso);
@@ -35,6 +42,10 @@ export default function ProfileUserPage() {
   const feedStore = useFeedStore();
   const postPatches = usePostCacheStore((s) => s.byId);
   const patchPost = usePostCacheStore((s) => s.patch);
+  const subs = useSubscriptionsStore((s) => s.byUserId);
+  const setFollow = useSubscriptionsStore((s) => s.setFollow);
+  const setCounts = useUserStatsStore((s) => s.setCounts);
+  const patchCounts = useUserStatsStore((s) => s.patchCounts);
   const [profile, setProfile] = useState<any>(null);
   const [posts, setPosts] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -45,12 +56,19 @@ export default function ProfileUserPage() {
 
   const fetchData = async () => {
     if (!token || !username) return;
+    setProfile(null);
+    setPosts([]);
+    setError("");
     setLoading(true);
     try {
       const p = await api.profileByUsername(username, token);
       const { items } = await api.userPosts(p.id, 20, 0, token);
-      setProfile(p);
-      setPosts(items);
+      const mergedProfile = { ...p, is_subscribed: subs[p.id] ?? p.is_subscribed };
+      setProfile(mergedProfile);
+      setCounts(p.id, { followers: p.followers, following: p.following });
+      // синхронизируем глобальный store
+      setFollow(p.id, mergedProfile.is_subscribed || false);
+      setPosts(items.map((it) => ({ ...it, is_subscribed: subs[it.user_id] ?? it.is_subscribed })));
       setError("");
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить профиль");
@@ -117,7 +135,68 @@ export default function ProfileUserPage() {
     }
   };
 
+  const toggleFollow = async () => {
+    if (!profile || profile.is_me || !token) return;
+    const current = subs[profile.id] ?? profile.is_subscribed ?? false;
+    const next = !current;
+    const delta = next ? 1 : -1;
+    const meId = useProfileMeStore.getState().profile?.id;
+    patchCounts(profile.id, { followers: delta });
+    if (meId) patchCounts(meId, { following: delta });
+    setProfile((p: any) =>
+      p ? { ...p, is_subscribed: next, followers: (p.followers || 0) + (next ? 1 : -1) } : p
+    );
+    setFollow(profile.id, next);
+    feedStore.updateByUser(profile.id, { is_subscribed: next });
+    setPosts((prev) => prev.map((pp) => (pp.user_id === profile.id ? { ...pp, is_subscribed: next } : pp)));
+    try {
+      if (next) await api.followUser(profile.id, token);
+      else await api.unfollowUser(profile.id, token);
+    } catch {
+      patchCounts(profile.id, { followers: -delta });
+      if (meId) patchCounts(meId, { following: -delta });
+      const rollback = !next;
+      setProfile((p: any) =>
+        p
+          ? { ...p, is_subscribed: rollback, followers: (p.followers || 0) + (rollback ? 1 : -1) }
+          : p
+      );
+      setFollow(profile.id, rollback);
+      feedStore.updateByUser(profile.id, { is_subscribed: rollback });
+      setPosts((prev) => prev.map((pp) => (pp.user_id === profile.id ? { ...pp, is_subscribed: rollback } : pp)));
+    }
+  };
+
+  const stats = useUserStatsStore((s) => (profile?.id ? s.byUserId[profile.id] : undefined));
+  const followersCount = typeof stats?.followers === "number" ? stats.followers : profile?.followers ?? 0;
+  const followingCount = typeof stats?.following === "number" ? stats.following : profile?.following ?? 0;
+
   if (!token) return null;
+
+  if (loading && !profile && !error) {
+    return (
+      <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+        <ProfileSkeleton />
+      </div>
+    );
+  }
+
+  if (!loading && !profile) {
+    return (
+      <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+        <ErrorMessage message={error || "Не удалось загрузить профиль"} />
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={fetchData}
+            className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition"
+          >
+            Повторить
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -150,14 +229,18 @@ export default function ProfileUserPage() {
                   <p className="text-white/50 text-sm">
                     На сайте с {profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "--"}
                   </p>
-                  {profile.major && <p className="text-white/70 text-sm">{profile.major}</p>}
+                  {profile.bio ? (
+                    <p className="text-white/70 text-sm">{profile.bio}</p>
+                  ) : (
+                    <p className="text-white/40 text-sm">Нет описания</p>
+                  )}
                   <div className="flex items-center gap-5 text-white/80 pt-1 text-sm">
                     <div className="flex items-baseline gap-1">
-                      <span className="font-semibold text-white text-base">{profile.followers ?? 0}</span>
+                      <span className="font-semibold text-white text-base">{followersCount}</span>
                       <span className="text-white/60">Подписчики</span>
                     </div>
                     <div className="flex items-baseline gap-1">
-                      <span className="font-semibold text-white text-base">{profile.following ?? 0}</span>
+                      <span className="font-semibold text-white text-base">{followingCount}</span>
                       <span className="text-white/60">Подписки</span>
                     </div>
                   </div>
@@ -172,33 +255,20 @@ export default function ProfileUserPage() {
               ) : (
                 <button
                   className={`rounded-full px-4 py-2 text-sm font-semibold transition self-start ${
-                    profile.is_subscribed
+                    (subs[profile.id] ?? profile.is_subscribed)
                       ? "bg-white/10 text-white border border-white/30 hover:border-white"
                       : "bg-white text-black hover:bg-gray-200"
                   }`}
-                  onClick={async () => {
-                    const next = !profile.is_subscribed;
-                    setProfile((p: any) =>
-                      p
-                        ? { ...p, is_subscribed: next, followers: (p.followers || 0) + (next ? 1 : -1) }
-                        : p
-                    );
-                    try {
-                      if (next) await api.followUser(profile.id, token);
-                      else await api.unfollowUser(profile.id, token);
-                    } catch {
-                      setProfile((p: any) =>
-                        p
-                          ? { ...p, is_subscribed: !next, followers: (p.followers || 0) + (next ? -1 : 1) }
-                          : p
-                      );
-                    }
-                  }}
+                  onClick={toggleFollow}
                 >
-                  {profile.is_subscribed ? "Отписаться" : "Подписаться"}
+                  {(subs[profile.id] ?? profile.is_subscribed) ? "Отписаться" : "Подписаться"}
                 </button>
               )}
             </div>
+            <SocialLinksOverlay
+              links={profile.social_links}
+              className="absolute bottom-4 right-4 flex items-center gap-2"
+            />
           </div>
         </div>
       )}
@@ -223,11 +293,30 @@ export default function ProfileUserPage() {
               className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
-                  {profile?.full_name?.[0]?.toUpperCase() || profile?.username?.[0]?.toUpperCase() || "?"}
-                </div>
+                {profile?.username ? (
+                  <Link
+                    to={`/u/${profile.username}`}
+                    className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                  >
+                    {profile?.full_name?.[0]?.toUpperCase() || profile?.username?.[0]?.toUpperCase() || "?"}
+                  </Link>
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+                    {profile?.full_name?.[0]?.toUpperCase() || profile?.username?.[0]?.toUpperCase() || "?"}
+                  </div>
+                )}
                 <div>
-                  <p className="text-white font-semibold leading-tight">{profile?.full_name}</p>
+                  <p className="text-white font-semibold leading-tight">
+                    {profile?.username ? (
+                      <MentionPreview username={profile.username} className="">
+                        <Link to={`/u/${profile.username}`} className="hover:underline">
+                          {profile?.full_name}
+                        </Link>
+                      </MentionPreview>
+                    ) : (
+                      profile?.full_name
+                    )}
+                  </p>
                   <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
                 </div>
               </div>

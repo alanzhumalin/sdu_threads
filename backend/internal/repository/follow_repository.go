@@ -41,9 +41,10 @@ func (r *FollowRepository) FollowingCount(ctx context.Context, userID string) (i
 }
 
 type FollowUser struct {
-	ID       string
-	Username string
-	FullName string
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	FullName  string `json:"full_name"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 }
 
 func (r *FollowRepository) Followers(ctx context.Context, userID string, limit, offset int) ([]FollowUser, error) {
@@ -55,7 +56,7 @@ func (r *FollowRepository) Followers(ctx context.Context, userID string, limit, 
 	}
 	var res []FollowUser
 	q := `
-SELECT u.id, u.username, u.full_name
+SELECT u.id, u.username, u.full_name, u.avatar_url
 FROM follows f
 JOIN users u ON u.id = f.follower_id
 WHERE f.followee_id = ?
@@ -76,7 +77,7 @@ func (r *FollowRepository) Following(ctx context.Context, userID string, limit, 
 	}
 	var res []FollowUser
 	q := `
-SELECT u.id, u.username, u.full_name
+SELECT u.id, u.username, u.full_name, u.avatar_url
 FROM follows f
 JOIN users u ON u.id = f.followee_id
 WHERE f.follower_id = ?

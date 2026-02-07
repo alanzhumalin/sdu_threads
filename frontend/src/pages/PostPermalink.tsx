@@ -5,16 +5,31 @@ import { useAuthStore } from "../store/auth";
 import { CommentsModal, PostMeta } from "../components/CommentsModal";
 import { useFeedStore } from "../store/feed";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { useSubscriptionsStore } from "../store/subscriptions";
 
 export default function PostPermalinkPage() {
   const token = useAuthStore((s) => s.token);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const updateFeedItem = useFeedStore((s) => s.updateItem);
+  const setFollow = useSubscriptionsStore((s) => s.setFollow);
 
   const [post, setPost] = useState<PostMeta | null>(null);
+  const authorSubscribed = useSubscriptionsStore((s) => {
+    const uid = post?.user_id;
+    if (!uid) return undefined;
+    return s.byUserId[uid];
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!post) return;
+    if (post.is_me) return;
+    if (typeof authorSubscribed !== "boolean") return;
+    if (post.is_subscribed === authorSubscribed) return;
+    setPost((prev) => (prev ? { ...prev, is_subscribed: authorSubscribed } : prev));
+  }, [authorSubscribed, post?.id, post?.is_me, post?.is_subscribed]);
 
   useEffect(() => {
     if (!id) {
@@ -31,6 +46,8 @@ export default function PostPermalinkPage() {
       .postById(id, token)
       .then((p) => {
         if (cancelled) return;
+        const storeSub = useSubscriptionsStore.getState().byUserId[p.user_id];
+        const effectiveSub = typeof storeSub === "boolean" ? storeSub : p.is_subscribed;
         const meta: PostMeta = {
           id: p.id,
           user_id: p.user_id,
@@ -45,9 +62,12 @@ export default function PostPermalinkPage() {
           comment_count: p.comment_count,
           mentions: p.mentions,
           hashtags: p.hashtags,
-          is_subscribed: p.is_subscribed,
+          is_subscribed: effectiveSub,
           is_me: p.is_me,
         };
+        if (typeof meta.is_subscribed === "boolean") {
+          setFollow(meta.user_id, meta.is_subscribed);
+        }
         setPost(meta);
       })
       .catch((e: any) => {

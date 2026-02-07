@@ -38,7 +38,7 @@ func (h *UserHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		Email:         req.Email,
 		Username:      req.Username,
 		FullName:      req.FullName,
-		Major:         req.Major,
+		Bio:           req.Bio,
 		AvatarURL:     req.AvatarURL,
 		BackgroundURL: req.BackgroundURL,
 	})
@@ -56,7 +56,7 @@ func (h *UserHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		ID:            user.ID,
 		Username:      user.Username,
 		FullName:      user.FullName,
-		Major:         user.Major,
+		Bio:           user.Bio,
 		AvatarURL:     user.AvatarURL,
 		BackgroundURL: user.BackgroundURL,
 	}

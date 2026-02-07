@@ -6,7 +6,7 @@ type FeedItem = {
   [key: string]: any;
 };
 
-type FeedState = {
+type State = {
   items: FeedItem[];
   nextOffset: number | null;
   initialized: boolean;
@@ -14,9 +14,10 @@ type FeedState = {
   upsertMany: (items: FeedItem[]) => void;
   updateItem: (id: string, patch: Partial<FeedItem>) => void;
   updateByUser: (userId: string, patch: Partial<FeedItem>) => void;
+  clear: () => void;
 };
 
-export const useFeedStore = create<FeedState>((set) => ({
+export const useFollowingFeedStore = create<State>((set) => ({
   items: [],
   nextOffset: null,
   initialized: false,
@@ -37,16 +38,14 @@ export const useFeedStore = create<FeedState>((set) => ({
     }),
   updateItem: (id, patch) =>
     set((state) => ({
+      ...state,
       items: state.items.map((p) => (p.id === id ? { ...p, ...patch } : p)),
     })),
   updateByUser: (userId, patch) =>
-    set((state) => {
-      if (typeof (patch as any)?.is_subscribed === "boolean") {
-        useSubscriptionsStore.getState().setFollow(userId, (patch as any).is_subscribed);
-      }
-      return {
-        ...state,
-        items: state.items.map((p) => (p.user_id === userId ? { ...p, ...patch } : p)),
-      };
-    }),
+    set((state) => ({
+      ...state,
+      items: state.items.map((p) => (p.user_id === userId ? { ...p, ...patch } : p)),
+    })),
+  clear: () => set({ items: [], nextOffset: null, initialized: false }),
 }));
+

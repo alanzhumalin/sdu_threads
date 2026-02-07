@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/auth";
 type Props = {
   username: string;
   children: React.ReactNode;
+  className?: string;
 };
 
 type Profile = {
@@ -20,7 +21,7 @@ type Profile = {
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
 
-export function MentionPreview({ username, children }: Props) {
+export function MentionPreview({ username, children, className }: Props) {
   const token = useAuthStore((s) => s.token);
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -79,20 +80,18 @@ export function MentionPreview({ username, children }: Props) {
     closeTimer.current = window.setTimeout(() => setOpen(false), 80);
   };
 
-  useEffect(
-    () => {
-      const onScroll = () => {
-        clearTimer();
-        setOpen(false);
-      };
-      window.addEventListener("scroll", onScroll, { passive: true });
-      return () => {
-        window.removeEventListener("scroll", onScroll);
-        clearTimer();
-      };
-    },
-    []
-  );
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = () => {
+      clearTimer();
+      setOpen(false);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      clearTimer();
+    };
+  }, [open]);
 
   const content = open ? (
     <div
@@ -154,7 +153,9 @@ export function MentionPreview({ username, children }: Props) {
         ref={anchorRef}
         onMouseEnter={handleEnter}
         onMouseLeave={scheduleClose}
-        className="relative inline-flex text-purple-400 font-semibold hover:underline"
+        className={`relative inline-flex ${
+          typeof className === "string" ? className : "text-purple-400 font-semibold hover:underline"
+        }`}
       >
         {children}
       </span>
