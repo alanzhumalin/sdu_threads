@@ -37,8 +37,10 @@ type FeedItem struct {
 	UserID       string
 	Username     string
 	FullName     string
+	AvatarURL    string
 	Content      string
 	MediaURL     string
+	Media        []byte
 	ViewCount    int64
 	CommentCount int64
 	CreatedAt    string
@@ -58,9 +60,39 @@ func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *
 	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
-	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
-       p.created_at, p.updated_at,
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
@@ -77,6 +109,7 @@ LEFT JOIN (
 ) lb ON lb.post_id = p.id
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
+	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, viewer, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
@@ -95,9 +128,40 @@ func (r *PostRepository) FeedFollowing(ctx context.Context, followerID string, l
 	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
-	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
-       p.created_at, p.updated_at,
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN follows f ON f.followee_id = p.user_id AND f.follower_id = ?
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
@@ -115,6 +179,7 @@ LEFT JOIN (
 ) lb ON lb.post_id = p.id
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
+	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, followerID, viewer, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
@@ -129,9 +194,39 @@ func (r *PostRepository) Get(ctx context.Context, postID string, viewerID *strin
 	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
-	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
-       p.created_at, p.updated_at,
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+WHERE p.id = ?
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
@@ -148,6 +243,7 @@ LEFT JOIN (
 ) lb ON lb.post_id = p.id
 WHERE p.id = ?
 LIMIT ? OFFSET ?`
+	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, viewer, postID, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
@@ -195,9 +291,40 @@ func (r *PostRepository) ByUser(ctx context.Context, userID string, limit, offse
 	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
-	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
-       p.created_at, p.updated_at,
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+WHERE p.user_id = ?
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
@@ -215,6 +342,7 @@ LEFT JOIN (
 WHERE p.user_id = ?
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
+	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, viewer, userID, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
@@ -233,7 +361,9 @@ func (r *PostRepository) ByHashtag(ctx context.Context, name string, limit, offs
 	viewerPresent, viewer := viewerArgs(viewerID)
 
 	var items []FeedItem
-	q := `
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
 WITH ids AS (
     SELECT DISTINCT p.id
     FROM posts p
@@ -241,7 +371,45 @@ WITH ids AS (
     LEFT JOIN hashtags h ON h.id = ph.hashtag_id
     WHERE h.name = ? OR LOWER(p.content) LIKE ?
 )
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count,
+       p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN ids ON ids.id = p.id
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+WITH ids AS (
+    SELECT DISTINCT p.id
+    FROM posts p
+    LEFT JOIN post_hashtags ph ON ph.post_id = p.id
+    LEFT JOIN hashtags h ON h.id = ph.hashtag_id
+    WHERE h.name = ? OR LOWER(p.content) LIKE ?
+)
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count,
        p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
@@ -260,6 +428,7 @@ LEFT JOIN (
 ) lb ON lb.post_id = p.id
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
+	}
 
 	pattern := "%" + strings.ToLower("#"+name) + "%"
 	if err := r.db.WithContext(ctx).Raw(q, name, pattern, viewerPresent, viewer, limit, offset).Scan(&items).Error; err != nil {
@@ -276,9 +445,38 @@ func (r *PostRepository) LikedByUser(ctx context.Context, userID string, limit, 
 		limit = 100
 	}
 	var items []FeedItem
-	q := `
-SELECT p.id, p.user_id, u.username, u.full_name, p.content, p.media_url, p.view_count,
-       p.created_at, p.updated_at,
+	q := ""
+	if r.db.Dialector.Name() == "postgres" {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       TRUE AS liked_by_me
+FROM likes li
+JOIN posts p ON p.id = li.post_id
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+WHERE li.user_id = ?
+ORDER BY li.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		q = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
        COALESCE(c.comments, 0) AS comment_count,
        TRUE AS liked_by_me
@@ -294,6 +492,7 @@ LEFT JOIN (
 WHERE li.user_id = ?
 ORDER BY li.created_at DESC
 LIMIT ? OFFSET ?`
+	}
 
 	if err := r.db.WithContext(ctx).Raw(q, userID, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err

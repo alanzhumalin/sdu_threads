@@ -98,6 +98,7 @@ func (s *HashtagService) Posts(ctx context.Context, name string, limit, offset i
 	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
+		media := effectiveMediaItems(it.Media, it.MediaURL)
 		isMe := viewerID != nil && *viewerID == it.UserID
 		isSub := false
 		if !isMe && viewerID != nil {
@@ -108,8 +109,9 @@ func (s *HashtagService) Posts(ctx context.Context, name string, limit, offset i
 			UserID:       it.UserID,
 			Username:     it.Username,
 			FullName:     it.FullName,
+			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
-			MediaURL:     it.MediaURL,
+			Media:        media,
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,

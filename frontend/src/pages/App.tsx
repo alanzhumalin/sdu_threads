@@ -105,10 +105,10 @@ export default function App() {
       {!isAuthPage && (
         <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
       )}
-      <div className="mx-auto max-w-6xl px-3 md:px-8 md:h-screen md:overflow-hidden">
+      <div className="mx-auto max-w-6xl px-3 md:px-8">
         <div
           key={location.pathname}
-          className="pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6 md:overflow-y-auto md:h-screen"
+          className="pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
         >
           <Routes location={location}>
             <Route

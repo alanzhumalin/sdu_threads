@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { MentionPreview } from "./MentionPreview";
+import { AvatarCircle } from "./Avatar";
 
 export type UserRowData = {
   id: string;
@@ -15,17 +16,15 @@ type Props = {
 };
 
 export function UserRow({ user, right }: Props) {
-  const initials = (user.full_name?.[0] || user.username?.[0] || "U").toUpperCase();
-
   return (
     <div className="card p-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
-        <Link to={`/u/${user.username}`} className="w-10 h-10 rounded-full bg-white/10 shrink-0 overflow-hidden flex items-center justify-center text-sm font-semibold">
-          {user.avatar_url ? (
-            <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
-          ) : (
-            initials
-          )}
+        <Link to={`/u/${user.username}`} className="hover:opacity-90">
+          <AvatarCircle
+            src={user.avatar_url}
+            fallback={user.full_name || user.username || "U"}
+            className="w-10 h-10 flex items-center justify-center text-sm font-semibold"
+          />
         </Link>
 
         <div className="min-w-0">

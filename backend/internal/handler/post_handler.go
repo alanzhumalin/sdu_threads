@@ -43,7 +43,22 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, req.MediaURL, req.Hashtags); err != nil {
+		media := req.Media
+		if len(media) == 0 {
+			// Backward-compatible: accept legacy urls-only payloads.
+			urls := req.MediaURLs
+			if len(urls) == 0 && strings.TrimSpace(req.MediaURL) != "" {
+				urls = []string{req.MediaURL}
+			}
+			for _, u := range urls {
+				u = strings.TrimSpace(u)
+				if u == "" {
+					continue
+				}
+				media = append(media, dto.MediaItem{URL: u})
+			}
+		}
+		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Hashtags); err != nil {
 			var rl *apperror.RateLimitError
 			if errors.As(err, &rl) {
 				w.Header().Set("Retry-After", strconv.Itoa(rl.RetryAfterSeconds))

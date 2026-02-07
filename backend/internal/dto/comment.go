@@ -13,6 +13,7 @@ type CommentResponse struct {
 	UserID           string            `json:"user_id"`
 	Username         string            `json:"username"`
 	FullName         string            `json:"full_name,omitempty"`
+	AvatarURL        string            `json:"avatar_url,omitempty"`
 	Body             string            `json:"body"`
 	CreatedAt        string            `json:"created_at"`
 	LikedByMe        bool              `json:"liked_by_me"`

@@ -26,6 +26,7 @@ type notificationRow struct {
 	ActorID       string
 	ActorUsername string
 	ActorFullName string
+	ActorAvatarURL string
 	PostID        *string
 	CommentID     *string
 	PostContent   string
@@ -102,7 +103,7 @@ WITH n AS (
     WHERE parent.user_id = ? AND c.user_id <> ?
 )
 SELECT n.row_id, n.type, n.actor_id, n.post_id, n.comment_id, n.post_content, n.post_media_url, n.comment_body, n.created_at,
-       u.username AS actor_username, u.full_name AS actor_full_name,
+       u.username AS actor_username, u.full_name AS actor_full_name, u.avatar_url AS actor_avatar_url,
        COALESCE(r.read, false) AS read
 FROM n
 JOIN users u ON u.id = n.actor_id
@@ -139,6 +140,7 @@ LIMIT ? OFFSET ?`
 			ActorID:       r.ActorID,
 			ActorUsername: r.ActorUsername,
 			ActorFullName: r.ActorFullName,
+			ActorAvatarURL: r.ActorAvatarURL,
 			PostID:        derefString(r.PostID),
 			CommentID:     derefString(r.CommentID),
 			PostContent:   r.PostContent,

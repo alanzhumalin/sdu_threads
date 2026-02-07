@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -12,6 +13,68 @@ import (
 
 	"gorm.io/gorm"
 )
+
+func decodeMediaURLs(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var items []dto.MediaItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		u := strings.TrimSpace(it.URL)
+		if u == "" {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+func effectiveMediaURLs(raw []byte, legacy string) []string {
+	urls := decodeMediaURLs(raw)
+	if len(urls) > 0 {
+		return urls
+	}
+	legacy = strings.TrimSpace(legacy)
+	if legacy == "" {
+		return nil
+	}
+	return []string{legacy}
+}
+
+func decodeMediaItems(raw []byte) []dto.MediaItem {
+	if len(raw) == 0 {
+		return nil
+	}
+	var items []dto.MediaItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	out := make([]dto.MediaItem, 0, len(items))
+	for _, it := range items {
+		it.URL = strings.TrimSpace(it.URL)
+		if it.URL == "" {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+func effectiveMediaItems(raw []byte, legacy string) []dto.MediaItem {
+	items := decodeMediaItems(raw)
+	if len(items) > 0 {
+		return items
+	}
+	legacy = strings.TrimSpace(legacy)
+	if legacy == "" {
+		return nil
+	}
+	return []dto.MediaItem{{URL: legacy}}
+}
 
 type PostService struct {
 	posts *repository.PostRepository
@@ -83,7 +146,7 @@ func (s *PostService) enrichHashtags(ctx context.Context, items []repository.Fee
 	return result, nil
 }
 
-func (s *PostService) Create(ctx context.Context, userID string, content, mediaURL string) (*models.Post, error) {
+func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem) (*models.Post, error) {
 	if userID == "" {
 		return nil, errors.New("user_id is required")
 	}
@@ -101,10 +164,42 @@ func (s *PostService) Create(ctx context.Context, userID string, content, mediaU
 	if len(content) > 500 {
 		return nil, errors.New("content too long (max 500)")
 	}
+
+	clean := make([]dto.MediaItem, 0, len(media))
+	for _, m := range media {
+		m.URL = strings.TrimSpace(m.URL)
+		if m.URL == "" {
+			continue
+		}
+		if m.Width < 0 {
+			m.Width = 0
+		}
+		if m.Height < 0 {
+			m.Height = 0
+		}
+		clean = append(clean, m)
+	}
+	if len(clean) > 5 {
+		return nil, errors.New("too many media files (max 5)")
+	}
+	mediaURL := ""
+	if len(clean) > 0 {
+		mediaURL = clean[0].URL
+	}
+
 	post := models.Post{
 		UserID:   userID,
 		Content:  content,
 		MediaURL: mediaURL,
+	}
+	rows := make([]models.PostMedia, 0, len(clean))
+	for i, m := range clean {
+		rows = append(rows, models.PostMedia{
+			URL:       m.URL,
+			Width:     m.Width,
+			Height:    m.Height,
+			SortOrder: i,
+		})
 	}
 	limits := repository.PostCreateLimits{
 		Cooldown:      60 * time.Second,
@@ -112,7 +207,7 @@ func (s *PostService) Create(ctx context.Context, userID string, content, mediaU
 		HourMaxPosts:  10,
 		MediaCooldown: 120 * time.Second,
 	}
-	if err := s.posts.CreateWithRateLimit(ctx, &post, limits); err != nil {
+	if err := s.posts.CreateWithRateLimit(ctx, &post, rows, limits); err != nil {
 		return nil, err
 	}
 	return &post, nil
@@ -148,6 +243,7 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
+		media := effectiveMediaItems(it.Media, it.MediaURL)
 		isMe := viewerID != nil && *viewerID == it.UserID
 		isSub := false
 		if !isMe && viewerID != nil {
@@ -158,8 +254,9 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 			UserID:       it.UserID,
 			Username:     it.Username,
 			FullName:     it.FullName,
+			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
-			MediaURL:     it.MediaURL,
+			Media:        media,
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
@@ -194,6 +291,7 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
+		media := effectiveMediaItems(it.Media, it.MediaURL)
 		isMe := viewerID == it.UserID
 		// By definition for this feed: if author != me, I'm following them.
 		isSub := !isMe
@@ -202,8 +300,9 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 			UserID:       it.UserID,
 			Username:     it.Username,
 			FullName:     it.FullName,
+			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
-			MediaURL:     it.MediaURL,
+			Media:        media,
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
@@ -227,6 +326,7 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 	if err != nil {
 		return nil, err
 	}
+	media := effectiveMediaItems(item.Media, item.MediaURL)
 	mentionMap, err := s.enrichMentions(ctx, []repository.FeedItem{*item})
 	if err != nil {
 		return nil, err
@@ -247,8 +347,9 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 		UserID:       item.UserID,
 		Username:     item.Username,
 		FullName:     item.FullName,
+		AvatarURL:    item.AvatarURL,
 		Content:      item.Content,
-		MediaURL:     item.MediaURL,
+		Media:        media,
 		CreatedAt:    item.CreatedAt,
 		UpdatedAt:    item.UpdatedAt,
 		LikeCount:    item.LikeCount,
@@ -284,6 +385,7 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
+		media := effectiveMediaItems(it.Media, it.MediaURL)
 		isMe := viewerID != nil && *viewerID == it.UserID
 		isSub := false
 		if !isMe && viewerID != nil {
@@ -294,8 +396,9 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 			UserID:       it.UserID,
 			Username:     it.Username,
 			FullName:     it.FullName,
+			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
-			MediaURL:     it.MediaURL,
+			Media:        media,
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
@@ -346,6 +449,7 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
+		media := effectiveMediaItems(it.Media, it.MediaURL)
 		isMe := viewerID != nil && *viewerID == it.UserID
 		isSub := false
 		if !isMe && viewerID != nil {
@@ -356,8 +460,9 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 			UserID:       it.UserID,
 			Username:     it.Username,
 			FullName:     it.FullName,
+			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
-			MediaURL:     it.MediaURL,
+			Media:        media,
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
@@ -395,8 +500,8 @@ func (s *PostService) Unlike(ctx context.Context, postID, userID string) error {
 }
 
 // CreateWithTags creates post and attaches hashtags.
-func (s *PostService) CreateWithTags(ctx context.Context, userID string, content, mediaURL string, tags []string) error {
-	post, err := s.Create(ctx, userID, content, mediaURL)
+func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, tags []string) error {
+	post, err := s.Create(ctx, userID, content, media)
 	if err != nil {
 		return err
 	}

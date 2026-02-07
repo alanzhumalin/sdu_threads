@@ -70,6 +70,13 @@ Create `.env` from `.env.example` before running locally. Key values:
 - `DATABASE_URL` — Postgres connection string used by the backend.
 - `JWT_SECRET`, `JWT_TTL_HOURS` — ключ и срок жизни JWT (по умолчанию 24ч).
 - `RATE_LIMIT_RPM` — лимит запросов в минуту на IP (по умолчанию 120).
+- `S3_*` — (опционально) S3-совместимое хранилище для медиа (посты/аватар/фон):
+  - `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`
+  - `S3_ACCESS_KEY`, `S3_SECRET_KEY`
+  - `S3_USE_SSL`
+  - `S3_SIGNATURE_VERSION` (`v4` по умолчанию; `v2` если провайдер требует)
+  - `S3_PUBLIC_BASE_URL` (используется для построения публичных URL)
+  - `S3_PREFIX` (опционально; если пусто — без префикса в ключах)
 
 ## Логирование и rate limit
 - Каждый запрос логируется (method, path, status, длительность, ip, user-agent, user_id если есть токен).
@@ -79,7 +86,8 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Auth: `POST /api/auth/register`, `POST /api/auth/login` → JWT.
 - Users: `POST /api/users` (legacy), `GET /api/users/{id}`, `GET /api/users/me`, `GET /api/users/search?q=`.
 - Follow: `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/followers|following`.
-- Posts: `POST /api/posts` (Bearer, `{content, media_url?, hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
+- Media: `POST /api/media/upload?purpose=post|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
+- Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
 - Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
 - Hashtags: `GET /api/hashtags/search?q=`, `GET /api/hashtags/{name}/posts`.
 - Health: `/healthz`.

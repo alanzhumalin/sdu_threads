@@ -12,6 +12,9 @@ import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
+import { PostMedia } from "../components/PostMedia";
+import { AvatarCircle } from "../components/Avatar";
+import type { MediaItem } from "../types/media";
 
 type UserResult = {
   id: string;
@@ -32,8 +35,9 @@ type FeedItem = {
   user_id: string;
   username: string;
   full_name: string;
+  avatar_url?: string;
   content: string;
-  media_url?: string;
+  media?: MediaItem[];
   created_at: string;
   updated_at?: string;
   like_count: number;
@@ -380,11 +384,11 @@ export default function SearchPage() {
                   className="card p-3 flex items-center justify-between hover:border-white/25 transition"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
-                      {user.full_name?.[0]?.toUpperCase() ||
-                        user.username?.[0]?.toUpperCase() ||
-                        "U"}
-                    </div>
+                    <AvatarCircle
+                      src={user.avatar_url}
+                      fallback={user.full_name || user.username || "U"}
+                      className="w-10 h-10 flex items-center justify-center text-sm font-semibold"
+                    />
                     <div>
                       <p className="text-white font-semibold">
                         <MentionPreview username={user.username} className="">
@@ -477,9 +481,25 @@ export default function SearchPage() {
                   <div className="flex items-center gap-3">
                     <Link
                       to={`/u/${item.username}`}
-                      className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                      aria-label={`Профиль ${item.full_name || item.username}`}
+                      className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                     >
-                      {item.full_name?.[0]?.toUpperCase() || item.username?.[0]?.toUpperCase() || "U"}
+                      <span aria-hidden>
+                        {item.full_name?.[0]?.toUpperCase() || item.username?.[0]?.toUpperCase() || "U"}
+                      </span>
+                      {item.avatar_url ? (
+                        <img
+                          src={item.avatar_url}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          draggable={false}
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : null}
                     </Link>
                     <div>
                       <MentionPreview username={item.username} className="">
@@ -521,11 +541,7 @@ export default function SearchPage() {
                   )}
                 </p>
 
-                {item.media_url && (
-                  <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                    <img src={item.media_url} alt="media" className="w-full h-auto object-cover" />
-                  </div>
-                )}
+                <PostMedia media={item.media} />
 
                 <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                   <div className="flex items-center gap-6">

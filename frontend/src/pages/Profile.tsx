@@ -11,12 +11,15 @@ import PostComposer from "../components/PostComposer";
 import { DrawingModal } from "../components/DrawingModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
+import { PostMedia } from "../components/PostMedia";
 import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2 } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
 import { SocialLinksOverlay, type SocialLinks, type SocialType } from "../components/SocialLinks";
 import { MentionPreview } from "../components/MentionPreview";
 import { FollowListModal } from "../components/FollowListModal";
+import { fileToWebpIfNeeded } from "../utils/media";
+import FabricImageEditor from "../components/FabricImageEditor";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -84,10 +87,18 @@ export default function ProfilePage() {
   const [socialDraftError, setSocialDraftError] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [bgPreview, setBgPreview] = useState<string>("");
+  const [pendingAvatar, setPendingAvatar] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [pendingBackground, setPendingBackground] = useState<{ file: File; previewUrl: string } | null>(null);
   const [drawingTarget, setDrawingTarget] = useState<"background" | "avatar" | null>(null);
-  const [imageSaving, setImageSaving] = useState<"background" | "avatar" | null>(null);
+  const [cropTarget, setCropTarget] = useState<{
+    target: "background" | "avatar";
+    srcUrl: string;
+    file: File;
+  } | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const bgInputRef = useRef<HTMLInputElement | null>(null);
+  const bgHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [bgCropRatio, setBgCropRatio] = useState<number>(3);
 
   const seenPosts = useRef<Set<string>>(new Set());
   const loadViewed = () => {
@@ -359,6 +370,11 @@ export default function ProfilePage() {
 
   const openEdit = () => {
     if (!profile) return;
+    closeCrop();
+    if (pendingAvatar) URL.revokeObjectURL(pendingAvatar.previewUrl);
+    if (pendingBackground) URL.revokeObjectURL(pendingBackground.previewUrl);
+    setPendingAvatar(null);
+    setPendingBackground(null);
     setForm({
       full_name: profile.full_name || "",
       bio: profile.bio || "",
@@ -381,45 +397,48 @@ export default function ProfilePage() {
     setEditOpen(true);
   };
 
-  const fileToDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("file_read_failed"));
-      reader.readAsDataURL(file);
-    });
+  const clearPendingImages = () => {
+    if (pendingAvatar) URL.revokeObjectURL(pendingAvatar.previewUrl);
+    if (pendingBackground) URL.revokeObjectURL(pendingBackground.previewUrl);
+    setPendingAvatar(null);
+    setPendingBackground(null);
+  };
 
-  const applyProfileImage = async (target: "background" | "avatar", dataUrl: string) => {
-    if (!token || !profile) return;
-    setSaveError("");
-    const prevAvatar = avatarPreview;
-    const prevBg = bgPreview;
-    if (target === "avatar") setAvatarPreview(dataUrl);
-    else setBgPreview(dataUrl);
-
-    setImageSaving(target);
-    try {
-      const updated = await api.updateProfile(
-        target === "avatar" ? { avatar_url: dataUrl } : { background_url: dataUrl },
-        token
-      );
-      setProfile(updated);
-      setCachedProfile(updated);
-      updateFeedByUser(updated.id, {
-        full_name: updated.full_name,
-        username: updated.username,
-        avatar_url: updated.avatar_url,
-        background_url: updated.background_url,
-      });
-      if (target === "avatar") setAvatarPreview(updated.avatar_url || dataUrl);
-      else setBgPreview(updated.background_url || dataUrl);
-    } catch (e: any) {
-      if (target === "avatar") setAvatarPreview(prevAvatar);
-      else setBgPreview(prevBg);
-      setSaveError(e.message || "Не удалось сохранить изображение");
-    } finally {
-      setImageSaving(null);
+  const applyPendingImage = (target: "background" | "avatar", file: File) => {
+    const url = URL.createObjectURL(file);
+    if (target === "avatar") {
+      if (pendingAvatar) URL.revokeObjectURL(pendingAvatar.previewUrl);
+      setPendingAvatar({ file, previewUrl: url });
+      setAvatarPreview(url);
+    } else {
+      if (pendingBackground) URL.revokeObjectURL(pendingBackground.previewUrl);
+      setPendingBackground({ file, previewUrl: url });
+      setBgPreview(url);
     }
+  };
+
+  const closeCrop = () => {
+    if (cropTarget) URL.revokeObjectURL(cropTarget.srcUrl);
+    setCropTarget(null);
+  };
+
+  const setPendingImage = (target: "background" | "avatar", file: File) => {
+    if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
+      setSaveError("Можно загрузить только изображения");
+      return;
+    }
+    setSaveError("");
+
+    // Cropping GIF would flatten the animation. Keep GIFs as-is.
+    if (file.type === "image/gif") {
+      applyPendingImage(target, file);
+      return;
+    }
+
+    // Open crop modal for still images.
+    if (cropTarget) URL.revokeObjectURL(cropTarget.srcUrl);
+    const srcUrl = URL.createObjectURL(file);
+    setCropTarget({ target, srcUrl, file });
   };
 
   const handleSave = async () => {
@@ -452,7 +471,44 @@ export default function ProfilePage() {
       social_links,
     };
     try {
-      const updated = await api.updateProfile(payload, token);
+      let avatarURL: string | undefined;
+      let backgroundURL: string | undefined;
+
+      const uploads: Promise<void>[] = [];
+      if (pendingAvatar) {
+        uploads.push(
+          (async () => {
+            const f = await fileToWebpIfNeeded(pendingAvatar.file);
+            const items = await api.uploadMedia([f], "avatar", token);
+            const url = items[0]?.url;
+            if (!url) throw new Error("Не удалось загрузить аватар");
+            avatarURL = url;
+          })()
+        );
+      }
+      if (pendingBackground) {
+        uploads.push(
+          (async () => {
+            const f = await fileToWebpIfNeeded(pendingBackground.file);
+            const items = await api.uploadMedia([f], "background", token);
+            const url = items[0]?.url;
+            if (!url) throw new Error("Не удалось загрузить фон");
+            backgroundURL = url;
+          })()
+        );
+      }
+      if (uploads.length > 0) {
+        await Promise.all(uploads);
+      }
+
+      const updated = await api.updateProfile(
+        {
+          ...payload,
+          ...(avatarURL ? { avatar_url: avatarURL } : {}),
+          ...(backgroundURL ? { background_url: backgroundURL } : {}),
+        },
+        token
+      );
       setProfile(updated);
       setCachedProfile(updated);
       updateFeedByUser(updated.id, {
@@ -461,6 +517,10 @@ export default function ProfilePage() {
         avatar_url: updated.avatar_url,
         background_url: updated.background_url,
       });
+      clearPendingImages();
+      setAvatarPreview(updated.avatar_url || "");
+      setBgPreview(updated.background_url || "");
+      closeCrop();
       setEditOpen(false);
     } catch (e: any) {
       setSaveError(e.message || "Не удалось сохранить");
@@ -468,6 +528,20 @@ export default function ProfilePage() {
       setSaving(false);
     }
   };
+
+  // Compute the real aspect ratio of the profile background container for WYSIWYG crop/drawing.
+  useEffect(() => {
+    const el = bgHeaderRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setBgCropRatio(r.width / r.height);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [profile?.id]);
 
   useEffect(() => {
     if (!token) return;
@@ -520,6 +594,9 @@ export default function ProfilePage() {
 
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) return;
+    const prevLikedItems = likedPosts.items;
+    const prevLikedNext = likedPosts.nextOffset;
+    const removeFromLiked = liked && prevLikedItems.some((p) => p.id === id);
     const currentBase =
       myPosts.items.find((p) => p.id === id) ||
       likedPosts.items.find((p) => p.id === id);
@@ -529,6 +606,10 @@ export default function ProfilePage() {
     const nextCount = currentLikeCount + (liked ? -1 : 1);
     updatePost(id, { liked_by_me: !liked, like_count: nextCount });
     patchPost(id, { liked_by_me: !liked, like_count: nextCount });
+    if (removeFromLiked) {
+      setLikedPosts((prev) => ({ ...prev, items: prev.items.filter((p) => p.id !== id) }));
+      setCachedLikedPosts(prevLikedItems.filter((p) => p.id !== id), prevLikedNext, true);
+    }
     try {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
@@ -536,6 +617,10 @@ export default function ProfilePage() {
       if (current) {
         updatePost(id, { liked_by_me: liked, like_count: currentLikeCount });
         patchPost(id, { liked_by_me: liked, like_count: currentLikeCount });
+      }
+      if (removeFromLiked) {
+        setLikedPosts((prev) => ({ ...prev, items: prevLikedItems }));
+        setCachedLikedPosts(prevLikedItems, prevLikedNext, true);
       }
     }
   };
@@ -607,12 +692,16 @@ export default function ProfilePage() {
     }
   };
 
+  const prevTabRef = useRef<"posts" | "liked">(activeTab);
   useEffect(() => {
     if (!profile) return;
-    if (activeTab === "liked" && !cachedLikedPosts.loaded && !likedPosts.loading) {
+    const prevTab = prevTabRef.current;
+    prevTabRef.current = activeTab;
+    // Always refresh "liked" on tab switch to avoid stale cached state.
+    if (activeTab === "liked" && prevTab !== "liked" && !likedPosts.loading) {
       loadLikedPosts(0, false);
     }
-  }, [activeTab, profile]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (observerTabRef.current) observerTabRef.current.disconnect();
@@ -673,7 +762,7 @@ export default function ProfilePage() {
     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
       <ErrorMessage message={error} />
       <div className="rounded-2xl border border-white/10 overflow-hidden bg-black shadow-xl">
-        <div className="relative h-40 md:h-52 overflow-hidden">
+        <div ref={bgHeaderRef} className="relative h-40 md:h-52 overflow-hidden">
           <div className="absolute inset-0">
             {profile?.background_url ? (
               <img src={profile.background_url} alt="cover" className="w-full h-full object-cover" />
@@ -817,9 +906,23 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-3">
                     <Link
                       to={`/u/${p.username}`}
-                      className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                      aria-label={`Профиль ${p.full_name || p.username}`}
+                      className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                     >
-                      {p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}
+                      <span aria-hidden>{p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}</span>
+                      {p.avatar_url ? (
+                        <img
+                          src={p.avatar_url}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          draggable={false}
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : null}
                     </Link>
                     <div>
                       <MentionPreview username={p.username} className="">
@@ -843,15 +946,7 @@ export default function ProfilePage() {
                   )}
                 </p>
 
-                {p.media_url && (
-                  <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                    <img
-                      src={p.media_url}
-                      alt="media"
-                      className="w-full h-auto object-cover"
-                    />
-                  </div>
-                )}
+                <PostMedia media={item.media} />
 
                 <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                   <div className="flex items-center gap-6">
@@ -926,6 +1021,8 @@ export default function ProfilePage() {
                   className="absolute top-3 right-3 text-white/60 hover:text-white"
                   onClick={() => {
                     setDrawingTarget(null);
+                    clearPendingImages();
+                    closeCrop();
                     setEditOpen(false);
                   }}
                 >
@@ -951,7 +1048,7 @@ export default function ProfilePage() {
                               className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
                               onClick={() => setDrawingTarget("background")}
                               aria-label="Рисовать фон"
-                              disabled={imageSaving === "background"}
+                              disabled={saving}
                             >
                               <Paintbrush className="w-4 h-4" />
                             </button>
@@ -959,7 +1056,7 @@ export default function ProfilePage() {
                               className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
                               onClick={() => bgInputRef.current?.click()}
                               aria-label={bgPreview ? "Изменить фон" : "Добавить фон"}
-                              disabled={imageSaving === "background"}
+                              disabled={saving}
                             >
                               <Plus className="w-4 h-4" />
                             </button>
@@ -969,16 +1066,11 @@ export default function ProfilePage() {
                             type="file"
                             accept="image/*"
                             className="hidden"
-                            onChange={async (e) => {
+                            onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (!file) return;
                               e.currentTarget.value = "";
-                              try {
-                                const dataUrl = await fileToDataUrl(file);
-                                await applyProfileImage("background", dataUrl);
-                              } catch (err: any) {
-                                setSaveError(err?.message || "Не удалось загрузить изображение");
-                              }
+                              setPendingImage("background", file);
                             }}
                           />
                         </div>
@@ -997,7 +1089,7 @@ export default function ProfilePage() {
                                 className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
                                 onClick={() => setDrawingTarget("avatar")}
                                 aria-label="Рисовать аватар"
-                                disabled={imageSaving === "avatar"}
+                                disabled={saving}
                               >
                                 <Paintbrush className="w-4 h-4" />
                               </button>
@@ -1005,7 +1097,7 @@ export default function ProfilePage() {
                                 className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
                                 onClick={() => avatarInputRef.current?.click()}
                                 aria-label={avatarPreview ? "Изменить аватар" : "Добавить аватар"}
-                                disabled={imageSaving === "avatar"}
+                                disabled={saving}
                               >
                                 <Plus className="w-4 h-4" />
                               </button>
@@ -1015,16 +1107,11 @@ export default function ProfilePage() {
                               type="file"
                               accept="image/*"
                               className="hidden"
-                              onChange={async (e) => {
+                              onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (!file) return;
                                 e.currentTarget.value = "";
-                                try {
-                                  const dataUrl = await fileToDataUrl(file);
-                                  await applyProfileImage("avatar", dataUrl);
-                                } catch (err: any) {
-                                  setSaveError(err?.message || "Не удалось загрузить изображение");
-                                }
+                                setPendingImage("avatar", file);
                               }}
                             />
                           </div>
@@ -1276,29 +1363,58 @@ export default function ProfilePage() {
       {drawingTarget && (
         <DrawingModal
           title={drawingTarget === "background" ? "Рисование фона" : "Рисование аватара"}
-          canvasWidth={drawingTarget === "background" ? 1500 : 1024}
+          canvasWidth={drawingTarget === "background" ? Math.max(600, Math.round(500 * bgCropRatio)) : 1024}
           canvasHeight={drawingTarget === "background" ? 500 : 1024}
           canvasContainerClassName={
             drawingTarget === "avatar" ? "mx-auto w-full max-w-[420px]" : "w-full"
           }
           canvasContainerStyle={{
-            aspectRatio: drawingTarget === "background" ? "3 / 1" : "1 / 1",
+            aspectRatio:
+              drawingTarget === "background"
+                ? `${Math.max(600, Math.round(500 * bgCropRatio))} / 500`
+                : "1 / 1",
           }}
           canvasClassName="w-full h-full rounded-xl touch-none select-none"
           onClose={() => setDrawingTarget(null)}
-          onSave={async (file) => {
+          onSave={(file) => {
             const target = drawingTarget;
             setDrawingTarget(null);
             if (!target) return;
-            try {
-              const dataUrl = await fileToDataUrl(file);
-              await applyProfileImage(target, dataUrl);
-            } catch (e: any) {
-              setSaveError(e?.message || "Не удалось сохранить рисунок");
-            }
+            applyPendingImage(target, file);
           }}
         />
       )}
+
+      {cropTarget &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1500] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={closeCrop}
+          >
+            <div
+              className="relative bg-black border border-white/10 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <FabricImageEditor
+                variant="cropOnly"
+                title={cropTarget.target === "avatar" ? "Кадрирование аватара" : "Кадрирование фона"}
+                src={cropTarget.srcUrl}
+                fileName={cropTarget.file.name}
+                fixedCropRatio={cropTarget.target === "avatar" ? 1 : bgCropRatio}
+                initialMode="crop"
+                initialCropPreset="free"
+                cropMask={cropTarget.target === "avatar" ? "circle" : null}
+                onCancel={closeCrop}
+                onSave={(nextFile) => {
+                  const target = cropTarget.target;
+                  closeCrop();
+                  applyPendingImage(target, nextFile);
+                }}
+              />
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

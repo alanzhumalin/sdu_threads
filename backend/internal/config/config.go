@@ -13,6 +13,18 @@ type Config struct {
 	JWTTTLHours  int
 	RateLimitRPM int
 	ViewTTLMin   int
+
+	// S3-compatible media storage (MinIO/Ceph/Swift gateway).
+	S3Endpoint      string
+	S3Region        string
+	S3Bucket        string
+	S3AccessKey     string
+	S3SecretKey     string
+	S3UseSSL        bool
+	S3PublicBaseURL string
+	S3Prefix        string
+	// v4 (default) or v2 for some Swift/Ceph gateways.
+	S3SignatureVersion string
 }
 
 func Load() Config {
@@ -24,6 +36,17 @@ func Load() Config {
 		JWTTTLHours:  getEnvInt("JWT_TTL_HOURS", 24),
 		RateLimitRPM: getEnvInt("RATE_LIMIT_RPM", 120),
 		ViewTTLMin:   getEnvInt("VIEW_TTL_MIN", 15),
+
+		S3Endpoint:      getEnv("S3_ENDPOINT", ""),
+		S3Region:        getEnv("S3_REGION", "us-east-1"),
+		S3Bucket:        getEnv("S3_BUCKET", ""),
+		S3AccessKey:     getEnv("S3_ACCESS_KEY", ""),
+		S3SecretKey:     getEnv("S3_SECRET_KEY", ""),
+		S3UseSSL:        getEnvBool("S3_USE_SSL", true),
+		S3PublicBaseURL: getEnv("S3_PUBLIC_BASE_URL", ""),
+		// Optional. Leave empty to avoid an extra path segment in object keys.
+		S3Prefix:        getEnv("S3_PREFIX", ""),
+		S3SignatureVersion: getEnv("S3_SIGNATURE_VERSION", "v4"),
 	}
 }
 
@@ -38,6 +61,20 @@ func getEnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getEnvBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch v {
+		case "1", "true", "TRUE", "yes", "YES", "y", "Y", "on", "ON":
+			return true
+		case "0", "false", "FALSE", "no", "NO", "n", "N", "off", "OFF":
+			return false
+		default:
+			return def
 		}
 	}
 	return def

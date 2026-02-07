@@ -1,4 +1,5 @@
 import { useAuthStore } from "../store/auth";
+import type { MediaItem } from "../types/media";
 
 type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH";
 
@@ -184,6 +185,46 @@ async function requestWithHeaders<T>(
   return { data, headers: res.headers };
 }
 
+async function requestForm<T>(
+  path: string,
+  method: Extract<HttpMethod, "POST" | "PATCH">,
+  form: FormData,
+  token?: string | null
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: form,
+    });
+  } catch {
+    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+  }
+  if (res.status === 401 || res.status === 403) {
+    if (!redirecting) {
+      redirecting = true;
+      try {
+        useAuthStore.getState().setToken(null);
+      } catch {
+        // ignore
+      }
+      window.location.href = "/login";
+    }
+    throw new Error("Сессия истекла. Войдите снова.");
+  }
+  if (!res.ok) {
+    const { message, code, retryAfterSeconds } = await readError(res);
+    const err: any = new Error(normalizeBackendMessage(message, res.status, code));
+    if (code) err.code = code;
+    if (typeof retryAfterSeconds === "number") err.retry_after_seconds = retryAfterSeconds;
+    throw err;
+  }
+  return res.json();
+}
+
 const feedPageFn = (
   limit = 20,
   offset = 0,
@@ -196,8 +237,9 @@ const feedPageFn = (
       content: string;
       username: string;
       full_name: string;
+      avatar_url?: string;
       created_at: string;
-      media_url?: string;
+      media?: MediaItem[];
       like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -220,8 +262,9 @@ const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
       content: string;
       username: string;
       full_name: string;
+      avatar_url?: string;
       created_at: string;
-      media_url?: string;
+      media?: MediaItem[];
       like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -311,8 +354,9 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+        avatar_url?: string;
         created_at: string;
-        media_url?: string;
+        media?: MediaItem[];
         like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -339,10 +383,13 @@ export const api = {
       "GET",
       undefined,
       token
-    ).then(({ data, headers }) => ({
-      items: data,
-      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
-    })),
+    ).then(({ data, headers }) => {
+      const items = Array.isArray(data) ? data : [];
+      return {
+        items,
+        nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+      };
+    }),
   following: (userId: string, limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {
@@ -356,10 +403,13 @@ export const api = {
       "GET",
       undefined,
       token
-    ).then(({ data, headers }) => ({
-      items: data,
-      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
-    })),
+    ).then(({ data, headers }) => {
+      const items = Array.isArray(data) ? data : [];
+      return {
+        items,
+        nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+      };
+    }),
   likedPosts: (limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {
@@ -368,9 +418,10 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+        avatar_url?: string;
         created_at: string;
         updated_at?: string;
-        media_url?: string;
+        media?: MediaItem[];
         like_count: number;
         liked_by_me: boolean;
         view_count: number;
@@ -384,8 +435,24 @@ export const api = {
       items: data,
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
-  createPost: (payload: { content: string; media_url?: string; hashtags?: string[] }, token: string) =>
+  createPost: (
+    payload: { content: string; media?: MediaItem[]; media_url?: string; media_urls?: string[]; hashtags?: string[] },
+    token: string
+  ) =>
     request<{ status: string }>("/posts", "POST", payload, token),
+  uploadMedia: async (files: File[], purpose: string, token: string) => {
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f));
+    const res = await requestForm<{ items: MediaItem[] }>(
+      `/media/upload?purpose=${encodeURIComponent(purpose)}`,
+      "POST",
+      form,
+      token
+    );
+    return Array.isArray(res.items)
+      ? res.items.filter((i) => i && typeof i.url === "string" && i.url.trim() !== "")
+      : [];
+  },
   searchHashtags: (q: string, limit = 8) =>
     request<any[]>(
       `/hashtags/search?q=${encodeURIComponent(q)}&limit=${limit}`,
@@ -426,9 +493,10 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+        avatar_url?: string;
         created_at: string;
         updated_at: string;
-        media_url?: string;
+        media?: MediaItem[];
         like_count: number;
         liked_by_me: boolean;
         view_count: number;
@@ -454,6 +522,7 @@ export const api = {
         actor_id: string;
         actor_username: string;
         actor_full_name?: string;
+        actor_avatar_url?: string;
         post_id?: string;
         comment_id?: string;
         post_content?: string;
@@ -497,8 +566,9 @@ export const api = {
       user_id: string;
       username: string;
       full_name: string;
+      avatar_url?: string;
       content: string;
-      media_url?: string;
+      media?: MediaItem[];
       created_at: string;
       updated_at: string;
       like_count: number;
@@ -534,6 +604,7 @@ export const api = {
         user_id: string;
       username: string;
       full_name?: string;
+      avatar_url?: string;
       body: string;
       created_at: string;
       liked_by_me: boolean;
@@ -554,6 +625,8 @@ export const api = {
         post_id: string;
         user_id: string;
       username: string;
+      full_name?: string;
+      avatar_url?: string;
       body: string;
       created_at: string;
       liked_by_me: boolean;

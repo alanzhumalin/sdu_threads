@@ -1,0 +1,4 @@
+ALTER TABLE post_media
+    DROP COLUMN IF EXISTS width,
+    DROP COLUMN IF EXISTS height;
+

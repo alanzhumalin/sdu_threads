@@ -65,6 +65,9 @@ LIMIT ? OFFSET ?`
 	if err := r.db.WithContext(ctx).Raw(q, userID, limit, offset).Scan(&res).Error; err != nil {
 		return nil, err
 	}
+	if res == nil {
+		res = []FollowUser{}
+	}
 	return res, nil
 }
 
@@ -85,6 +88,9 @@ ORDER BY f.created_at DESC
 LIMIT ? OFFSET ?`
 	if err := r.db.WithContext(ctx).Raw(q, userID, limit, offset).Scan(&res).Error; err != nil {
 		return nil, err
+	}
+	if res == nil {
+		res = []FollowUser{}
 	}
 	return res, nil
 }

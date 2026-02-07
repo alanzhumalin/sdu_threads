@@ -26,7 +26,7 @@ type PostCreateLimits struct {
 //
 // It uses a per-user transactional advisory lock to avoid race conditions
 // when multiple create requests are sent concurrently.
-func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.Post, limits PostCreateLimits) error {
+func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.Post, media []models.PostMedia, limits PostCreateLimits) error {
 	if post == nil {
 		return nil
 	}
@@ -67,9 +67,10 @@ func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.P
 			}
 		}
 
-		isMedia := strings.TrimSpace(post.MediaURL) != ""
+		// media is already trimmed/cleaned in service, but be defensive.
+		hasMedia := strings.TrimSpace(post.MediaURL) != "" || len(media) > 0
 		var lastMedia sql.NullTime
-		if isMedia {
+		if hasMedia {
 			if err := tx.Raw(
 				`SELECT created_at
 				 FROM posts
@@ -82,11 +83,49 @@ func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.P
 			}
 		}
 
-		if retry, limited := computePostCreateRetry(now, lastPost, tenthInWindow, lastMedia, isMedia, limits); limited {
+		if retry, limited := computePostCreateRetry(now, lastPost, tenthInWindow, lastMedia, hasMedia, limits); limited {
 			return apperror.NewRateLimit("Too many posts", retry)
 		}
 
-		return tx.Create(post).Error
+		if err := tx.Create(post).Error; err != nil {
+			return err
+		}
+
+		// Persist media ordering separately (multi-media posts).
+		if len(media) > 0 {
+			if len(media) > 5 {
+				media = media[:5]
+			}
+			rows := make([]models.PostMedia, 0, len(media))
+			for i, m := range media {
+				u := strings.TrimSpace(m.URL)
+				if u == "" {
+					continue
+				}
+				w := m.Width
+				h := m.Height
+				if w < 0 {
+					w = 0
+				}
+				if h < 0 {
+					h = 0
+				}
+				rows = append(rows, models.PostMedia{
+					PostID:    post.ID,
+					URL:       u,
+					Width:     w,
+					Height:    h,
+					SortOrder: i,
+				})
+			}
+			if len(rows) > 0 {
+				if err := tx.Create(&rows).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
 	})
 }
 

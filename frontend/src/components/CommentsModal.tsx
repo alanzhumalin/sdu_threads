@@ -11,6 +11,9 @@ import { CommentSkeleton } from "./CommentSkeleton";
 import { usePostCacheStore } from "../store/postCache";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { MentionPreview } from "./MentionPreview";
+import { PostMedia } from "./PostMedia";
+import type { MediaItem } from "../types/media";
+import { AvatarCircle } from "./Avatar";
 
 type Comment = {
   id: string;
@@ -18,6 +21,7 @@ type Comment = {
   user_id: string;
   username: string;
   full_name?: string;
+  avatar_url?: string;
   body: string;
   created_at: string;
   liked_by_me: boolean;
@@ -37,9 +41,10 @@ export type PostMeta = {
   user_id: string;
   username: string;
   full_name: string;
+  avatar_url?: string;
   content: string;
   created_at: string;
-  media_url?: string;
+  media?: MediaItem[];
   like_count: number;
   liked_by_me: boolean;
   view_count: number;
@@ -179,6 +184,7 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const commentsListRef = useRef<HTMLDivElement | null>(null);
+  const commentsSectionRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const commentRefs = useRef<Record<string, HTMLElement | null>>({});
   const [cursor, setCursor] = useState(0);
@@ -446,6 +452,20 @@ useEffect(() => {
     target.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 }, [comments, focusCommentId]);
+
+  // When opening the modal, jump directly to the comments section (not the post header/media).
+  useEffect(() => {
+    const root = commentsListRef.current;
+    const target = commentsSectionRef.current;
+    if (!root || !target) return;
+    // Wait for the portal to mount and layout to settle.
+    requestAnimationFrame(() => {
+      const rootRect = root.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const top = root.scrollTop + (targetRect.top - rootRect.top);
+      root.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+    });
+  }, [post.id]);
 
 const updateOverlayPos = (start: number, symbol: string, setter: (pos: { top: number; left: number }) => void) => {
   const ta = textareaRef.current;
@@ -788,9 +808,13 @@ useLayoutEffect(() => {
       >
         <Link
           to={`/u/${c.username}`}
-          className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold text-white hover:opacity-90"
+          className="hover:opacity-90"
         >
-          {(c.full_name || c.username || "?")[0]?.toUpperCase() || "?"}
+          <AvatarCircle
+            src={c.avatar_url}
+            fallback={c.full_name || c.username || "?"}
+            className="w-10 h-10 flex items-center justify-center text-sm font-semibold text-white"
+          />
         </Link>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2 text-sm text-white/70 min-w-0">
@@ -951,77 +975,80 @@ useLayoutEffect(() => {
           </button>
         </div>
 
-        <div className="px-4 pt-4 pb-2 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <Link
-              to={`/u/${post.username}`}
-              className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
-            >
-              {post.full_name?.[0]?.toUpperCase() || post.username[0].toUpperCase()}
-            </Link>
-            <div>
-              <p className="text-white font-semibold">
-                <MentionPreview username={post.username} className="">
-                  <Link to={`/u/${post.username}`} className="hover:underline">
-                    {post.full_name || post.username}
-                  </Link>
-                </MentionPreview>
-              </p>
-              <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
+        <div ref={commentsListRef} className="flex-1 overflow-y-auto">
+          <div className="px-4 pt-4 pb-2 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <Link
+                to={`/u/${post.username}`}
+                aria-label={`Профиль ${post.full_name || post.username}`}
+                className="hover:opacity-90"
+              >
+                <AvatarCircle
+                  src={post.avatar_url}
+                  fallback={post.full_name || post.username}
+                  className="w-10 h-10 flex items-center justify-center text-sm font-semibold"
+                />
+              </Link>
+              <div>
+                <p className="text-white font-semibold">
+                  <MentionPreview username={post.username} className="">
+                    <Link to={`/u/${post.username}`} className="hover:underline">
+                      {post.full_name || post.username}
+                    </Link>
+                  </MentionPreview>
+                </p>
+                <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
+              </div>
+            </div>
+            <p className="mt-3 text-white leading-relaxed break-words">
+              {highlightHashtags(post.content, toSet(post.mentions), toSet(post.hashtags))}
+            </p>
+            <PostMedia media={post.media} />
+            <div className="mt-3 flex items-center gap-4 text-sm text-white/70">
+              <button
+                className={`flex items-center gap-2 rounded-full px-2 py-1 transition ${postMeta.liked_by_me ? "text-red-300" : "hover:text-white"}`}
+                onClick={togglePostLike}
+                type="button"
+              >
+                <Heart className={`w-6 h-6 ${postMeta.liked_by_me ? "fill-current" : ""}`} strokeWidth={1.8} />
+                <span>{postMeta.like_count}</span>
+              </button>
+              <button
+                className="flex items-center gap-2 rounded-full px-2 py-1 hover:text-white transition"
+                onClick={focusTextarea}
+                type="button"
+              >
+                <MessageCircle className="w-6 h-6" strokeWidth={1.8} />
+                <span>{postMeta.comment_count ?? 0}</span>
+              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                <Eye className="w-6 h-6" strokeWidth={1.6} />
+                <span>{postMeta.view_count}</span>
+              </div>
             </div>
           </div>
-          <p className="mt-3 text-white leading-relaxed break-words">
-            {highlightHashtags(post.content, toSet(post.mentions), toSet(post.hashtags))}
-          </p>
-          {post.media_url && (
-            <div className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-              <img src={post.media_url} alt="media" className="w-full h-auto object-cover" />
-            </div>
-          )}
-          <div className="mt-3 flex items-center gap-4 text-sm text-white/70">
-            <button
-              className={`flex items-center gap-2 rounded-full px-2 py-1 transition ${postMeta.liked_by_me ? "text-red-300" : "hover:text-white"}`}
-              onClick={togglePostLike}
-              type="button"
-            >
-              <Heart className={`w-6 h-6 ${postMeta.liked_by_me ? "fill-current" : ""}`} strokeWidth={1.8} />
-              <span>{postMeta.like_count}</span>
-            </button>
-            <button
-              className="flex items-center gap-2 rounded-full px-2 py-1 hover:text-white transition"
-              onClick={focusTextarea}
-              type="button"
-            >
-              <MessageCircle className="w-6 h-6" strokeWidth={1.8} />
-              <span>{postMeta.comment_count ?? 0}</span>
-            </button>
-            <div className="flex items-center gap-2 ml-auto">
-              <Eye className="w-6 h-6" strokeWidth={1.6} />
-              <span>{postMeta.view_count}</span>
-            </div>
-          </div>
-        </div>
 
-        <div ref={commentsListRef} className="flex-1 overflow-y-auto px-4 py-3">
-          {loading && comments.length === 0 && !error ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4].map((n) => (
-                <CommentSkeleton key={n} />
-              ))}
-            </div>
-          ) : (
-            <>
+          <div ref={commentsSectionRef} className="px-4 py-3">
+            {loading && comments.length === 0 && !error ? (
               <div className="space-y-3">
-                {comments.map((c) => (
-                  <div key={c.id}>{renderCommentCard(c, "parent", renderRepliesFlat(c.id))}</div>
+                {[1, 2, 3, 4].map((n) => (
+                  <CommentSkeleton key={n} />
                 ))}
               </div>
-              {comments.length === 0 && !loading && <p className="text-white/60 py-3">Комментариев нет</p>}
-            </>
-          )}
-          <ErrorMessage message={error} />
-          <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
-            {loadingMore ? "Загружаем..." : hasMore ? "Подгружаем ещё..." : ""}
+            ) : (
+              <>
+                <div className="space-y-3">
+                  {comments.map((c) => (
+                    <div key={c.id}>{renderCommentCard(c, "parent", renderRepliesFlat(c.id))}</div>
+                  ))}
+                </div>
+                {comments.length === 0 && !loading && <p className="text-white/60 py-3">Комментариев нет</p>}
+              </>
+            )}
+            <ErrorMessage message={error} />
+            <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
+              {loadingMore ? "Загружаем..." : hasMore ? "Подгружаем ещё..." : ""}
+            </div>
           </div>
         </div>
 

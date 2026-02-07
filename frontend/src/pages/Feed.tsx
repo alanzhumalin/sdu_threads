@@ -11,11 +11,13 @@ import { TopUsers } from "../components/TopUsers";
 import { ReportModal } from "../components/ReportModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
+import { PostMedia } from "../components/PostMedia";
 import { highlightHashtags } from "../utils/text";
 import { MentionPreview } from "../components/MentionPreview";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useFollowingFeedStore } from "../store/followingFeed";
 import { useUserStatsStore } from "../store/userStats";
+import type { MediaItem } from "../types/media";
 import {
   Heart,
   MessageCircle,
@@ -30,8 +32,9 @@ type FeedItem = {
   content: string;
   username: string;
   full_name: string;
+  avatar_url?: string;
   created_at: string;
-  media_url?: string;
+  media?: MediaItem[];
   like_count: number;
   liked_by_me: boolean;
   comment_count?: number;
@@ -531,10 +534,24 @@ export default function FeedPage() {
               <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <Link
-                  to={`/u/${item.username}`}
-                  className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                  to={`/u/${p.username}`}
+                  aria-label={`Профиль ${p.full_name || p.username}`}
+                  className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                 >
-                  {item.full_name?.[0]?.toUpperCase() || item.username[0].toUpperCase()}
+                  <span aria-hidden>{p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}</span>
+                  {p.avatar_url ? (
+                    <img
+                      src={p.avatar_url}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      draggable={false}
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : null}
                 </Link>
                 <div>
                   <MentionPreview username={item.username} className="">
@@ -619,16 +636,7 @@ export default function FeedPage() {
               )}
             </p>
 
-            {item.media_url && (
-              <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={item.media_url}
-                  alt="media"
-                  className="w-full h-auto object-cover"
-                />
-              </div>
-            )}
+            <PostMedia media={item.media} />
 
             <div className="mt-4 flex items-center justify-between text-sm text-white/60">
               <div className="flex items-center gap-6">

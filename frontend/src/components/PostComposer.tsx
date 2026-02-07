@@ -7,6 +7,8 @@ import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush } from "lucide-react";
 import { DrawingModal } from "./DrawingModal";
 import { ErrorMessage } from "./ErrorMessage";
 import FabricImageEditor from "./FabricImageEditor";
+import { fileToWebpIfNeeded } from "../utils/media";
+import type { MediaItem as UploadedMediaItem } from "../types/media";
 
 type Props = {
   onCreated?: () => void;
@@ -404,7 +406,7 @@ export default function PostComposer({ onCreated }: Props) {
     let rejected = false;
 
     for (const f of incoming) {
-      if (!allowed.test(f.type)) {
+      if (!allowed.test(f.type) || f.type === "image/svg+xml") {
         rejected = true;
         continue;
       }
@@ -443,8 +445,14 @@ export default function PostComposer({ onCreated }: Props) {
     setError("");
     try {
       const tags = extractHashtags(content, suppressedHashtags);
-      const hasMedia = mediaRef.current.length > 0;
-      await api.createPost({ content, hashtags: tags }, token);
+      const selected = mediaRef.current;
+      let uploadedMedia: UploadedMediaItem[] = [];
+      if (selected.length > 0) {
+        const files = await Promise.all(selected.map((m) => fileToWebpIfNeeded(m.file)));
+        uploadedMedia = await api.uploadMedia(files, "post", token);
+      }
+      const hasMedia = uploadedMedia.length > 0;
+      await api.createPost({ content, hashtags: tags, media: uploadedMedia }, token);
       setCooldownUntilMs(Date.now() + (hasMedia ? 120 : 60) * 1000);
       setMedia((prev) => {
         prev.forEach((m) => URL.revokeObjectURL(m.url));

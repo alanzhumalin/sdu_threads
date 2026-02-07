@@ -11,10 +11,10 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { usePostCacheStore } from "../store/postCache";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { SocialLinksOverlay } from "../components/SocialLinks";
+import { PostMedia } from "../components/PostMedia";
 import { useProfileMeStore } from "../store/profileMe";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
-import { useFeedStore } from "../store/feed";
 import { MentionPreview } from "../components/MentionPreview";
 
 function timeAgo(iso: string) {
@@ -296,9 +296,25 @@ export default function ProfileUserPage() {
                 {profile?.username ? (
                   <Link
                     to={`/u/${profile.username}`}
-                    className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                    aria-label={`Профиль ${profile.full_name || profile.username}`}
+                    className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                   >
-                    {profile?.full_name?.[0]?.toUpperCase() || profile?.username?.[0]?.toUpperCase() || "?"}
+                    <span aria-hidden>
+                      {profile?.full_name?.[0]?.toUpperCase() || profile?.username?.[0]?.toUpperCase() || "?"}
+                    </span>
+                    {profile.avatar_url ? (
+                      <img
+                        src={profile.avatar_url}
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        draggable={false}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : null}
                   </Link>
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
@@ -329,11 +345,7 @@ export default function ProfileUserPage() {
                 )}
               </p>
 
-              {p.media_url && (
-                <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                  <img src={p.media_url} alt="media" className="w-full h-auto object-cover" />
-                </div>
-              )}
+              <PostMedia media={item.media} />
 
               <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                 <div className="flex items-center gap-6">

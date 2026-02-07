@@ -12,6 +12,7 @@ import (
 	"sduthreads/internal/handler"
 	"sduthreads/internal/repository"
 	"sduthreads/internal/service"
+	"sduthreads/internal/storage"
 	"sduthreads/middleware"
 )
 
@@ -26,6 +27,22 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 
 	// jwt
 	jwtMgr := auth.NewJWTManager(cfg.JWTSecret, cfg.JWTTTLHours)
+
+	// media storage (optional; server must still start if not configured)
+	var uploader *storage.S3Uploader
+	if u, err := storage.NewS3Uploader(storage.S3Config{
+		Endpoint:      cfg.S3Endpoint,
+		Region:        cfg.S3Region,
+		Bucket:        cfg.S3Bucket,
+		AccessKey:     cfg.S3AccessKey,
+		SecretKey:     cfg.S3SecretKey,
+		UseSSL:        cfg.S3UseSSL,
+		PublicBaseURL: cfg.S3PublicBaseURL,
+		Prefix:        cfg.S3Prefix,
+		SignatureVersion: cfg.S3SignatureVersion,
+	}); err == nil {
+		uploader = u
+	}
 
 	// repositories
 	userRepo := repository.NewUserRepository(client.DB)
@@ -50,6 +67,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	searchHandler := handler.NewSearchHandler(userRepo)
 	topUsersHandler := handler.NewTopUsersHandler(followService)
 	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
+	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr)
 
 	// handlers
 	handler.NewHealthHandler().Register(mux)
@@ -63,6 +81,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	searchHandler.Register(mux)
 	topUsersHandler.Register(mux)
 	reportHandler.Register(mux)
+	mediaHandler.Register(mux)
 
 	// path-aware rate limiting: stricter for auth endpoints
 	pathLimiter := middleware.NewPathRateLimiter(cfg.RateLimitRPM, map[string]int{

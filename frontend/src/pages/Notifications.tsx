@@ -7,6 +7,7 @@ import { CommentsModal, PostMeta } from "../components/CommentsModal";
 import { useNotificationStore } from "../store/notifications";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
+import { AvatarCircle } from "../components/Avatar";
 
 type NotificationItem = {
   id: string;
@@ -14,6 +15,7 @@ type NotificationItem = {
   actor_id: string;
   actor_username: string;
   actor_full_name?: string;
+  actor_avatar_url?: string;
   post_id?: string;
   comment_id?: string;
   post_content?: string;
@@ -233,13 +235,18 @@ export default function NotificationsPage() {
         user_id: p.user_id,
         username: p.username,
         full_name: p.full_name,
+        avatar_url: p.avatar_url,
         content: p.content,
         created_at: p.created_at,
-        media_url: p.media_url,
+        media: p.media,
         like_count: p.like_count,
         liked_by_me: p.liked_by_me,
         view_count: p.view_count,
         comment_count: p.comment_count,
+        mentions: p.mentions,
+        hashtags: p.hashtags,
+        is_subscribed: p.is_subscribed,
+        is_me: p.is_me,
       };
       setModalPost(meta);
     } catch (e) {
@@ -332,9 +339,13 @@ export default function NotificationsPage() {
               <Link
                 to={`/u/${n.actor_username}`}
                 onClick={(e) => e.stopPropagation()}
-                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold hover:opacity-90"
+                className="hover:opacity-90"
               >
-                {n.actor_full_name?.[0]?.toUpperCase() || n.actor_username?.[0]?.toUpperCase() || "U"}
+                <AvatarCircle
+                  src={n.actor_avatar_url}
+                  fallback={n.actor_full_name || n.actor_username || "U"}
+                  className="w-10 h-10 flex items-center justify-center text-sm font-semibold"
+                />
               </Link>
               <div className="space-y-1 flex-1">
                 <p className="text-white font-semibold">
