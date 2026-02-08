@@ -8,6 +8,8 @@ import (
 	"sduthreads/internal/auth"
 	"sduthreads/internal/dto"
 	"sduthreads/internal/service"
+
+	"github.com/google/uuid"
 )
 
 type FollowHandler struct {
@@ -113,16 +115,16 @@ func (h *FollowHandler) handleFollowing(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, idStr string) {
-	var userID string
+	var userKey string
 	if idStr == "me" {
 		id, err := requireUserID(r, h.jwt)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		userID = id
+		userKey = id
 	} else {
-		userID = idStr
+		userKey = idStr
 	}
 
 	var viewerID *string
@@ -132,27 +134,37 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 
 	switch r.Method {
 	case http.MethodGet:
-		p, err := h.profile.Get(r.Context(), userID, viewerID)
-		if err != nil {
-			// try username fallback
-			if pu, err2 := h.profile.GetByUsername(r.Context(), userID, viewerID); err2 == nil {
-				writeJSON(w, http.StatusOK, pu)
+		// ✅ decide route BEFORE hitting DB
+		if _, err := uuid.Parse(userKey); err == nil {
+			p, err := h.profile.Get(r.Context(), userKey, viewerID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err.Error())
 				return
 			}
+			writeJSON(w, http.StatusOK, p)
+			return
+		}
+
+		// not a UUID => treat as username
+		p, err := h.profile.GetByUsername(r.Context(), userKey, viewerID)
+		if err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
+
 	case http.MethodPatch:
 		currentID, err := requireUserID(r, h.jwt)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		if userID != "me" && userID != currentID {
+		// IMPORTANT: PATCH should only allow "me" or UUID of current user; username PATCH is ambiguous
+		if idStr != "me" && userKey != currentID {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+
 		var req dto.UpdateProfileRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -164,6 +176,7 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
+
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
