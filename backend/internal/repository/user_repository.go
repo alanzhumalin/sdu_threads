@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"gorm.io/gorm"
 	"sduthreads/internal/models"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type UserRepository struct {
@@ -37,6 +39,9 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 }
 
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var u models.User
 	if err := r.db.WithContext(ctx).First(&u, "id = ?", id).Error; err != nil {
 		return nil, err
