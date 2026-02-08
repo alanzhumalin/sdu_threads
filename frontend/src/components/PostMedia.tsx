@@ -107,14 +107,14 @@ export function PostMedia({ media, className }: Props) {
           aspectStr(it)
             ? {
                 aspectRatio: aspectStr(it),
-                ...(maxHeight ? { maxHeight } : {}),
+                ...(maxHeight ? { maxHeight, height: maxHeight } : {}),
               }
             : maxHeight
               ? { maxHeight }
               : undefined
         }
       >
-        {tile(it, 0, undefined, { fit: "contain" })}
+        {tile(it, 0, undefined, { fit: isPortrait ? "contain" : "cover" })}
       </div>
     );
   } else if (items.length === 2) {

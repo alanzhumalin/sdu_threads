@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -68,6 +69,12 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	topUsersHandler := handler.NewTopUsersHandler(followService)
 	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
 	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr)
+	adminHandler := handler.NewAdminHandler(client.DB, userRepo, postRepo, profileService, postService, jwtMgr)
+	moderationHandler := handler.NewModerationHandler(userRepo, postRepo, postService, reportService, jwtMgr)
+
+	if err := service.EnsureAdminUser(context.Background(), userRepo, cfg.AdminEmail, cfg.AdminPassword, cfg.AdminUsername, cfg.AdminFullName); err != nil {
+		log.Printf("admin bootstrap: %v", err)
+	}
 
 	// handlers
 	handler.NewHealthHandler().Register(mux)
@@ -82,6 +89,8 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	topUsersHandler.Register(mux)
 	reportHandler.Register(mux)
 	mediaHandler.Register(mux)
+	adminHandler.Register(mux)
+	moderationHandler.Register(mux)
 
 	// path-aware rate limiting: stricter for auth endpoints
 	pathLimiter := middleware.NewPathRateLimiter(cfg.RateLimitRPM, map[string]int{

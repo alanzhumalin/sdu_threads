@@ -28,6 +28,8 @@ CREATE TABLE users (
     username text NOT NULL UNIQUE,
     full_name text NOT NULL,
     password_hash text NOT NULL,
+    role text NOT NULL DEFAULT 'user',
+    is_root_admin boolean NOT NULL DEFAULT 0,
     bio text,
     avatar_url text,
     background_url text,

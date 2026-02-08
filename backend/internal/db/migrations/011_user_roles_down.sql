@@ -1,0 +1,10 @@
+DO $$
+BEGIN
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+EXCEPTION
+    WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE users
+DROP COLUMN IF EXISTS role;
+

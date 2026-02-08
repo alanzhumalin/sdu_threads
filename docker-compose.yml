@@ -32,6 +32,16 @@ services:
       APP_ENV: ${APP_ENV:-development}
       APP_PORT: ${APP_PORT:-8080}
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-sdu_user}:${POSTGRES_PASSWORD:-sdu_pass}@db:5432/${POSTGRES_DB:-sdu_db}?sslmode=disable}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-24}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-120}
+      VIEW_TTL_MIN: ${VIEW_TTL_MIN:-15}
+      
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_FULL_NAME: ${ADMIN_FULL_NAME:-}
+
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-}

@@ -9,6 +9,9 @@ import ProfileUserPage from "./ProfileUser";
 import SearchPage from "./Search";
 import NotificationsPage from "./Notifications";
 import PostPermalinkPage from "./PostPermalink";
+import AdminPage from "./Admin";
+import ModerationPage from "./Moderation";
+import ModerationReportsPage from "./ModerationReports";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 import { useNotificationStore } from "../store/notifications";
@@ -156,6 +159,30 @@ export default function App() {
               element={
                 <Protected>
                   <PostPermalinkPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <Protected>
+                  <AdminPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/moderation"
+              element={
+                <Protected>
+                  <ModerationPage />
+                </Protected>
+              }
+            />
+            <Route
+              path="/moderation/reports"
+              element={
+                <Protected>
+                  <ModerationReportsPage />
                 </Protected>
               }
             />

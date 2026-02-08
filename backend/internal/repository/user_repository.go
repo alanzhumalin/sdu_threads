@@ -60,6 +60,41 @@ func (r *UserRepository) Search(ctx context.Context, q string, limit, offset int
 	return users, err
 }
 
+// SearchAdmin searches users by username/full_name and also by email/id (without returning email).
+// Optionally excludes the bootstrap/root admin user from results.
+func (r *UserRepository) SearchAdmin(ctx context.Context, q string, limit, offset int, excludeRoot bool) ([]models.User, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	q = strings.TrimSpace(q)
+	var users []models.User
+
+	db := r.db.WithContext(ctx).Model(&models.User{})
+	if excludeRoot {
+		db = db.Where("is_root_admin = false")
+	}
+	if q == "" {
+		err := db.Order("created_at DESC").Limit(limit).Offset(offset).Find(&users).Error
+		return users, err
+	}
+
+	like := "%" + q + "%"
+	// Avoid invalid UUID cast errors by checking shape before using id equality.
+	isUUIDish := len(q) == 36 && strings.Count(q, "-") == 4
+	if isUUIDish {
+		db = db.Where("id = ? OR username ILIKE ? OR full_name ILIKE ? OR email ILIKE ?", q, like, like, like)
+	} else {
+		db = db.Where("username ILIKE ? OR full_name ILIKE ? OR email ILIKE ?", like, like, like)
+	}
+
+	err := db.Order("created_at DESC").Limit(limit).Offset(offset).Find(&users).Error
+	return users, err
+}
+
 func (r *UserRepository) UpdateProfile(ctx context.Context, id string, fields map[string]interface{}) error {
 	if len(fields) == 0 {
 		return nil
@@ -68,6 +103,24 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, id string, fields ma
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Updates(fields).Error
+}
+
+func (r *UserRepository) UpdateRole(ctx context.Context, id string, role string) error {
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("role", role).Error
+}
+
+func (r *UserRepository) SetRootAdmin(ctx context.Context, id string, isRoot bool) error {
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("is_root_admin", isRoot).Error
 }
 
 // ExistingUsernames returns a set of usernames that exist in DB (case-insensitive exact match).

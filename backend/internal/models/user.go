@@ -8,6 +8,8 @@ type User struct {
 	Username        string `gorm:"uniqueIndex;not null"`
 	FullName        string `gorm:"not null"`
 	PasswordHash    string `gorm:"not null"`
+	Role            string `gorm:"not null;default:user"`
+	IsRootAdmin     bool   `gorm:"not null;default:false"`
 	Bio             string
 	AvatarURL       string
 	BackgroundURL   string

@@ -20,8 +20,12 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
   const raw = (msg || "").trim();
   const lower = raw.toLowerCase();
 
-  if (status === 401 || status === 403 || code === "UNAUTHORIZED") {
+  if (status === 401 || code === "UNAUTHORIZED") {
     return "Сессия истекла. Войдите снова.";
+  }
+
+  if (status === 403 || code === "FORBIDDEN") {
+    return "Недостаточно прав для этого действия.";
   }
 
   if (status === 429 || code === "RATE_LIMIT") {
@@ -120,7 +124,7 @@ async function request<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     if (!redirecting) {
       redirecting = true;
       try {
@@ -136,6 +140,7 @@ async function request<T>(
     const { message, code, retryAfterSeconds } = await readError(res);
     const err: any = new Error(normalizeBackendMessage(message, res.status, code));
     if (code) err.code = code;
+    err.status = res.status;
     if (typeof retryAfterSeconds === "number") err.retry_after_seconds = retryAfterSeconds;
     throw err;
   }
@@ -162,7 +167,7 @@ async function requestWithHeaders<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     if (!redirecting) {
       redirecting = true;
       try {
@@ -178,6 +183,7 @@ async function requestWithHeaders<T>(
     const { message, code, retryAfterSeconds } = await readError(res);
     const err: any = new Error(normalizeBackendMessage(message, res.status, code));
     if (code) err.code = code;
+    err.status = res.status;
     if (typeof retryAfterSeconds === "number") err.retry_after_seconds = retryAfterSeconds;
     throw err;
   }
@@ -203,7 +209,7 @@ async function requestForm<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     if (!redirecting) {
       redirecting = true;
       try {
@@ -659,4 +665,117 @@ export const api = {
     payload: { target_type: "post" | "user"; target_id: string; reason: string; details?: string },
     token?: string | null
   ) => request<{ status: string; id?: string }>(`/reports`, "POST", payload, token),
+
+  adminStats: (token?: string | null) =>
+    request<{
+      users_count: number;
+      posts_count: number;
+      active_users_15m: number;
+      generated_at?: string;
+    }>(`/admin/stats`, "GET", undefined, token),
+  adminMe: (token?: string | null) =>
+    request<{ role: string; is_root_admin: boolean }>(`/admin/me`, "GET", undefined, token),
+  adminUsers: (query = "", limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<
+      {
+        id: string;
+        username: string;
+        full_name: string;
+        avatar_url?: string;
+        role: string;
+        created_at: string;
+      }[]
+    >(
+      `/admin/users?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  adminUser: (idOrUsername: string, token?: string | null) =>
+    request<{ profile: any; role: string }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}`,
+      "GET",
+      undefined,
+      token
+    ),
+  adminUserPosts: (idOrUsername: string, limit = 20, offset = 0, query = "", token?: string | null) =>
+    requestWithHeaders<any[]>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}/posts?query=${encodeURIComponent(
+        query
+      )}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  adminSetUserRole: (idOrUsername: string, role: "user" | "moderator" | "admin", token: string) =>
+    request<{ status: string }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}/role`,
+      "PATCH",
+      { role },
+      token
+    ),
+  adminRemovePost: (postId: string, reason: string | undefined, token: string) =>
+    request<{ status: string }>(
+      `/admin/posts/${encodeURIComponent(postId)}/remove`,
+      "POST",
+      { reason },
+      token
+    ),
+
+  moderationPosts: (query = "", limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<any[]>(
+      `/moderation/posts?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  moderationRemovePost: (postId: string, reason: string | undefined, token: string) =>
+    request<{ status: string }>(
+      `/moderation/posts/${encodeURIComponent(postId)}/remove`,
+      "POST",
+      { reason },
+      token
+    ),
+
+  moderationReports: (
+    status: "open" | "resolved" | "rejected",
+    query = "",
+    limit = 20,
+    offset = 0,
+    token?: string | null
+  ) =>
+    requestWithHeaders<any[]>(
+      `/moderation/reports?status=${encodeURIComponent(status)}&query=${encodeURIComponent(
+        query
+      )}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  moderationReport: (id: string, token?: string | null) =>
+    request<any>(`/moderation/reports/${encodeURIComponent(id)}`, "GET", undefined, token),
+  moderationResolveReport: (
+    id: string,
+    status: "resolved" | "rejected",
+    note: string | undefined,
+    token: string
+  ) =>
+    request<{ status: string }>(
+      `/moderation/reports/${encodeURIComponent(id)}/resolve`,
+      "POST",
+      { status, note },
+      token
+    ),
 };

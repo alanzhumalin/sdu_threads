@@ -14,6 +14,12 @@ type Config struct {
 	RateLimitRPM int
 	ViewTTLMin   int
 
+	// Bootstrap admin (created on backend start if not exists).
+	AdminEmail    string
+	AdminPassword string
+	AdminUsername string
+	AdminFullName string
+
 	// S3-compatible media storage (MinIO/Ceph/Swift gateway).
 	S3Endpoint      string
 	S3Region        string
@@ -36,6 +42,11 @@ func Load() Config {
 		JWTTTLHours:  getEnvInt("JWT_TTL_HOURS", 24),
 		RateLimitRPM: getEnvInt("RATE_LIMIT_RPM", 120),
 		ViewTTLMin:   getEnvInt("VIEW_TTL_MIN", 15),
+
+		AdminEmail:    getEnv("ADMIN_EMAIL", ""),
+		AdminPassword: getEnv("ADMIN_PASSWORD", ""),
+		AdminUsername: getEnv("ADMIN_USERNAME", ""),
+		AdminFullName: getEnv("ADMIN_FULL_NAME", ""),
 
 		S3Endpoint:      getEnv("S3_ENDPOINT", ""),
 		S3Region:        getEnv("S3_REGION", "us-east-1"),

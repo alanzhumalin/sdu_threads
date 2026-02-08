@@ -25,8 +25,8 @@ func TestCommentRepositoryLikedByMe(t *testing.T) {
 	db := newTestDB(t)
 	// schema
 	// seed
-	db.Exec(`CREATE TABLE users (id text primary key, username text, full_name text, avatar_url text, email text, password_hash text, created_at text, updated_at text)`)
-	db.Exec(`CREATE TABLE posts (id text primary key, user_id text, content text, media_url text, view_count integer default 0, created_at text, updated_at text)`)
+	db.Exec(`CREATE TABLE users (id text primary key, username text, full_name text, avatar_url text, email text, password_hash text, role text default 'user', created_at text, updated_at text)`)
+	db.Exec(`CREATE TABLE posts (id text primary key, user_id text, content text, media_url text, view_count integer default 0, removed_at text, created_at text, updated_at text)`)
 	db.Exec(`CREATE TABLE comments (id text primary key, post_id text, user_id text, body text, reply_to_comment_id text, created_at text, updated_at text)`)
 	db.Exec(`CREATE TABLE comment_likes (id text primary key, comment_id text, user_id text)`)
 	db.Exec(`INSERT INTO users (id, username, full_name, email, password_hash) VALUES ('u1','u1','U One','1@sdu.edu.kz','x')`)
@@ -63,8 +63,8 @@ func TestFollowRepositoryCounts(t *testing.T) {
 
 func TestHashtagRepositoryByPost(t *testing.T) {
 	db := newTestDB(t)
-	db.Exec(`CREATE TABLE users (id text primary key, username text, full_name text, avatar_url text, email text, password_hash text)`)
-	db.Exec(`CREATE TABLE posts (id text primary key, user_id text, content text, media_url text, view_count integer default 0, created_at text, updated_at text)`)
+	db.Exec(`CREATE TABLE users (id text primary key, username text, full_name text, avatar_url text, email text, password_hash text, role text default 'user')`)
+	db.Exec(`CREATE TABLE posts (id text primary key, user_id text, content text, media_url text, view_count integer default 0, removed_at text, created_at text, updated_at text)`)
 	db.Exec(`CREATE TABLE comments (id text primary key, post_id text, user_id text, body text, reply_to_comment_id text, created_at text, updated_at text)`)
 	db.Exec(`CREATE TABLE hashtags (id text primary key, name text unique)`)
 	db.Exec(`CREATE TABLE post_hashtags (id text primary key, post_id text, hashtag_id text)`)

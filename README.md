@@ -70,6 +70,9 @@ Create `.env` from `.env.example` before running locally. Key values:
 - `DATABASE_URL` — Postgres connection string used by the backend.
 - `JWT_SECRET`, `JWT_TTL_HOURS` — ключ и срок жизни JWT (по умолчанию 24ч).
 - `RATE_LIMIT_RPM` — лимит запросов в минуту на IP (по умолчанию 120).
+- `ADMIN_*` — (опционально) bootstrap admin пользователя (создаётся при старте backend, если не существует):
+  - `ADMIN_EMAIL`, `ADMIN_PASSWORD`
+  - `ADMIN_USERNAME`, `ADMIN_FULL_NAME` (необязательно)
 - `S3_*` — (опционально) S3-совместимое хранилище для медиа (посты/аватар/фон):
   - `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`
   - `S3_ACCESS_KEY`, `S3_SECRET_KEY`

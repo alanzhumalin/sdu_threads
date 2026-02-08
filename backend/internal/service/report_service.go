@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"sduthreads/internal/dto"
 	"sduthreads/internal/repository"
 )
 
@@ -65,4 +66,82 @@ func (s *ReportService) Create(ctx context.Context, reporterID string, targetTyp
 	}
 
 	return s.reports.Create(ctx, reporterID, postID, userID, reason, details)
+}
+
+func (s *ReportService) ListModeration(ctx context.Context, status, query string, limit, offset int) ([]dto.ModerationReportItem, error) {
+	rows, err := s.reports.ListModeration(ctx, status, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]dto.ModerationReportItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, dto.ModerationReportItem{
+			ID:                  r.ID,
+			ReporterID:          r.ReporterID,
+			ReporterUsername:    r.ReporterUsername,
+			ReporterFullName:    r.ReporterFullName,
+			ReporterAvatarURL:   r.ReporterAvatarURL,
+			TargetType:          r.TargetType,
+			PostID:              r.PostID,
+			PostStatus:          r.PostStatus,
+			PostContent:         r.PostContent,
+			PostAuthorID:        r.PostAuthorID,
+			PostAuthorUsername:  r.PostAuthorUsername,
+			PostAuthorFullName:  r.PostAuthorFullName,
+			PostAuthorAvatarURL: r.PostAuthorAvatarURL,
+			PostRemovedAt:       r.PostRemovedAt,
+			TargetUserID:        r.TargetUserID,
+			TargetUsername:      r.TargetUsername,
+			TargetFullName:      r.TargetFullName,
+			TargetAvatarURL:     r.TargetAvatarURL,
+			Reason:              r.Reason,
+			Details:             r.Details,
+			Status:              r.Status,
+			CreatedAt:           r.CreatedAt,
+			ResolvedBy:          r.ResolvedBy,
+			ResolvedAt:          r.ResolvedAt,
+			ResolutionNote:      r.ResolutionNote,
+		})
+	}
+	return out, nil
+}
+
+func (s *ReportService) GetModeration(ctx context.Context, id string) (*dto.ModerationReportItem, error) {
+	r, err := s.reports.GetModeration(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := &dto.ModerationReportItem{
+		ID:                  r.ID,
+		ReporterID:          r.ReporterID,
+		ReporterUsername:    r.ReporterUsername,
+		ReporterFullName:    r.ReporterFullName,
+		ReporterAvatarURL:   r.ReporterAvatarURL,
+		TargetType:          r.TargetType,
+		PostID:              r.PostID,
+		PostStatus:          r.PostStatus,
+		PostContent:         r.PostContent,
+		PostAuthorID:        r.PostAuthorID,
+		PostAuthorUsername:  r.PostAuthorUsername,
+		PostAuthorFullName:  r.PostAuthorFullName,
+		PostAuthorAvatarURL: r.PostAuthorAvatarURL,
+		PostRemovedAt:       r.PostRemovedAt,
+		TargetUserID:        r.TargetUserID,
+		TargetUsername:      r.TargetUsername,
+		TargetFullName:      r.TargetFullName,
+		TargetAvatarURL:     r.TargetAvatarURL,
+		Reason:              r.Reason,
+		Details:             r.Details,
+		Status:              r.Status,
+		CreatedAt:           r.CreatedAt,
+		ResolvedBy:          r.ResolvedBy,
+		ResolvedAt:          r.ResolvedAt,
+		ResolutionNote:      r.ResolutionNote,
+	}
+	return out, nil
+}
+
+func (s *ReportService) ResolveModeration(ctx context.Context, reportID, resolverID, status, note string) error {
+	return s.reports.Resolve(ctx, reportID, resolverID, status, note)
 }

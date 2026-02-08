@@ -86,6 +86,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
+WHERE p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
@@ -107,6 +108,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
+WHERE p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	}
@@ -155,6 +157,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
+WHERE p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
@@ -177,11 +180,103 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
+WHERE p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, followerID, viewer, limit, offset).Scan(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *PostRepository) ModerationFeed(ctx context.Context, query string, limit, offset int) ([]FeedItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	qTrim := strings.TrimSpace(query)
+	var items []FeedItem
+	sql := ""
+	args := make([]any, 0, 6)
+
+	if r.db.Dialector.Name() == "postgres" {
+		sql = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       FALSE AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+WHERE p.removed_at IS NULL`
+		if qTrim != "" {
+			pat := "%" + qTrim + "%"
+			sql += `
+  AND (
+    CAST(p.id AS TEXT) ILIKE ?
+    OR p.content ILIKE ?
+    OR u.username ILIKE ?
+    OR u.full_name ILIKE ?
+  )`
+			args = append(args, pat, pat, pat, pat)
+		}
+		sql += `
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	} else {
+		sql = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       FALSE AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+WHERE p.removed_at IS NULL`
+		if qTrim != "" {
+			pat := "%" + qTrim + "%"
+			sql += `
+  AND (
+    p.id LIKE ?
+    OR p.content LIKE ?
+    OR u.username LIKE ?
+    OR u.full_name LIKE ?
+  )`
+			args = append(args, pat, pat, pat, pat)
+		}
+		sql += `
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -220,7 +315,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
-WHERE p.id = ?
+WHERE p.id = ? AND p.removed_at IS NULL
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
@@ -241,7 +336,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
-WHERE p.id = ?
+WHERE p.id = ? AND p.removed_at IS NULL
 LIMIT ? OFFSET ?`
 	}
 
@@ -257,13 +352,13 @@ LIMIT ? OFFSET ?`
 func (r *PostRepository) Exists(ctx context.Context, postID string) (bool, error) {
 	var exists bool
 	err := r.db.WithContext(ctx).
-		Raw(`SELECT EXISTS (SELECT 1 FROM posts WHERE id = ?)`, postID).
+		Raw(`SELECT EXISTS (SELECT 1 FROM posts WHERE id = ? AND removed_at IS NULL)`, postID).
 		Scan(&exists).Error
 	return exists, err
 }
 
 func (r *PostRepository) IncrementView(ctx context.Context, postID string) error {
-	return r.db.WithContext(ctx).Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ?`, postID).Error
+	return r.db.WithContext(ctx).Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ? AND removed_at IS NULL`, postID).Error
 }
 
 func (r *PostRepository) AddViewOnce(ctx context.Context, postID, userID string, windowStart time.Time) error {
@@ -277,7 +372,7 @@ func (r *PostRepository) AddViewOnce(ctx context.Context, postID, userID string,
 	if res.RowsAffected == 0 {
 		return nil
 	}
-	return tx.Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ?`, postID).Error
+	return tx.Exec(`UPDATE posts SET view_count = view_count + 1 WHERE id = ? AND removed_at IS NULL`, postID).Error
 }
 
 func (r *PostRepository) ByUser(ctx context.Context, userID string, limit, offset int, viewerID *string) ([]FeedItem, error) {
@@ -317,7 +412,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
-WHERE p.user_id = ?
+WHERE p.user_id = ? AND p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
@@ -339,12 +434,90 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
 ) lb ON lb.post_id = p.id
-WHERE p.user_id = ?
+WHERE p.user_id = ? AND p.removed_at IS NULL
 ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	}
 
 	if err := r.db.WithContext(ctx).Raw(q, viewerPresent, viewer, userID, limit, offset).Scan(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *PostRepository) ByUserQuery(ctx context.Context, userID, query string, limit, offset int, viewerID *string) ([]FeedItem, error) {
+	qTrim := strings.TrimSpace(query)
+	if qTrim == "" {
+		return r.ByUser(ctx, userID, limit, offset, viewerID)
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	viewerPresent, viewer := viewerArgs(viewerID)
+	pat := "%" + qTrim + "%"
+
+	var items []FeedItem
+	sql := ""
+	if r.db.Dialector.Name() == "postgres" {
+		sql = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id,
+           json_agg(json_build_object('url', url, 'width', width, 'height', height) ORDER BY sort_order) AS media
+    FROM post_media
+    GROUP BY post_id
+) pm ON pm.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+WHERE p.user_id = ? AND p.removed_at IS NULL
+  AND (CAST(p.id AS TEXT) ILIKE ? OR p.content ILIKE ?)
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	} else {
+		sql = `
+SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+       NULL AS media,
+       p.view_count, p.created_at, p.updated_at,
+       COALESCE(l.likes, 0) AS like_count,
+       COALESCE(c.comments, 0) AS comment_count,
+       CASE WHEN ? = false THEN false ELSE COALESCE(lb.liked, false) END AS liked_by_me
+FROM posts p
+JOIN users u ON u.id = p.user_id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS likes FROM likes GROUP BY post_id
+) l ON l.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
+) c ON c.post_id = p.id
+LEFT JOIN (
+    SELECT post_id, TRUE AS liked FROM likes WHERE user_id = ?
+) lb ON lb.post_id = p.id
+WHERE p.user_id = ? AND p.removed_at IS NULL
+  AND (p.id LIKE ? OR p.content LIKE ?)
+ORDER BY p.created_at DESC
+LIMIT ? OFFSET ?`
+	}
+
+	if err := r.db.WithContext(ctx).Raw(sql, viewerPresent, viewer, userID, pat, pat, limit, offset).Scan(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -369,7 +542,7 @@ WITH ids AS (
     FROM posts p
     LEFT JOIN post_hashtags ph ON ph.post_id = p.id
     LEFT JOIN hashtags h ON h.id = ph.hashtag_id
-    WHERE h.name = ? OR LOWER(p.content) LIKE ?
+    WHERE p.removed_at IS NULL AND (h.name = ? OR LOWER(p.content) LIKE ?)
 )
 SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
@@ -405,7 +578,7 @@ WITH ids AS (
     FROM posts p
     LEFT JOIN post_hashtags ph ON ph.post_id = p.id
     LEFT JOIN hashtags h ON h.id = ph.hashtag_id
-    WHERE h.name = ? OR LOWER(p.content) LIKE ?
+    WHERE p.removed_at IS NULL AND (h.name = ? OR LOWER(p.content) LIKE ?)
 )
 SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
        NULL AS media,
@@ -469,7 +642,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
 ) c ON c.post_id = p.id
-WHERE li.user_id = ?
+WHERE li.user_id = ? AND p.removed_at IS NULL
 ORDER BY li.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
@@ -489,7 +662,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT post_id, COUNT(*) AS comments FROM comments GROUP BY post_id
 ) c ON c.post_id = p.id
-WHERE li.user_id = ?
+WHERE li.user_id = ? AND p.removed_at IS NULL
 ORDER BY li.created_at DESC
 LIMIT ? OFFSET ?`
 	}
@@ -498,4 +671,23 @@ LIMIT ? OFFSET ?`
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *PostRepository) Remove(ctx context.Context, postID, removedBy, reason string) error {
+	reason = strings.TrimSpace(reason)
+	var rr any
+	if reason != "" {
+		rr = reason
+	}
+	res := r.db.WithContext(ctx).Exec(
+		`UPDATE posts SET removed_at = now(), removed_by = ?, removed_reason = ? WHERE id = ? AND removed_at IS NULL`,
+		removedBy, rr, postID,
+	)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

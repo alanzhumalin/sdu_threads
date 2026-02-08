@@ -32,6 +32,9 @@ func (s *UserService) Create(ctx context.Context, input models.User) (*models.Us
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	input.Username = strings.TrimSpace(strings.ToLower(input.Username))
 	input.FullName = strings.TrimSpace(input.FullName)
+	if strings.TrimSpace(input.Role) == "" {
+		input.Role = "user"
+	}
 
 	if input.Email == "" || input.Username == "" || input.FullName == "" {
 		return nil, errors.New("email, username and full_name are required")
