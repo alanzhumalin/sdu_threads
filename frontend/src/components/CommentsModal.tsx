@@ -187,6 +187,13 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const commentsSectionRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const commentRefs = useRef<Record<string, HTMLElement | null>>({});
+  const inFlightRef = useRef(false);
+  const offsetRef = useRef(0);
+
+  useEffect(() => {
+    offsetRef.current = offset;
+  }, [offset]);
+  
   const [cursor, setCursor] = useState(0);
   const [activeTag, setActiveTag] = useState<{ start: number; end: number; query: string } | null>(null);
   const [activeMention, setActiveMention] = useState<{ start: number; end: number; query: string } | null>(null);
@@ -243,32 +250,46 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   }, [body]);
 
   const load = async (append = false) => {
-    if (loading || loadingMore) return;
+
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+
     if (append) setLoadingMore(true);
     else setLoading(true);
+
     try {
-      const data = await api.listComments(post.id, PAGE, append ? offset : 0, token);
-      setComments((prev) => (append ? [...prev, ...data] : data));
+      const reqOffset = append ? offsetRef.current : 0;   // ✅ всегда актуально
+      const data = await api.listComments(post.id, PAGE, reqOffset, token);
+
+      setComments((prev) => {
+        const merged = append ? [...prev, ...data] : data;
+
+        // ✅ (по желанию) дедуп по id на всякий случай
+        const seen = new Set<string>();
+        return merged.filter((c) => (seen.has(c.id) ? false : (seen.add(c.id), true)));
+      });
+
       setReplies((prev) => {
         const next = { ...prev };
-        (append ? data : data).forEach((c) => {
+        data.forEach((c) => {
           const total = typeof c.replies_count === "number" ? c.replies_count : c.replies?.length ?? 0;
-          next[c.id] = {
-            items: c.replies || [],
-            offset: c.replies?.length || 0,
-            total,
-            loading: false,
-          };
+          next[c.id] = { items: c.replies || [], offset: c.replies?.length || 0, total, loading: false };
         });
         return next;
       });
-      if (append) setOffset((o) => o + data.length);
-      else setOffset(data.length);
+
+      if (append) {
+        setOffset((o) => o + data.length);
+      } else {
+        setOffset(data.length);
+      }
+
       setHasMore(data.length === PAGE);
       setError("");
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить комментарии");
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
