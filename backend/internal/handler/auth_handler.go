@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"sduthreads/internal/dto"
@@ -64,16 +65,31 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+
 	var req dto.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	token, err := h.auth.Login(r.Context(), req.Login, req.Password)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
+	identifier := strings.TrimSpace(req.Login)
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Username)
+	}
+	if identifier == "" {
+		identifier = strings.TrimSpace(req.Email)
+	}
+
+	if identifier == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "login and password are required")
 		return
 	}
+
+	token, err := h.auth.Login(r.Context(), identifier, req.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, dto.AuthResponse{Token: token})
 }
