@@ -19,6 +19,82 @@ services:
     networks:
       - app
 
+  db_restore:
+    image: postgres:16-alpine
+    container_name: sdu-db-restore
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-sdu_user}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-sdu_pass}
+      PGDATABASE: ${POSTGRES_DB:-sdu_db}
+    volumes:
+      - ./:/host:ro
+    command: >
+      sh -ec '
+        echo "[db_restore] waiting for postgres...";
+        until pg_isready -h "$$PGHOST" -p "$$PGPORT" -U "$$PGUSER" -d "$$PGDATABASE"; do sleep 1; done;
+
+        DUMP="/host/db.dump";
+        if [ ! -s "$$DUMP" ]; then
+          echo "[db_restore] no /host/db.dump found, skipping restore";
+          exit 0;
+        fi;
+
+        TABLES="$$(psql -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='\''public'\'';" | tr -d "[:space:]")";
+        if [ "$$TABLES" != "0" ]; then
+          echo "[db_restore] DB is not empty (public tables: $$TABLES), skipping restore";
+          exit 0;
+        fi;
+
+        echo "[db_restore] restoring from $$DUMP";
+        pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error -d "$$PGDATABASE" "$$DUMP";
+        echo "[db_restore] restore done";
+      '
+    networks:
+      - app
+
+  db_backup:
+    image: postgres:16-alpine
+    container_name: sdu-db-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      db_restore:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-sdu_user}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-sdu_pass}
+      PGDATABASE: ${POSTGRES_DB:-sdu_db}
+    volumes:
+      - ./:/host:rw
+    command: >
+      sh -ec '
+        umask 022;
+        echo "[db_backup] waiting for postgres...";
+        until pg_isready -h "$$PGHOST" -p "$$PGPORT" -U "$$PGUSER" -d "$$PGDATABASE"; do sleep 1; done;
+
+        while true; do
+          echo "[db_backup] sleeping 3600s...";
+          sleep 3600;
+
+          echo "[db_backup] creating /host/db.dump";
+          pg_dump -Fc -d "$$PGDATABASE" -f /host/db.dump.tmp;
+          mv /host/db.dump.tmp /host/db.dump;
+          chmod 0644 /host/db.dump || true;
+          echo "[db_backup] dump updated";
+        done
+      '
+    networks:
+      - app
+
   backend:
     build:
       context: ./backend
@@ -28,6 +104,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      db_restore:
+        condition: service_completed_successfully
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_PORT: ${APP_PORT:-8080}
@@ -66,9 +144,11 @@ services:
       - backend
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - nginx_cache:/var/cache/nginx
       - nginx_logs:/var/log/nginx
+      - ./nginx/certs:/etc/nginx/certs:rw
     networks:
       - app
 

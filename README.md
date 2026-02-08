@@ -100,6 +100,19 @@ Create `.env` from `.env.example` before running locally. Key values:
 docker compose up --build
 ```
 
+## DB backup/restore (db.dump)
+- Каждые 60 минут автоматически создаётся дамп Postgres в формате `.dump` (pg_dump custom) в файле `db.dump` в корне репозитория.
+- При старте проекта, если `db.dump` существует и база данных пустая, данные автоматически восстанавливаются из `db.dump`.
+- Если нужно восстановить `db.dump` на новом сервере: положите `db.dump` в корень проекта и запустите `docker compose down -v && docker compose up --build`.
+
+## Cloudflare + HTTPS (Origin Certificate)
+- Nginx слушает `80` и `443`. Для production за Cloudflare используйте режим SSL/TLS `Full (strict)`.
+- Сгенерируйте в Cloudflare `Origin Certificate` и положите файлы:
+  - `nginx/certs/cert.pem`
+  - `nginx/certs/key.pem`
+- Эти файлы игнорируются git и монтируются в контейнер Nginx в `/etc/nginx/certs`.
+- Для локальной разработки, если сертификаты не заданы, Nginx автоматически генерирует self-signed сертификат.
+
 ## Frontend build (Dockerfile)
 Сборка фронта теперь в образе Nginx (multi-stage). Команда:
 ```bash

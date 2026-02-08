@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 import { useNotificationStore } from "../store/notifications";
+import telegramIconUrl from "../assets/telegram.png";
 
 type NavItem = { label: string; path: string; icon: string };
 
@@ -23,6 +24,15 @@ const icons: Record<string, JSX.Element> = {
   feed: <Home size={22} strokeWidth={1.7} />,
   search: <Search size={22} strokeWidth={1.7} />,
   bell: <Bell size={22} strokeWidth={1.7} />,
+  telegram: (
+    <img
+      src={telegramIconUrl}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className="w-full h-full object-cover block"
+    />
+  ),
   user: <User size={22} strokeWidth={1.7} />,
   login: <LogIn size={22} strokeWidth={1.7} />,
   "user-plus": <UserPlus size={22} strokeWidth={1.7} />,
@@ -34,6 +44,7 @@ const icons: Record<string, JSX.Element> = {
 export default function Navigation({ items, onClick, activePath }: Props) {
   const navRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const mobileItems = items.filter((i) => i.icon !== "telegram");
 
   return (
     <>
@@ -52,7 +63,9 @@ export default function Navigation({ items, onClick, activePath }: Props) {
                 ? "danger"
                 : activePath === item.path
                   ? "active"
-                  : "sidebar-pill hover:border-white/30 hover:bg-white/10"
+                  : item.icon === "telegram"
+                    ? "sidebar-pill hover:border-white/30"
+                    : "sidebar-pill hover:border-white/30 hover:bg-white/10"
             }`}
             title={item.label}
           >
@@ -80,7 +93,7 @@ export default function Navigation({ items, onClick, activePath }: Props) {
       <nav
         className="min-[871px]:hidden fixed bottom-0 left-0 right-0 z-[120] border-t border-white/10 bg-black/90 backdrop-blur px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] flex justify-around"
       >
-        {items.map((item) => (
+        {mobileItems.map((item) => (
           <button
             key={item.path}
             onClick={() => onClick(item.path)}

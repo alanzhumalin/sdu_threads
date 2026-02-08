@@ -49,6 +49,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
+  const telegramChannelUrl = "https://t.me/+DGppZq0WZipkNDEy";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
   // We still rely on backend 401/403 for security.
@@ -85,6 +86,7 @@ export default function App() {
     { label: "Лента", path: "/" , icon: "feed"},
     { label: "Поиск", path: "/search", icon: "search"},
     { label: "Уведомления", path: "/notifications", icon: "bell"},
+    { label: "Telegram", path: telegramChannelUrl, icon: "telegram" },
     { label: "Профиль", path: "/profile", icon: "user"},
     isAuthed
       ? { label: "Выйти", path: "/logout", icon: "exit" }
@@ -93,6 +95,10 @@ export default function App() {
   ].filter(Boolean) as { label: string; path: string; icon: string }[];
 
   const handleTabClick = (path: string) => {
+    if (path.startsWith("https://") || path.startsWith("http://")) {
+      window.open(path, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (path === "/logout") {
       setToken(null);
       navigate("/login");
