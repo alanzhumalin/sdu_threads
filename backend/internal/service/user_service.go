@@ -6,10 +6,9 @@ import (
 	"regexp"
 	"strings"
 
+	"gorm.io/gorm"
 	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
-
-	"gorm.io/gorm"
 )
 
 type UserService struct {
@@ -69,14 +68,4 @@ func (s *UserService) Create(ctx context.Context, input models.User) (*models.Us
 		return nil, err
 	}
 	return &input, nil
-}
-
-func (s *UserService) GetByID(ctx context.Context, id string) (*models.User, error) {
-	id = strings.TrimSpace(id)
-	return s.users.GetByID(ctx, id)
-}
-
-func (s *UserService) GetByUsername(ctx context.Context, username string) (*models.User, error) {
-	username = strings.TrimSpace(strings.ToLower(username))
-	return s.users.GetByUsername(ctx, username)
 }
