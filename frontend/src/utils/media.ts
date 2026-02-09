@@ -1,9 +1,17 @@
 export const fileToWebpIfNeeded = async (file: File): Promise<File> => {
   if (!file.type.startsWith("image/")) return file;
-  if (file.type === "image/gif") return file; // GIF не трогаем (анимация)
+  if (file.type === "image/gif") return file;
 
-  const MIN_BYTES = 100 * 1024;     
-  const MAX_BYTES = 900 * 1024;  
+  // быстрые early-exit
+  const MAX_BYTES = 900 * 1024;
+  const MIN_BYTES = 100 * 1024;
+
+  // если уже webp и размер ок — не трогаем
+  if (file.type === "image/webp" && file.size <= MAX_BYTES) return file;
+
+  // если файл уже небольшой — можно не перекодировать вообще (супер ускорение)
+  // если тебе обязательно ВСЕГДА webp — закомментируй этот блок
+  if (file.size <= MAX_BYTES && file.type !== "image/png") return file;
 
   const base = (file.name || "image").replace(/\.[^.]+$/, "");
 
@@ -31,60 +39,47 @@ export const fileToWebpIfNeeded = async (file: File): Promise<File> => {
       return canvas;
     };
 
-    const fitMaxByQuality = async (canvas: HTMLCanvasElement) => {
-      let lo = 0.45;
-      let hi = 0.92;
-      let best: Blob | null = null;
-      for (let i = 0; i < 8; i++) {
-        const mid = (lo + hi) / 2;
-        const b = await toBlob(canvas, mid);
-        if (b.size <= MAX_BYTES) {
-          best = b;
-          lo = mid;
-        } else {
-          hi = mid;
-        }
-      }
-      if (best) return best;
-      return await toBlob(canvas, lo);
-    };
-
+    // 1) первая попытка: хорошее качество
     let scale = 1.0;
     let canvas = drawScaled(scale);
+    let blob = await toBlob(canvas, 0.82);
 
-    for (let iter = 0; iter < 10; iter++) {
-      const blob = await fitMaxByQuality(canvas);
-
-      if (blob.size >= MIN_BYTES && blob.size <= MAX_BYTES) {
-        // @ts-ignore
-        bitmap.close?.();
-        return new File([blob], `${base}.webp`, { type: "image/webp" });
-      }
-
-      if (blob.size < MIN_BYTES) {
-        // маленькая картинка — просто дадим качество повыше и выходим
-        const b2 = await toBlob(canvas, 0.95);
-        // @ts-ignore
-        bitmap.close?.();
-        return new File([b2], `${base}.webp`, { type: "image/webp" });
-      }
-
-      // blob.size > MAX_BYTES: уменьшаем пиксели
-      const ratio = Math.sqrt(MAX_BYTES / blob.size) * 0.95;
-      const nextScale = Math.max(0.1, scale * Math.min(0.9, ratio));
-      if (Math.abs(nextScale - scale) < 0.02) {
-        // @ts-ignore
-        bitmap.close?.();
-        return new File([blob], `${base}.webp`, { type: "image/webp" });
-      }
-      scale = nextScale;
-      canvas = drawScaled(scale);
+    if (blob.size <= MAX_BYTES) {
+      // @ts-ignore
+      bitmap.close?.();
+      return new File([blob], `${base}.webp`, { type: "image/webp" });
     }
 
-    const fallback = await toBlob(canvas, 0.75);
+    // 2) если больше лимита — оценим нужный даунскейл по sqrt(size)
+    // size ~ area => scale ~ sqrt(target/current)
+    const ratio1 = Math.sqrt(MAX_BYTES / blob.size) * 0.95;
+    scale = Math.max(0.1, Math.min(0.98, scale * ratio1));
+    canvas = drawScaled(scale);
+    blob = await toBlob(canvas, 0.78);
+
+    if (blob.size <= MAX_BYTES) {
+      // @ts-ignore
+      bitmap.close?.();
+      return new File([blob], `${base}.webp`, { type: "image/webp" });
+    }
+
+    // 3) последняя попытка: ещё чуть меньше + качество пониже
+    const ratio2 = Math.sqrt(MAX_BYTES / blob.size) * 0.95;
+    scale = Math.max(0.1, Math.min(0.98, scale * ratio2));
+    canvas = drawScaled(scale);
+    blob = await toBlob(canvas, 0.70);
+
+    // если вдруг получилось слишком мало — можно поднять качество без ресайза (дёшево)
+    if (blob.size < MIN_BYTES) {
+      const b2 = await toBlob(canvas, 0.85);
+      // @ts-ignore
+      bitmap.close?.();
+      return new File([b2], `${base}.webp`, { type: "image/webp" });
+    }
+
     // @ts-ignore
     bitmap.close?.();
-    return new File([fallback], `${base}.webp`, { type: "image/webp" });
+    return new File([blob], `${base}.webp`, { type: "image/webp" });
   } catch {
     return file;
   }
