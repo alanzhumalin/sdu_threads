@@ -152,7 +152,7 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Compress to WebP in [100KB..1MB] (adaptive quality + downscale)
-			webpBytes, w2, h2, err := compressWebPToSizeRange(img, 10*1024, 100*1024)
+			webpBytes, w2, h2, err := compressWebPToSizeRange(img, 100*1024, 900*1024)
 			if err != nil {
 				errs <- err
 				return

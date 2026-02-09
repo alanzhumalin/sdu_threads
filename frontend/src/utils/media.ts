@@ -2,8 +2,8 @@ export const fileToWebpIfNeeded = async (file: File): Promise<File> => {
   if (!file.type.startsWith("image/")) return file;
   if (file.type === "image/gif") return file; // GIF не трогаем (анимация)
 
-  const MIN_BYTES = 10 * 1024;     
-  const MAX_BYTES = 100 * 1024;  
+  const MIN_BYTES = 100 * 1024;     
+  const MAX_BYTES = 900 * 1024;  
 
   const base = (file.name || "image").replace(/\.[^.]+$/, "");
 
