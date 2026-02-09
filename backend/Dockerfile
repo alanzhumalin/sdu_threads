@@ -3,24 +3,29 @@ ARG GO_VERSION=1.25
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /app
 
-# Install minimal tools (ca-certificates for HTTPS fetch, tzdata for logging)
-RUN apk add --no-cache ca-certificates tzdata
+# Tools + build deps for CGO + libwebp headers
+RUN apk add --no-cache \
+    ca-certificates tzdata \
+    gcc musl-dev pkgconf \
+    libwebp-dev
 
 # Download dependencies first for better layer caching
 COPY go.mod ./
-# go.sum may not exist yet in the skeleton; go mod download will create it when deps appear
-RUN go mod download || true
+COPY go.sum ./
+RUN go mod download
 
 # Copy source
 COPY . .
 
-# Build static binary for Linux (host architecture)
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/app ./cmd
+# Build Linux binary WITH CGO (needed for libwebp)
+RUN CGO_ENABLED=1 GOOS=linux go build -o /bin/app ./cmd
 
 # Runtime image
 FROM alpine:3.19
 WORKDIR /app
-RUN apk add --no-cache ca-certificates tzdata && \
+
+# Runtime deps: certs/tz + libwebp shared library
+RUN apk add --no-cache ca-certificates tzdata libwebp && \
     adduser -D -g '' appuser
 
 COPY --from=builder /bin/app /usr/local/bin/app

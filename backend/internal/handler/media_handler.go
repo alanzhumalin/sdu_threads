@@ -9,10 +9,12 @@ import (
 	_ "image/png"
 	"io"
 	"log"
-	"mime"
+	"math"
 	"net/http"
 	"strings"
 
+	"github.com/chai2010/webp"
+	"github.com/disintegration/imaging"
 	"github.com/minio/minio-go/v7"
 	_ "golang.org/x/image/webp"
 
@@ -58,7 +60,8 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 
-	// 20MB should match nginx client_max_body_size by default.
+	// NOTE: This keeps your existing 20MB request cap. If you truly want "any size",
+	// remove MaxBytesReader and bump ParseMultipartForm as you see fit.
 	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
 	if err := r.ParseMultipartForm(20 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
@@ -91,11 +94,11 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		URL    string `json:"url"`
 		Width  int    `json:"width"`
 		Height int    `json:"height"`
+		SizeKB int    `json:"size_kb,omitempty"`
 	}
 	out := make([]outItem, len(files))
 	errs := make(chan error, len(files))
 
-	// Upload in parallel; max 5 items.
 	for i := range files {
 		i := i
 		go func() {
@@ -104,24 +107,23 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errors.New("file is required")
 				return
 			}
+
+			// Sniff content type from first bytes (do not trust headers fully)
 			f, err := fh.Open()
 			if err != nil {
 				errs <- err
 				return
 			}
-			defer f.Close()
-
-			ct := strings.TrimSpace(fh.Header.Get("Content-Type"))
-			// Don't rely only on part headers: some browsers/Blob uploads omit it.
-			// Sniff a small prefix and pick a better content-type when needed.
 			head := make([]byte, 512)
 			n, _ := io.ReadFull(f, head)
+			_ = f.Close()
 			head = head[:n]
+
+			ct := strings.TrimSpace(fh.Header.Get("Content-Type"))
 			sniffed := ""
 			if n > 0 {
 				sniffed = http.DetectContentType(head)
 			}
-			cfgReader := io.MultiReader(bytes.NewReader(head), f)
 			if ct == "" || strings.EqualFold(ct, "application/octet-stream") {
 				if sniffed != "" {
 					ct = sniffed
@@ -130,59 +132,64 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Only raster images (no SVG)
 			if !strings.HasPrefix(strings.ToLower(ct), "image/") || strings.EqualFold(ct, "image/svg+xml") {
 				errs <- errors.New("only raster images are allowed")
 				return
 			}
 
-			cfg, _, err := image.DecodeConfig(cfgReader)
-			if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
-				errs <- errors.New("unsupported image format")
-				return
-			}
-
-			// Re-open to upload from the beginning (DecodeConfig consumed the reader).
-			_ = f.Close()
+			// Decode full image (supports jpeg/png/gif + webp decode because of x/image/webp import)
 			f2, err := fh.Open()
 			if err != nil {
 				errs <- err
 				return
 			}
-			defer f2.Close()
-
-			ext := ""
-			if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
-				ext = strings.TrimPrefix(exts[0], ".")
-			}
-			key := h.uploader.BuildKey(purpose, userID, ext)
-
-			url, err := h.uploader.Put(r.Context(), key, f2, fh.Size, ct)
+			img, _, err := image.Decode(f2)
+			_ = f2.Close()
 			if err != nil {
-				// Keep the response generic, but make the root cause visible in logs.
+				errs <- errors.New("unsupported image format")
+				return
+			}
+
+			// Compress to WebP in [100KB..1MB] (adaptive quality + downscale)
+			webpBytes, w2, h2, err := compressWebPToSizeRange(img, 10*1024, 100*1024)
+			if err != nil {
+				errs <- err
+				return
+			}
+
+			key := h.uploader.BuildKey(purpose, userID, "webp")
+			url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(webpBytes), int64(len(webpBytes)), "image/webp")
+			if err != nil {
+				// Keep the response generic, but make root cause visible in logs.
 				var resp minio.ErrorResponse
 				if errors.As(err, &resp) && strings.TrimSpace(resp.Code) != "" {
 					log.Printf(
-						"media upload failed: purpose=%s user_id=%s filename=%q size=%d ct=%q s3_code=%q s3_msg=%q",
+						"media upload failed: purpose=%s user_id=%s filename=%q orig_size=%d orig_ct=%q s3_code=%q s3_msg=%q",
 						purpose, userID, fh.Filename, fh.Size, ct, resp.Code, resp.Message,
 					)
 				} else {
 					log.Printf(
-						"media upload failed: purpose=%s user_id=%s filename=%q size=%d ct=%q err=%v",
+						"media upload failed: purpose=%s user_id=%s filename=%q orig_size=%d orig_ct=%q err=%v",
 						purpose, userID, fh.Filename, fh.Size, ct, err,
 					)
 				}
 				errs <- err
 				return
 			}
-			out[i] = outItem{URL: url, Width: cfg.Width, Height: cfg.Height}
+
+			out[i] = outItem{
+				URL:    url,
+				Width:  w2,
+				Height: h2,
+				SizeKB: len(webpBytes) / 1024,
+			}
 			errs <- nil
 		}()
 	}
 
 	for range files {
 		if e := <-errs; e != nil {
-			// Best-effort: the request failed; keep error generic, but return a useful code.
-			// (The full error is logged above.)
 			var resp minio.ErrorResponse
 			if errors.As(e, &resp) && strings.TrimSpace(resp.Code) != "" {
 				switch resp.Code {
@@ -216,4 +223,103 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// compressWebPToSizeRange encodes to WebP trying to fit the output size into [minBytes..maxBytes].
+// Strategy:
+//  1. try to fit <= maxBytes by decreasing quality (binary search)
+//  2. if even at low quality still too big => downscale (reduce pixel dimensions) and repeat
+func compressWebPToSizeRange(img image.Image, minBytes, maxBytes int) ([]byte, int, int, error) {
+	if minBytes <= 0 || maxBytes <= 0 || minBytes >= maxBytes {
+		return nil, 0, 0, errors.New("invalid size range")
+	}
+
+	encode := func(im image.Image, q float32) ([]byte, error) {
+		var buf bytes.Buffer
+		if err := webp.Encode(&buf, im, &webp.Options{
+			Lossless: false,
+			Quality:  q,
+		}); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+
+	scaleImage := func(src image.Image, scale float64) image.Image {
+		if scale >= 0.999 {
+			return src
+		}
+		w := int(math.Round(float64(src.Bounds().Dx()) * scale))
+		h := int(math.Round(float64(src.Bounds().Dy()) * scale))
+		if w < 1 {
+			w = 1
+		}
+		if h < 1 {
+			h = 1
+		}
+		return imaging.Resize(src, w, h, imaging.Lanczos)
+	}
+
+	qMin := float32(35)
+	qMax := float32(90)
+
+	scale := 1.0
+	cur := img
+
+	for iter := 0; iter < 12; iter++ {
+		// Fit <= maxBytes by quality (binary search)
+		lo, hi := qMin, qMax
+		var best []byte
+
+		for j := 0; j < 8; j++ {
+			mid := (lo + hi) / 2
+			b, err := encode(cur, mid)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+			if len(b) <= maxBytes {
+				best = b
+				lo = mid // try higher quality
+			} else {
+				hi = mid // too big -> lower quality
+			}
+		}
+
+		if best != nil {
+			// If it's below minBytes, we can't safely "grow" it; just return higher quality.
+			if len(best) < minBytes {
+				b, err := encode(cur, qMax)
+				if err != nil {
+					return nil, 0, 0, err
+				}
+				return b, cur.Bounds().Dx(), cur.Bounds().Dy(), nil
+			}
+			return best, cur.Bounds().Dx(), cur.Bounds().Dy(), nil
+		}
+
+		// Even at qMin it's still too large -> downscale
+		bMin, err := encode(cur, qMin)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		sz := len(bMin)
+		// Downscale based on sqrt of ratio (size ~ area)
+		ratio := math.Sqrt(float64(maxBytes)/float64(sz)) * 0.95
+		newScale := scale * math.Min(0.90, ratio)
+
+		if newScale < 0.10 {
+			// Can't reasonably downscale further; return best-effort
+			return bMin, cur.Bounds().Dx(), cur.Bounds().Dy(), nil
+		}
+
+		scale = newScale
+		cur = scaleImage(img, scale)
+	}
+
+	// Fallback
+	b, err := encode(cur, qMin)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return b, cur.Bounds().Dx(), cur.Bounds().Dy(), nil
 }

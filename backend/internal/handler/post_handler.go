@@ -45,7 +45,6 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 		}
 		media := req.Media
 		if len(media) == 0 {
-			// Backward-compatible: accept legacy urls-only payloads.
 			urls := req.MediaURLs
 			if len(urls) == 0 && strings.TrimSpace(req.MediaURL) != "" {
 				urls = []string{req.MediaURL}
