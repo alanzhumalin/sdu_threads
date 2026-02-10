@@ -6,7 +6,6 @@ import {
   Plus,
   Search,
   User,
-  UserPlus,
 } from "lucide-react";
 import { useRef } from "react";
 import { useNotificationStore } from "../store/notifications";
@@ -35,7 +34,6 @@ const icons: Record<string, JSX.Element> = {
   ),
   user: <User size={22} strokeWidth={1.7} />,
   login: <LogIn size={22} strokeWidth={1.7} />,
-  "user-plus": <UserPlus size={22} strokeWidth={1.7} />,
   exit: <LogOut size={22} strokeWidth={1.7} />,
   plus: <Plus size={22} strokeWidth={1.7} />,
   bell2: <Bell size={22} strokeWidth={1.7} />,

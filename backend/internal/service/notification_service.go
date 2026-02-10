@@ -21,20 +21,20 @@ func NewNotificationService(db *gorm.DB, users *repository.UserRepository) *Noti
 }
 
 type notificationRow struct {
-	RowID         string
-	Type          string
-	ActorID       string
-	ActorUsername string
-	ActorFullName string
+	RowID          string
+	Type           string
+	ActorID        string
+	ActorUsername  string
+	ActorFullName  string
 	ActorAvatarURL string
-	PostID        *string
-	CommentID     *string
-	PostContent   string
-	PostMediaURL  *string
-	CommentBody   *string
-	CreatedAt     time.Time
-	Message       string
-	Read          bool
+	PostID         *string
+	CommentID      *string
+	PostContent    string
+	PostMediaURL   *string
+	CommentBody    *string
+	CreatedAt      time.Time
+	Message        string
+	Read           bool
 }
 
 func (s *NotificationService) List(ctx context.Context, userID string, filter string, limit, offset int) ([]dto.Notification, error) {
@@ -135,20 +135,20 @@ LIMIT ? OFFSET ?`
 	result := make([]dto.Notification, 0, len(rows))
 	for _, r := range rows {
 		result = append(result, dto.Notification{
-			ID:            fmt.Sprintf("%s:%s", r.Type, r.RowID),
-			Type:          r.Type,
-			ActorID:       r.ActorID,
-			ActorUsername: r.ActorUsername,
-			ActorFullName: r.ActorFullName,
+			ID:             fmt.Sprintf("%s:%s", r.Type, r.RowID),
+			Type:           r.Type,
+			ActorID:        r.ActorID,
+			ActorUsername:  r.ActorUsername,
+			ActorFullName:  r.ActorFullName,
 			ActorAvatarURL: r.ActorAvatarURL,
-			PostID:        derefString(r.PostID),
-			CommentID:     derefString(r.CommentID),
-			PostContent:   r.PostContent,
-			PostMediaURL:  derefString(r.PostMediaURL),
-			CommentBody:   derefString(r.CommentBody),
-			CreatedAt:     r.CreatedAt,
-			Message:       r.Message,
-			Read:          r.Read,
+			PostID:         derefString(r.PostID),
+			CommentID:      derefString(r.CommentID),
+			PostContent:    r.PostContent,
+			PostMediaURL:   derefString(r.PostMediaURL),
+			CommentBody:    derefString(r.CommentBody),
+			CreatedAt:      r.CreatedAt,
+			Message:        r.Message,
+			Read:           r.Read,
 		})
 	}
 	return result, nil

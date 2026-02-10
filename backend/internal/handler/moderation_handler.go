@@ -15,20 +15,20 @@ import (
 // ModerationHandler exposes a limited set of moderation endpoints (for moderators/admins).
 // It intentionally does NOT include user/role management.
 type ModerationHandler struct {
-	users   *repository.UserRepository
-	posts   *repository.PostRepository
-	postSvc *service.PostService
+	users     *repository.UserRepository
+	posts     *repository.PostRepository
+	postSvc   *service.PostService
 	reportSvc *service.ReportService
-	jwt     *auth.JWTManager
+	jwt       *auth.JWTManager
 }
 
 func NewModerationHandler(users *repository.UserRepository, posts *repository.PostRepository, postSvc *service.PostService, reportSvc *service.ReportService, jwt *auth.JWTManager) *ModerationHandler {
 	return &ModerationHandler{
-		users:   users,
-		posts:   posts,
-		postSvc: postSvc,
+		users:     users,
+		posts:     posts,
+		postSvc:   postSvc,
 		reportSvc: reportSvc,
-		jwt:     jwt,
+		jwt:       jwt,
 	}
 }
 

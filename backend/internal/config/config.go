@@ -56,7 +56,7 @@ func Load() Config {
 		S3UseSSL:        getEnvBool("S3_USE_SSL", true),
 		S3PublicBaseURL: getEnv("S3_PUBLIC_BASE_URL", ""),
 		// Optional. Leave empty to avoid an extra path segment in object keys.
-		S3Prefix:        getEnv("S3_PREFIX", ""),
+		S3Prefix:           getEnv("S3_PREFIX", ""),
 		S3SignatureVersion: getEnv("S3_SIGNATURE_VERSION", "v4"),
 	}
 }

@@ -118,10 +118,10 @@ SELECT COUNT(DISTINCT user_id) FROM (
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"users_count":       usersCount,
-		"posts_count":       postsCount,
-		"active_users_15m":  active15m,
-		"generated_at":      time.Now().UTC().Format(time.RFC3339),
+		"users_count":      usersCount,
+		"posts_count":      postsCount,
+		"active_users_15m": active15m,
+		"generated_at":     time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

@@ -7,7 +7,7 @@ import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush } from "lucide-react";
 import { DrawingModal } from "./DrawingModal";
 import { ErrorMessage } from "./ErrorMessage";
 import FabricImageEditor from "./FabricImageEditor";
-import { fileToWebpIfNeeded } from "../utils/media";
+import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
 import type { MediaItem as UploadedMediaItem } from "../types/media";
 
 type Props = {
@@ -40,7 +40,13 @@ const emailLike = /@[^@\s]+\.[A-Za-z]{2,}$/;
 type MediaItem = {
   id: string;
   file: File;
-  url: string;
+  previewUrl: string;
+  status: "preparing" | "uploading" | "uploaded" | "error";
+  width?: number;
+  height?: number;
+  remoteUrl?: string;
+  remoteKey?: string;
+  error?: string;
 };
 
 const highlightInlineHashtags = (
@@ -157,6 +163,7 @@ export default function PostComposer({ onCreated }: Props) {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [drawingOpen, setDrawingOpen] = useState(false);
+  const uploadRef = useRef(new Map<string, { token: string; controller: AbortController }>());
   const mediaRef = useRef<MediaItem[]>([]);
   const MIN_TA_HEIGHT = 72;
   const MAX_MEDIA = 5;
@@ -185,7 +192,8 @@ export default function PostComposer({ onCreated }: Props) {
 
   useEffect(() => {
     return () => {
-      mediaRef.current.forEach((m) => URL.revokeObjectURL(m.url));
+      uploadRef.current.forEach((v) => v.controller.abort());
+      mediaRef.current.forEach((m) => URL.revokeObjectURL(m.previewUrl));
     };
   }, []);
 
@@ -397,6 +405,201 @@ export default function PostComposer({ onCreated }: Props) {
     setCursor(pos);
   };
 
+  const startUpload = async (targets: { id: string; file: File; oldKey?: string }[]) => {
+    if (!token) return;
+    if (targets.length === 0) return;
+
+    const MAX_BYTES = 1024 * 1024;
+
+    // Abort any previous in-flight uploads for these items and mark them as preparing.
+    const uploadTokenByID = new Map<string, string>();
+    targets.forEach((t) => {
+      const prev = uploadRef.current.get(t.id);
+      if (prev) prev.controller.abort();
+      const controller = new AbortController();
+      const uploadToken = crypto.randomUUID();
+      uploadRef.current.set(t.id, { token: uploadToken, controller });
+      uploadTokenByID.set(t.id, uploadToken);
+    });
+
+    setMedia((prev) =>
+      prev.map((m) =>
+        uploadTokenByID.has(m.id)
+          ? {
+              ...m,
+              status: "preparing",
+              error: undefined,
+              remoteUrl: undefined,
+              remoteKey: undefined,
+              width: undefined,
+              height: undefined,
+            }
+          : m
+      )
+    );
+
+    const prepared = await Promise.all(
+      targets.map(async (t) => {
+        const entry = uploadRef.current.get(t.id);
+        if (!entry) return { id: t.id, ok: false as const, reason: "canceled" };
+        if (entry.token !== uploadTokenByID.get(t.id)) return { id: t.id, ok: false as const, reason: "stale" };
+        if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
+
+        try {
+          const f = await fileToWebpIfNeeded(t.file);
+          if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
+          if (f.type !== "image/webp" && f.type !== "image/gif") throw new Error("unsupported_image_type");
+          if (f.size > MAX_BYTES) throw new Error("file_too_large");
+          const { width, height } = await getImageDimensions(f);
+          if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
+          return { id: t.id, ok: true as const, file: f, width, height, oldKey: t.oldKey };
+        } catch (e: any) {
+          const msg = e?.message || "prepare_failed";
+          return { id: t.id, ok: false as const, reason: msg };
+        }
+      })
+    );
+
+    const dropRefIfCurrent = (id: string) => {
+      const entry = uploadRef.current.get(id);
+      if (entry && entry.token === uploadTokenByID.get(id)) uploadRef.current.delete(id);
+    };
+
+    prepared.forEach((p) => {
+      if (!p.ok && p.reason !== "canceled" && p.reason !== "stale") dropRefIfCurrent(p.id);
+    });
+
+    // Apply preparation results to state (dimensions + potentially converted file).
+    setMedia((prev) =>
+      prev.map((m) => {
+        const p = prepared.find((x) => x.id === m.id);
+        if (!p) return m;
+        const entry = uploadRef.current.get(m.id);
+        if (!entry || entry.token !== uploadTokenByID.get(m.id)) return m; // stale
+
+        if (!p.ok) {
+          if (p.reason === "canceled" || p.reason === "stale") return m;
+          return {
+            ...m,
+            status: "error",
+            error:
+              p.reason === "file_too_large"
+                ? "Файл слишком большой (максимум 1MB)"
+                : p.reason === "unsupported_image_type"
+                  ? "Поддерживаются только изображения и GIF"
+                  : "Не удалось подготовить файл",
+          };
+        }
+
+        return {
+          ...m,
+          file: p.file,
+          width: p.width,
+          height: p.height,
+        };
+      })
+    );
+
+    const okPrepared = prepared.filter((p): p is Extract<(typeof prepared)[number], { ok: true }> => (p as any).ok);
+    if (okPrepared.length === 0) return;
+
+    let presigned: Awaited<ReturnType<typeof api.presignMedia>>;
+    try {
+      presigned = await api.presignMedia(
+        okPrepared.map((p) => ({ content_type: p.file.type, size_bytes: p.file.size })),
+        "post",
+        token
+      );
+    } catch (err: any) {
+      const retry = Number(err?.retry_after_seconds);
+      const msg =
+        Number.isFinite(retry) && retry > 0
+          ? `Слишком часто. Попробуйте через ${retry} сек.`
+          : err?.message?.includes("Failed to fetch")
+            ? "Не удалось загрузить медиа (возможен CORS на хранилище)"
+            : err?.message || "Не удалось подготовить загрузку";
+
+      setMedia((prev) =>
+        prev.map((m) =>
+          uploadTokenByID.has(m.id)
+            ? {
+                ...m,
+                status: "error",
+                error: msg,
+              }
+            : m
+        )
+      );
+      okPrepared.forEach((p) => uploadRef.current.delete(p.id));
+      return;
+    }
+
+    if (presigned.length !== okPrepared.length) {
+      setMedia((prev) =>
+        prev.map((m) =>
+          uploadTokenByID.has(m.id)
+            ? { ...m, status: "error", error: "Не удалось подготовить загрузку" }
+            : m
+        )
+      );
+      okPrepared.forEach((p) => uploadRef.current.delete(p.id));
+      return;
+    }
+
+    const idsToUpload = okPrepared.map((p) => p.id);
+    setMedia((prev) => prev.map((m) => (idsToUpload.includes(m.id) ? { ...m, status: "uploading" } : m)));
+
+    const results = await Promise.all(
+      okPrepared.map(async (p, idx) => {
+        const entry = uploadRef.current.get(p.id);
+        if (!entry) return { id: p.id, ok: false as const, error: new Error("canceled") };
+        if (entry.token !== uploadTokenByID.get(p.id)) return { id: p.id, ok: false as const, error: new Error("stale") };
+        try {
+          await api.uploadPresignedPut(presigned[idx], p.file, entry.controller.signal);
+          return { id: p.id, ok: true as const, url: presigned[idx].url, key: presigned[idx].key, oldKey: p.oldKey };
+        } catch (e: any) {
+          return { id: p.id, ok: false as const, error: e };
+        }
+      })
+    );
+
+    results.forEach((r) => {
+      const entry = uploadRef.current.get(r.id);
+      if (!entry || entry.token !== uploadTokenByID.get(r.id)) return; // stale/canceled
+
+      if (r.ok) {
+        setMedia((prev) =>
+          prev.map((m) =>
+            m.id === r.id
+              ? {
+                  ...m,
+                  status: "uploaded",
+                  remoteUrl: r.url,
+                  remoteKey: r.key,
+                  error: undefined,
+                }
+              : m
+          )
+        );
+        uploadRef.current.delete(r.id);
+        if (r.oldKey && r.oldKey !== r.key) api.deleteMedia([r.oldKey], "post", token).catch(() => {});
+        return;
+      }
+
+      const err: any = r.error;
+      const canceled =
+        err?.name === "AbortError" ||
+        err?.message === "canceled" ||
+        err?.message === "stale";
+      if (!canceled) {
+        setMedia((prev) =>
+          prev.map((m) => (m.id === r.id ? { ...m, status: "error", error: "Не удалось загрузить медиа" } : m))
+        );
+      }
+      uploadRef.current.delete(r.id);
+    });
+  };
+
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList) return;
     const incoming = Array.from(fileList);
@@ -404,9 +607,14 @@ export default function PostComposer({ onCreated }: Props) {
     const allowed = /^image\//i;
     const currentCount = media.length;
     let rejected = false;
+    const MAX_BYTES = 1024 * 1024;
 
     for (const f of incoming) {
       if (!allowed.test(f.type) || f.type === "image/svg+xml") {
+        rejected = true;
+        continue;
+      }
+      if (f.type === "image/gif" && f.size > MAX_BYTES) {
         rejected = true;
         continue;
       }
@@ -414,7 +622,12 @@ export default function PostComposer({ onCreated }: Props) {
         rejected = true;
         break;
       }
-      valid.push({ id: crypto.randomUUID(), file: f, url: URL.createObjectURL(f) });
+      valid.push({
+        id: crypto.randomUUID(),
+        file: f,
+        previewUrl: URL.createObjectURL(f),
+        status: "preparing",
+      });
     }
 
     if (rejected) {
@@ -424,6 +637,7 @@ export default function PostComposer({ onCreated }: Props) {
 
     if (valid.length) {
       setMedia((prev) => [...prev, ...valid]);
+      startUpload(valid.map((m) => ({ id: m.id, file: m.file })));
     }
   };
 
@@ -431,7 +645,17 @@ export default function PostComposer({ onCreated }: Props) {
     setMedia((prev) => {
       const next = prev.filter((m) => m.id !== id);
       const removed = prev.find((m) => m.id === id);
-      if (removed) URL.revokeObjectURL(removed.url);
+      if (removed) {
+        URL.revokeObjectURL(removed.previewUrl);
+        const inflight = uploadRef.current.get(id);
+        if (inflight) {
+          inflight.controller.abort();
+          uploadRef.current.delete(id);
+        }
+        if (removed.status === "uploaded" && removed.remoteKey && token) {
+          api.deleteMedia([removed.remoteKey], "post", token).catch(() => {});
+        }
+      }
       return next;
     });
     setPreviewId((prev) => (prev === id ? null : prev));
@@ -446,16 +670,26 @@ export default function PostComposer({ onCreated }: Props) {
     try {
       const tags = extractHashtags(content, suppressedHashtags);
       const selected = mediaRef.current;
-      let uploadedMedia: UploadedMediaItem[] = [];
-      if (selected.length > 0) {
-        const files = await Promise.all(selected.map((m) => fileToWebpIfNeeded(m.file)));
-        uploadedMedia = await api.uploadMedia(files, "post", token);
+      if (selected.some((m) => m.status === "preparing" || m.status === "uploading")) {
+        throw new Error("uploads_pending");
       }
+      if (selected.some((m) => m.status === "error")) {
+        throw new Error("uploads_failed");
+      }
+
+      const uploadedMedia: UploadedMediaItem[] = selected
+        .filter((m) => m.status === "uploaded" && m.remoteUrl && m.width && m.height)
+        .map((m) => ({
+          url: m.remoteUrl as string,
+          width: m.width as number,
+          height: m.height as number,
+        }));
+
       const hasMedia = uploadedMedia.length > 0;
       await api.createPost({ content, hashtags: tags, media: uploadedMedia }, token);
       setCooldownUntilMs(Date.now() + (hasMedia ? 120 : 60) * 1000);
       setMedia((prev) => {
-        prev.forEach((m) => URL.revokeObjectURL(m.url));
+        prev.forEach((m) => URL.revokeObjectURL(m.previewUrl));
         return [];
       });
       setContent("");
@@ -470,7 +704,15 @@ export default function PostComposer({ onCreated }: Props) {
         setCooldownUntilMs(Date.now() + retry * 1000);
         setError(`Слишком часто. Попробуйте через ${retry} сек.`);
       } else {
-        setError(err.message || "Не удалось создать пост");
+        const msg =
+          err?.message === "uploads_pending"
+            ? "Дождитесь завершения загрузки медиа"
+            : err?.message === "uploads_failed"
+              ? "Есть медиа с ошибкой. Удалите или повторите загрузку."
+              : err?.message?.includes("Failed to fetch")
+                ? "Не удалось создать пост (нет соединения)"
+                : err.message || "Не удалось создать пост";
+        setError(msg);
       }
     } finally {
       setLoading(false);
@@ -478,6 +720,9 @@ export default function PostComposer({ onCreated }: Props) {
   };
 
   const previewItem = previewId ? media.find((m) => m.id === previewId) : null;
+  const hasPendingUploads = media.some((m) => m.status === "preparing" || m.status === "uploading");
+  const hasUploadErrors = media.some((m) => m.status === "error");
+  const uploadedCount = media.filter((m) => m.status === "uploaded").length;
 
   return (
     <form
@@ -497,14 +742,31 @@ export default function PostComposer({ onCreated }: Props) {
             <button
               type="button"
               key={m.id}
-              onClick={() => setPreviewId(m.id)}
-              className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30 aspect-video group"
+              onClick={() => {
+                if (m.status === "error") {
+                  startUpload([{ id: m.id, file: m.file, oldKey: m.remoteKey }]);
+                  return;
+                }
+                setPreviewId(m.id);
+              }}
+              className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30 aspect-video group focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
             >
               <img
-                src={m.url}
+                src={m.previewUrl}
                 alt="preview"
                 className="w-full h-full object-cover group-hover:opacity-90 transition"
               />
+              {(m.status === "preparing" || m.status === "uploading") && (
+                <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                  <div className="h-6 w-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                </div>
+              )}
+              {m.status === "error" && (
+                <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2 px-2">
+                  <span className="text-xs text-white/80 text-center">{m.error || "Ошибка загрузки"}</span>
+                  <span className="text-[11px] text-white/60">Нажмите, чтобы повторить</span>
+                </div>
+              )}
               <span className="absolute top-1 right-1 text-xs bg-black/70 text-white px-2 py-0.5 rounded-full opacity-0 group-hover:opacity-100 transition">
                 Просмотр
               </span>
@@ -788,6 +1050,11 @@ export default function PostComposer({ onCreated }: Props) {
           </button>
         </div>
         <div className="flex flex-col items-end gap-1">
+          {hasPendingUploads && (
+            <span className="text-xs text-white/50">
+              Загрузка медиа: {uploadedCount}/{media.length}
+            </span>
+          )}
           {remainingSec > 0 && (
             <span className="text-xs text-white/50">
               Можно публиковать через {formatTimer(remainingSec)}
@@ -795,7 +1062,7 @@ export default function PostComposer({ onCreated }: Props) {
           )}
           <button
             type="submit"
-            disabled={loading || !content.trim() || remainingSec > 0}
+            disabled={loading || !content.trim() || remainingSec > 0 || hasPendingUploads || hasUploadErrors}
             className="rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
           >
             {loading ? "Публикуем..." : "Опубликовать"}
@@ -815,7 +1082,7 @@ export default function PostComposer({ onCreated }: Props) {
             >
               {editing ? (
                 <FabricImageEditor
-                  src={previewItem.url}
+                  src={previewItem.previewUrl}
                   fileName={previewItem.file.name}
                   onCancel={() => setEditing(false)}
                   onSave={(nextFile) => {
@@ -824,20 +1091,26 @@ export default function PostComposer({ onCreated }: Props) {
                       setEditing(false);
                       return;
                     }
-                    const oldUrl = current.url;
+                    const oldUrl = current.previewUrl;
+                    const oldKey = current.remoteKey;
                     const nextUrl = URL.createObjectURL(nextFile);
                     setMedia((prev) =>
-                      prev.map((m) => (m.id === previewItem.id ? { ...m, file: nextFile, url: nextUrl } : m))
+                      prev.map((m) =>
+                        m.id === previewItem.id
+                          ? { ...m, file: nextFile, previewUrl: nextUrl, status: "preparing", error: undefined }
+                          : m
+                      )
                     );
                     window.setTimeout(() => URL.revokeObjectURL(oldUrl), 0);
                     setEditing(false);
+                    startUpload([{ id: previewItem.id, file: nextFile, oldKey }]);
                   }}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center overflow-hidden p-4">
                   <div className="relative inline-block max-w-full">
                     <img
-                      src={previewItem.url}
+                      src={previewItem.previewUrl}
                       alt="preview"
                       className="max-h-[76vh] max-w-full object-contain rounded-xl"
                     />
@@ -890,9 +1163,11 @@ export default function PostComposer({ onCreated }: Props) {
             const item: MediaItem = {
               id: crypto.randomUUID(),
               file,
-              url: URL.createObjectURL(file),
+              previewUrl: URL.createObjectURL(file),
+              status: "preparing",
             };
             setMedia((prev) => [...prev, item]);
+            startUpload([{ id: item.id, file: item.file }]);
             setDrawingOpen(false);
           }}
         />

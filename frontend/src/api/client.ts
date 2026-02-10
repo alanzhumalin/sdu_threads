@@ -5,8 +5,6 @@ type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH";
 
 const API_BASE = "/api";
 
-let redirecting = false;
-
 type SocialLinks = Partial<
   Record<"instagram" | "telegram" | "github" | "linkedin", string>
 >;
@@ -20,6 +18,10 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
   const raw = (msg || "").trim();
   const lower = raw.toLowerCase();
 
+  if (code === "INVALID_CREDENTIALS" || lower.includes("invalid credentials")) {
+    return "Неверный логин или пароль";
+  }
+
   if (status === 401 || code === "UNAUTHORIZED") {
     return "Сессия истекла. Войдите снова.";
   }
@@ -30,10 +32,6 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
 
   if (status === 429 || code === "RATE_LIMIT") {
     return "Слишком часто. Попробуйте позже.";
-  }
-
-  if (code === "INVALID_CREDENTIALS" || lower.includes("invalid credentials")) {
-    return "Неверный логин или пароль";
   }
 
   if (lower.includes("rules must be accepted")) {
@@ -72,6 +70,11 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
   }
 
   return raw;
+}
+
+function isAuthEndpoint(path: string) {
+  // Prevent redirect-loop / full page reload on login/register failures.
+  return path.startsWith("/auth/");
 }
 
 async function readError(
@@ -124,17 +127,15 @@ async function request<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401) {
-    if (!redirecting) {
-      redirecting = true;
-      try {
-        useAuthStore.getState().setToken(null);
-      } catch {
-        // ignore
-      }
-      window.location.href = "/login";
+  if (res.status === 401 && !isAuthEndpoint(path)) {
+    const hadToken = !!token || !!useAuthStore.getState().token;
+    try {
+      useAuthStore.getState().setToken(null);
+    } catch {
+      // ignore
     }
-    throw new Error("Сессия истекла. Войдите снова.");
+    // Guest UX: don't force a redirect; pages/actions can show an auth-gate overlay/modal.
+    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -167,17 +168,14 @@ async function requestWithHeaders<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401) {
-    if (!redirecting) {
-      redirecting = true;
-      try {
-        useAuthStore.getState().setToken(null);
-      } catch {
-        // ignore
-      }
-      window.location.href = "/login";
+  if (res.status === 401 && !isAuthEndpoint(path)) {
+    const hadToken = !!token || !!useAuthStore.getState().token;
+    try {
+      useAuthStore.getState().setToken(null);
+    } catch {
+      // ignore
     }
-    throw new Error("Сессия истекла. Войдите снова.");
+    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -209,17 +207,14 @@ async function requestForm<T>(
   } catch {
     throw new Error("Нет соединения с сервером. Попробуйте позже.");
   }
-  if (res.status === 401) {
-    if (!redirecting) {
-      redirecting = true;
-      try {
-        useAuthStore.getState().setToken(null);
-      } catch {
-        // ignore
-      }
-      window.location.href = "/login";
+  if (res.status === 401 && !isAuthEndpoint(path)) {
+    const hadToken = !!token || !!useAuthStore.getState().token;
+    try {
+      useAuthStore.getState().setToken(null);
+    } catch {
+      // ignore
     }
-    throw new Error("Сессия истекла. Войдите снова.");
+    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -458,6 +453,66 @@ export const api = {
     return Array.isArray(res.items)
       ? res.items.filter((i) => i && typeof i.url === "string" && i.url.trim() !== "")
       : [];
+  },
+  presignMedia: async (
+    files: { content_type: string; size_bytes: number }[],
+    purpose: string,
+    token: string
+  ): Promise<
+    {
+      upload_url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      key: string;
+      url: string;
+      expires_unix: number;
+    }[]
+  > => {
+    const res = await request<{ items: any[] }>(
+      `/media/presign?purpose=${encodeURIComponent(purpose)}`,
+      "POST",
+      { files },
+      token
+    );
+    return Array.isArray(res?.items)
+      ? res.items.filter((i) => i && typeof i.upload_url === "string" && typeof i.url === "string")
+      : [];
+  },
+  deleteMedia: async (keys: string[], purpose: string, token: string) => {
+    if (!Array.isArray(keys) || keys.length === 0) return;
+    await request<{ deleted: number }>(
+      `/media/delete?purpose=${encodeURIComponent(purpose)}`,
+      "POST",
+      { keys },
+      token
+    );
+  },
+  uploadPresignedPut: async (
+    presigned: { upload_url: string; method?: string; headers?: Record<string, string> },
+    file: File,
+    signal?: AbortSignal
+  ) => {
+    const method = (presigned.method || "PUT").toUpperCase();
+    const headers = presigned.headers || {};
+    const hasContentType = Object.keys(headers).some((k) => k.toLowerCase() === "content-type");
+
+    // For Signature V2 presigned PUT URLs, Content-Type is part of the signature string.
+    // If we don't have a signed Content-Type header, ensure the browser doesn't auto-add it.
+    const body = hasContentType ? file : file.slice(0, file.size, "");
+
+    const init: RequestInit = {
+      method,
+      body,
+      credentials: "omit",
+    };
+    if (signal) init.signal = signal;
+    if (Object.keys(headers).length > 0) init.headers = headers;
+
+    const resp = await fetch(presigned.upload_url, init);
+
+    if (!resp.ok) {
+      throw new Error(`upload_failed_${resp.status}`);
+    }
   },
   searchHashtags: (q: string, limit = 8) =>
     request<any[]>(

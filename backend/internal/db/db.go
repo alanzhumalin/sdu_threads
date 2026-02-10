@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Client struct {
@@ -22,7 +24,18 @@ func Connect(databaseURL string) (*Client, error) {
 		return nil, errors.New("DATABASE_URL is required")
 	}
 
-	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+	// Keep SQL logs usable, but avoid noisy "record not found" spam (common for auth/search flows).
+	gormLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             time.Second,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+
+	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{Logger: gormLogger})
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}

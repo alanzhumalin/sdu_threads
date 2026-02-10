@@ -12,11 +12,13 @@ import { ReportModal } from "../components/ReportModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { PostMedia } from "../components/PostMedia";
+import { AuthGateOverlay } from "../components/AuthGateOverlay";
 import { highlightHashtags } from "../utils/text";
 import { MentionPreview } from "../components/MentionPreview";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useFollowingFeedStore } from "../store/followingFeed";
 import { useUserStatsStore } from "../store/userStats";
+import { useAuthGateStore } from "../store/authGate";
 import type { MediaItem } from "../types/media";
 import {
   Heart,
@@ -73,6 +75,7 @@ const timeAgo = (iso: string) => {
 
 export default function FeedPage() {
   const token = useAuthStore((s) => s.token);
+  const showAuthGate = useAuthGateStore((s) => s.show);
   const {
     items: cachedFeed,
     nextOffset: cachedNext,
@@ -124,6 +127,12 @@ export default function FeedPage() {
   const viewedPersisted = useRef<Set<string>>(loadViewed());
   const pendingTimers = useRef<Map<string, number>>(new Map());
   const observer = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    if (!token && tab === "following") {
+      setTab("popular");
+    }
+  }, [token, tab]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -260,7 +269,7 @@ export default function FeedPage() {
   }, [token]);
 
   const loadMorePopular = async () => {
-    if (popularLoading || !token || popularNextOffset === null) return;
+    if (popularLoading || popularNextOffset === null) return;
     setPopularLoading(true);
     try {
       const { items, nextOffset: n } = await api.feedPage(20, popularNextOffset, token);
@@ -346,7 +355,15 @@ export default function FeedPage() {
   };
 
   const toggleFollow = async (post: FeedItem, currentIsSubscribed: boolean) => {
-    if (!token || post.is_me) return;
+    if (!token) {
+      showAuthGate({
+        title: "Сначала авторизуйся",
+        message: "Чтобы подписываться на пользователей, нужно войти.",
+        ctaLabel: "Войти",
+      });
+      return;
+    }
+    if (post.is_me) return;
     const nextState = !currentIsSubscribed;
     const delta = nextState ? 1 : -1;
     const meId = useProfileMeStore.getState().profile?.id;
@@ -383,7 +400,14 @@ export default function FeedPage() {
   };
 
   const toggleLike = async (id: string, liked: boolean) => {
-    if (!token) return;
+    if (!token) {
+      showAuthGate({
+        title: "Сначала авторизуйся",
+        message: "Чтобы ставить лайки, нужно войти.",
+        ctaLabel: "Войти",
+      });
+      return;
+    }
     const currentBase = feed.find((p) => p.id === id) || followingFeed.find((p) => p.id === id);
     const currentPatch = postPatches[id];
     const current = currentPatch ? { ...currentBase, ...currentPatch } : currentBase;
@@ -470,12 +494,37 @@ export default function FeedPage() {
           </div>
         </div>
 
-        <PostComposer
-          onCreated={() => {
-            setTab("popular");
-            refreshPopular();
-          }}
-        />
+        {token ? (
+          <PostComposer
+            onCreated={() => {
+              setTab("popular");
+              refreshPopular();
+            }}
+          />
+        ) : (
+          <AuthGateOverlay
+            title="Сначала авторизуйся"
+            message="Чтобы создать пост, нужно войти."
+            ctaLabel="Войти"
+            className="overflow-hidden"
+          >
+            <div className="card p-4 md:p-4 space-y-3 min-h-[210px]">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-full bg-white/10 animate-pulse" />
+                <div className="h-4 w-52 rounded-full bg-white/10 animate-pulse" />
+              </div>
+              <div className="h-[92px] rounded-xl border border-white/10 bg-black/40 animate-pulse" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-full bg-white/10 animate-pulse" />
+                  <div className="h-9 w-9 rounded-full bg-white/10 animate-pulse" />
+                  <div className="h-9 w-9 rounded-full bg-white/10 animate-pulse" />
+                </div>
+                <div className="h-10 w-28 rounded-full bg-white/10 animate-pulse" />
+              </div>
+            </div>
+          </AuthGateOverlay>
+        )}
 
         <div className="flex items-center">
           <div className="rounded-full border border-white/10 bg-black/60 p-1 flex items-center gap-1">
@@ -492,7 +541,17 @@ export default function FeedPage() {
             </button>
             <button
               type="button"
-              onClick={() => setTab("following")}
+              onClick={() => {
+                if (!token) {
+                  showAuthGate({
+                    title: "Сначала авторизуйся",
+                    message: "Лента подписок доступна только после входа.",
+                    ctaLabel: "Войти",
+                  });
+                  return;
+                }
+                setTab("following");
+              }}
               className={`px-4 py-2 rounded-full text-sm font-semibold transition ${
                 tab === "following"
                   ? "bg-white text-black"
@@ -617,6 +676,14 @@ export default function FeedPage() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuOpenId(null);
+                      if (!token) {
+                        showAuthGate({
+                          title: "Сначала авторизуйся",
+                          message: "Чтобы отправить жалобу, нужно войти.",
+                          ctaLabel: "Войти",
+                        });
+                        return;
+                      }
                       setReportPost(item);
                     }}
                     className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
@@ -656,7 +723,17 @@ export default function FeedPage() {
 
                 <button
                   className="flex items-center gap-2 text-white/60 hover:text-white"
-                  onClick={() => setCommentsPost(postMeta)}
+                  onClick={() => {
+                    if (!token) {
+                      showAuthGate({
+                        title: "Сначала авторизуйся",
+                        message: "Чтобы открыть комментарии, нужно войти.",
+                        ctaLabel: "Войти",
+                      });
+                      return;
+                    }
+                    setCommentsPost(postMeta);
+                  }}
                 >
                   <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
                   <span>{p.comment_count ?? 0}</span>

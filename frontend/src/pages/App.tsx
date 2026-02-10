@@ -16,6 +16,12 @@ import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 import { useNotificationStore } from "../store/notifications";
 import { api } from "../api/client";
+import { AuthGateOverlay } from "../components/AuthGateOverlay";
+import { AuthGateModal } from "../components/AuthGateModal";
+import { ProfileSkeleton } from "../components/ProfileSkeleton";
+import { SearchSkeleton } from "../components/SearchSkeleton";
+import { NotificationsSkeleton } from "../components/NotificationsSkeleton";
+import { PostPermalinkSkeleton } from "../components/PostPermalinkSkeleton";
 
 function isJwtExpired(token: string, skewSeconds = 10): boolean {
   try {
@@ -33,15 +39,6 @@ function isJwtExpired(token: string, skewSeconds = 10): boolean {
   }
 }
 
-function Protected({ children }: { children: JSX.Element }) {
-  const token = useAuthStore((s) => s.token);
-  const isAuthed = !!token && !isJwtExpired(token);
-  if (!isAuthed) {
-    return <Navigate to="/login" replace />;
-  }
-  return children;
-}
-
 export default function App() {
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
@@ -56,11 +53,27 @@ export default function App() {
   useEffect(() => {
     if (token && !isAuthed) {
       setToken(null);
-      if (location.pathname !== "/login" && location.pathname !== "/register") {
-        navigate("/login", { replace: true });
-      }
     }
-  }, [token, isAuthed, setToken, navigate, location.pathname]);
+  }, [token, isAuthed, setToken]);
+
+  // If token is present but invalid for backend (e.g. JWT_SECRET changed),
+  // clear it early so UI doesn't show "logged in" controls incorrectly.
+  useEffect(() => {
+    let cancelled = false;
+    if (!token) return;
+    api
+      .profileMe(token)
+      .then(() => {
+        // ok
+      })
+      .catch(() => {
+        // request() already clears token on 401; ignore other errors silently
+        if (cancelled) return;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   // Глобальная инициализация индикатора уведомлений
   useEffect(() => {
@@ -91,7 +104,6 @@ export default function App() {
     isAuthed
       ? { label: "Выйти", path: "/logout", icon: "exit" }
       : { label: "Вход", path: "/login", icon: "login" },
-    !isAuthed && { label: "Регистрация", path: "/register", icon: "user-plus" },
   ].filter(Boolean) as { label: string; path: string; icon: string }[];
 
   const handleTabClick = (path: string) => {
@@ -114,6 +126,7 @@ export default function App() {
       {!isAuthPage && (
         <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
       )}
+      <AuthGateModal />
       <div className="mx-auto max-w-6xl px-3 md:px-8">
         <div
           key={location.pathname}
@@ -122,74 +135,160 @@ export default function App() {
           <Routes location={location}>
             <Route
               path="/"
-              element={
-                <Protected>
-                  <FeedPage />
-                </Protected>
-              }
+              element={<FeedPage />}
             />
             <Route
               path="/search"
               element={
-                <Protected>
+                isAuthed ? (
                   <SearchPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Поиск доступен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <SearchSkeleton />
+                  </AuthGateOverlay>
+                )
               }
             />
           <Route
             path="/notifications"
             element={
-              <Protected>
+              isAuthed ? (
                 <NotificationsPage />
-              </Protected>
+              ) : (
+                <AuthGateOverlay
+                  mode="page"
+                  title="Сначала авторизуйся"
+                  message="Уведомления доступны только после входа."
+                  ctaLabel="Войти"
+                  className="min-h-[calc(100vh-9rem)]"
+                >
+                  <NotificationsSkeleton />
+                </AuthGateOverlay>
+              )
             }
           />
             <Route
               path="/profile"
               element={
-                <Protected>
+                isAuthed ? (
                   <ProfilePage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Профиль доступен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route
               path="/u/:username"
               element={
-                <Protected>
+                isAuthed ? (
                   <ProfileUserPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Чтобы открыть профиль, нужно войти."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route
               path="/p/:id"
               element={
-                <Protected>
+                isAuthed ? (
                   <PostPermalinkPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Чтобы открыть пост по ссылке, нужно войти."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <PostPermalinkSkeleton />
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route
               path="/admin"
               element={
-                <Protected>
+                isAuthed ? (
                   <AdminPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Доступ в админ-панель возможен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route
               path="/moderation"
               element={
-                <Protected>
+                isAuthed ? (
                   <ModerationPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Доступ к модерации возможен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route
               path="/moderation/reports"
               element={
-                <Protected>
+                isAuthed ? (
                   <ModerationReportsPage />
-                </Protected>
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Доступ к жалобам возможен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
               }
             />
             <Route

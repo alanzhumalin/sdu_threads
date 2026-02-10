@@ -10,6 +10,7 @@ import (
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
+	"sduthreads/internal/storage"
 
 	"gorm.io/gorm"
 )
@@ -77,15 +78,53 @@ func effectiveMediaItems(raw []byte, legacy string) []dto.MediaItem {
 }
 
 type PostService struct {
-	posts *repository.PostRepository
-	likes *repository.LikeRepository
-	tags  *repository.HashtagRepository
-	users *repository.UserRepository
-	fols  *repository.FollowRepository
+	posts    *repository.PostRepository
+	likes    *repository.LikeRepository
+	tags     *repository.HashtagRepository
+	users    *repository.UserRepository
+	fols     *repository.FollowRepository
+	uploader *storage.S3Uploader
 }
 
-func NewPostService(posts *repository.PostRepository, likes *repository.LikeRepository, tags *repository.HashtagRepository, users *repository.UserRepository, fols *repository.FollowRepository) *PostService {
-	return &PostService{posts: posts, likes: likes, tags: tags, users: users, fols: fols}
+func NewPostService(posts *repository.PostRepository, likes *repository.LikeRepository, tags *repository.HashtagRepository, users *repository.UserRepository, fols *repository.FollowRepository, uploader *storage.S3Uploader) *PostService {
+	return &PostService{posts: posts, likes: likes, tags: tags, users: users, fols: fols, uploader: uploader}
+}
+
+func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media []dto.MediaItem) ([]dto.MediaItem, error) {
+	if s.uploader == nil || len(media) == 0 {
+		return media, nil
+	}
+
+	const maxBytes = 1 * 1024 * 1024
+	prefix := s.uploader.KeyPrefix("post", userID) + "/"
+
+	out := make([]dto.MediaItem, 0, len(media))
+	for _, m := range media {
+		key, ok := s.uploader.KeyFromPublicURL(m.URL)
+		if !ok || !strings.HasPrefix(key, prefix) {
+			return nil, errors.New("invalid media url")
+		}
+		// Basic defense-in-depth: enforce only the formats we allow through upload.
+		if !strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".gif") {
+			return nil, errors.New("invalid media type")
+		}
+
+		st, err := s.uploader.Stat(ctx, key)
+		if err != nil {
+			// Object doesn't exist or can't be read.
+			return nil, errors.New("media not found")
+		}
+		if st.Size <= 0 || st.Size > maxBytes {
+			// If client lied about size, clean up best-effort.
+			_ = s.uploader.Remove(ctx, key)
+			return nil, errors.New("file too large (max 1MB)")
+		}
+
+		m.URL = s.uploader.PublicURL(key) // normalize
+		out = append(out, m)
+	}
+
+	return out, nil
 }
 
 func (s *PostService) enrichMentions(ctx context.Context, items []repository.FeedItem) (map[string][]string, error) {
@@ -178,6 +217,16 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 			m.Height = 0
 		}
 		clean = append(clean, m)
+	}
+
+	// For direct-to-storage uploads we must verify the object properties on the backend,
+	// because presigned PUT URLs (esp. Signature V2) can't enforce content-length-range.
+	if s.uploader != nil && len(clean) > 0 {
+		verified, err := s.verifyPostMedia(ctx, userID, clean)
+		if err != nil {
+			return nil, err
+		}
+		clean = verified
 	}
 	if len(clean) > 5 {
 		return nil, errors.New("too many media files (max 5)")

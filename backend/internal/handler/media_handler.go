@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"image"
 	_ "image/gif"
@@ -12,27 +13,283 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
 	"github.com/minio/minio-go/v7"
 	_ "golang.org/x/image/webp"
+	"golang.org/x/time/rate"
 
 	"sduthreads/internal/auth"
 	"sduthreads/internal/storage"
 )
 
+var errGifTooLarge = errors.New("gif_too_large")
+
 type MediaHandler struct {
 	uploader *storage.S3Uploader
 	jwt      *auth.JWTManager
+	presign  *userPresignLimiter
 }
 
 func NewMediaHandler(uploader *storage.S3Uploader, jwt *auth.JWTManager) *MediaHandler {
-	return &MediaHandler{uploader: uploader, jwt: jwt}
+	// Limit presign spam per user: 30 files per minute, burst 30.
+	// Each presign request "costs" len(files) tokens.
+	return &MediaHandler{
+		uploader: uploader,
+		jwt:      jwt,
+		presign:  newUserPresignLimiter(30, 30),
+	}
 }
 
 func (h *MediaHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/media/upload", h.handleUpload)
+	mux.HandleFunc("/api/media/presign", h.handlePresign)
+	mux.HandleFunc("/api/media/delete", h.handleDelete)
+}
+
+type userPresignLimiter struct {
+	mu    sync.Mutex
+	byUID map[string]*rate.Limiter
+	rl    rate.Limit
+	burst int
+}
+
+func newUserPresignLimiter(filesPerMinute int, burst int) *userPresignLimiter {
+	if filesPerMinute <= 0 {
+		filesPerMinute = 30
+	}
+	if burst <= 0 {
+		burst = filesPerMinute
+	}
+	// 30 files / minute => 1 token per 2 seconds.
+	rl := rate.Every(time.Minute / time.Duration(filesPerMinute))
+	return &userPresignLimiter{byUID: map[string]*rate.Limiter{}, rl: rl, burst: burst}
+}
+
+func (l *userPresignLimiter) allow(uid string, n int) (ok bool, retryAfter time.Duration) {
+	if l == nil || uid == "" || n <= 0 {
+		return true, 0
+	}
+	now := time.Now()
+	l.mu.Lock()
+	lim := l.byUID[uid]
+	if lim == nil {
+		lim = rate.NewLimiter(l.rl, l.burst)
+		l.byUID[uid] = lim
+	}
+	l.mu.Unlock()
+
+	if lim.AllowN(now, n) {
+		return true, 0
+	}
+	// Don't consume tokens for rejected requests; just compute delay.
+	res := lim.ReserveN(now, n)
+	if !res.OK() {
+		return false, 30 * time.Second
+	}
+	d := res.Delay()
+	res.CancelAt(now)
+	if d < 0 {
+		d = 0
+	}
+	return false, d
+}
+
+func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	if h.uploader == nil {
+		writeErrorPayload(w, http.StatusNotImplemented, errorPayload{
+			Code:    "MEDIA_STORAGE_DISABLED",
+			Message: "Хранилище медиа не настроено",
+		})
+		return
+	}
+
+	purpose := strings.TrimSpace(r.URL.Query().Get("purpose"))
+	if purpose == "" {
+		purpose = "misc"
+	}
+	switch purpose {
+	case "post", "avatar", "background":
+	default:
+		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+			Code:    "INVALID_PURPOSE",
+			Message: "Некорректный purpose",
+		})
+		return
+	}
+
+	type inFile struct {
+		ContentType string `json:"content_type"`
+		SizeBytes   int64  `json:"size_bytes"`
+	}
+	var req struct {
+		Files []inFile `json:"files"`
+	}
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if len(req.Files) == 0 {
+		writeError(w, http.StatusBadRequest, "files is required")
+		return
+	}
+	if len(req.Files) > 5 {
+		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+			Code:    "TOO_MANY_FILES",
+			Message: "Можно загрузить максимум 5 файлов",
+		})
+		return
+	}
+	if ok, retry := h.presign.allow(userID, len(req.Files)); !ok {
+		secs := int(math.Ceil(retry.Seconds()))
+		if secs < 1 {
+			secs = 1
+		}
+		writeErrorPayload(w, http.StatusTooManyRequests, errorPayload{
+			Code:              "RATE_LIMIT",
+			Message:           "Слишком часто. Попробуйте позже.",
+			RetryAfterSeconds: secs,
+		})
+		return
+	}
+
+	const maxBytes = 1 * 1024 * 1024
+	items := make([]*storage.PresignedPut, 0, len(req.Files))
+	for _, f := range req.Files {
+		ct := strings.ToLower(strings.TrimSpace(f.ContentType))
+		if ct != "image/webp" && ct != "image/gif" {
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "INVALID_MEDIA_TYPE",
+				Message: "Можно загрузить только webp или gif",
+			})
+			return
+		}
+		if f.SizeBytes <= 0 || f.SizeBytes > maxBytes {
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "FILE_TOO_LARGE",
+				Message: "Размер файла не должен превышать 1MB",
+			})
+			return
+		}
+
+		ext := "webp"
+		if ct == "image/gif" {
+			ext = "gif"
+		}
+		key := h.uploader.BuildKey(purpose, userID, ext)
+		// Short TTL reduces the window in which a leaked presigned URL can be abused.
+		pp, err := h.uploader.PresignPut(r.Context(), key, ct, 2*time.Minute)
+		if err != nil {
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "S3_PRESIGN_FAILED",
+				Message: "Не удалось подготовить загрузку (presign)",
+			})
+			return
+		}
+		items = append(items, pp)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *MediaHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	if h.uploader == nil {
+		writeErrorPayload(w, http.StatusNotImplemented, errorPayload{
+			Code:    "MEDIA_STORAGE_DISABLED",
+			Message: "Хранилище медиа не настроено",
+		})
+		return
+	}
+
+	purpose := strings.TrimSpace(r.URL.Query().Get("purpose"))
+	if purpose == "" {
+		purpose = "misc"
+	}
+	switch purpose {
+	case "post", "avatar", "background":
+	default:
+		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+			Code:    "INVALID_PURPOSE",
+			Message: "Некорректный purpose",
+		})
+		return
+	}
+
+	var req struct {
+		Keys []string `json:"keys"`
+	}
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(req.Keys) == 0 {
+		writeError(w, http.StatusBadRequest, "keys is required")
+		return
+	}
+	if len(req.Keys) > 5 {
+		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+			Code:    "TOO_MANY_FILES",
+			Message: "Можно удалить максимум 5 файлов за раз",
+		})
+		return
+	}
+
+	prefix := h.uploader.KeyPrefix(purpose, userID) + "/"
+	deleted := 0
+	for _, raw := range req.Keys {
+		key := strings.TrimLeft(strings.TrimSpace(raw), "/")
+		if key == "" {
+			continue
+		}
+		if !strings.HasPrefix(key, prefix) {
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "INVALID_KEY",
+				Message: "Некорректный key",
+			})
+			return
+		}
+		if !strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".gif") {
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "INVALID_MEDIA_TYPE",
+				Message: "Можно удалить только webp или gif",
+			})
+			return
+		}
+
+		// Best-effort cleanup; ignore not-found / storage errors.
+		_ = h.uploader.Remove(r.Context(), key)
+		deleted++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
 func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +356,7 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	errs := make(chan error, len(files))
 
 	const (
-		maxOutBytes = 900 * 1024
+		maxOutBytes = 1 * 1024 * 1024
 	)
 
 	for i := range files {
@@ -156,8 +413,31 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				width, height = cfg.Width, cfg.Height
 			}
 
-			// If client already sent WEBP: don't decode/re-encode (big win)
-			if strings.EqualFold(ct, "image/webp") {
+			// GIF: keep as-is (animation), but enforce <= 1MB.
+			if strings.EqualFold(ct, "image/gif") {
+				if len(data) > maxOutBytes {
+					errs <- errGifTooLarge
+					return
+				}
+				key := h.uploader.BuildKey(purpose, userID, "gif")
+				url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), "image/gif")
+				if err != nil {
+					h.logS3Err(purpose, userID, fh.Filename, fh.Size, ct, err)
+					errs <- err
+					return
+				}
+				out[i] = outItem{
+					URL:    url,
+					Width:  width,
+					Height: height,
+					SizeKB: len(data) / 1024,
+				}
+				errs <- nil
+				return
+			}
+
+			// If client already sent WEBP and it's within limit: don't decode/re-encode (big win)
+			if strings.EqualFold(ct, "image/webp") && len(data) <= maxOutBytes {
 				key := h.uploader.BuildKey(purpose, userID, "webp")
 				url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), "image/webp")
 				if err != nil {
@@ -215,6 +495,13 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	for range files {
 		if e := <-errs; e != nil {
+			if errors.Is(e, errGifTooLarge) {
+				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+					Code:    "FILE_TOO_LARGE",
+					Message: "GIF не должен превышать 1MB",
+				})
+				return
+			}
 			var resp minio.ErrorResponse
 			if errors.As(e, &resp) && strings.TrimSpace(resp.Code) != "" {
 				switch resp.Code {

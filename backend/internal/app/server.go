@@ -32,14 +32,14 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	// media storage (optional; server must still start if not configured)
 	var uploader *storage.S3Uploader
 	if u, err := storage.NewS3Uploader(storage.S3Config{
-		Endpoint:      cfg.S3Endpoint,
-		Region:        cfg.S3Region,
-		Bucket:        cfg.S3Bucket,
-		AccessKey:     cfg.S3AccessKey,
-		SecretKey:     cfg.S3SecretKey,
-		UseSSL:        cfg.S3UseSSL,
-		PublicBaseURL: cfg.S3PublicBaseURL,
-		Prefix:        cfg.S3Prefix,
+		Endpoint:         cfg.S3Endpoint,
+		Region:           cfg.S3Region,
+		Bucket:           cfg.S3Bucket,
+		AccessKey:        cfg.S3AccessKey,
+		SecretKey:        cfg.S3SecretKey,
+		UseSSL:           cfg.S3UseSSL,
+		PublicBaseURL:    cfg.S3PublicBaseURL,
+		Prefix:           cfg.S3Prefix,
 		SignatureVersion: cfg.S3SignatureVersion,
 	}); err == nil {
 		uploader = u
@@ -57,7 +57,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 
 	// services
 	userService := service.NewUserService(userRepo)
-	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo)
+	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo, uploader)
 	authService := service.NewAuthService(userRepo, jwtMgr)
 	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo, userRepo, tagRepo)
 	followService := service.NewFollowService(followRepo, userRepo)

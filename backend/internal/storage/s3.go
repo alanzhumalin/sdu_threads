@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -22,6 +23,7 @@ type S3Uploader struct {
 	bucket     string
 	publicBase string
 	prefix     string
+	sigVersion string
 }
 
 type S3Config struct {
@@ -99,6 +101,7 @@ func NewS3Uploader(cfg S3Config) (*S3Uploader, error) {
 		bucket:     strings.TrimSpace(cfg.Bucket),
 		publicBase: publicBase,
 		prefix:     prefix,
+		sigVersion: sig,
 	}, nil
 }
 
@@ -124,6 +127,11 @@ func (u *S3Uploader) PublicURL(objectKey string) string {
 	return u.publicBase + "/" + u.bucket + "/" + key
 }
 
+func (u *S3Uploader) KeyPrefix(purpose, userID string) string {
+	base := path.Join(u.prefix, strings.Trim(purpose, "/"), strings.Trim(userID, "/"))
+	return strings.Trim(base, "/")
+}
+
 func (u *S3Uploader) BuildKey(purpose, userID, ext string) string {
 	now := time.Now().UTC()
 	ext = strings.TrimLeft(strings.ToLower(ext), ".")
@@ -137,4 +145,186 @@ func (u *S3Uploader) BuildKey(purpose, userID, ext string) string {
 		fmt.Sprintf("%04d/%02d/%02d", now.Year(), now.Month(), now.Day()),
 	)
 	return path.Join(base, fmt.Sprintf("%d.%s", now.UnixNano(), ext))
+}
+
+type ObjectStat struct {
+	Size        int64
+	ContentType string
+}
+
+func (u *S3Uploader) Stat(ctx context.Context, objectKey string) (ObjectStat, error) {
+	if u == nil {
+		return ObjectStat{}, ErrDisabled
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return ObjectStat{}, errors.New("object key is required")
+	}
+	info, err := u.c.StatObject(ctx, u.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return ObjectStat{}, err
+	}
+	return ObjectStat{Size: info.Size, ContentType: info.ContentType}, nil
+}
+
+func (u *S3Uploader) Remove(ctx context.Context, objectKey string) error {
+	if u == nil {
+		return ErrDisabled
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return errors.New("object key is required")
+	}
+	return u.c.RemoveObject(ctx, u.bucket, key, minio.RemoveObjectOptions{})
+}
+
+// KeyFromPublicURL extracts the object key from a public URL produced by PublicURL().
+func (u *S3Uploader) KeyFromPublicURL(raw string) (string, bool) {
+	if u == nil {
+		return "", false
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	// Drop query/fragment (defensive).
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		raw = raw[:i]
+	}
+	prefix := u.publicBase + "/" + u.bucket + "/"
+	if !strings.HasPrefix(raw, prefix) {
+		return "", false
+	}
+	key := strings.TrimLeft(strings.TrimPrefix(raw, prefix), "/")
+	if key == "" {
+		return "", false
+	}
+	return key, true
+}
+
+type PresignedPost struct {
+	URL     string            `json:"upload_url"`
+	Fields  map[string]string `json:"fields"`
+	Key     string            `json:"key"`
+	Public  string            `json:"url"`
+	Expires int64             `json:"expires_unix"`
+}
+
+// PresignPost returns a presigned POST policy (URL + fields) for browser upload.
+// Storage will enforce maxBytes via content-length-range, and the exact contentType.
+func (u *S3Uploader) PresignPost(ctx context.Context, objectKey string, contentType string, maxBytes int64, ttl time.Duration) (*PresignedPost, error) {
+	if u == nil {
+		return nil, ErrDisabled
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return nil, errors.New("object key is required")
+	}
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		return nil, errors.New("content type is required")
+	}
+	if maxBytes <= 0 {
+		return nil, errors.New("maxBytes must be positive")
+	}
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+
+	policy := minio.NewPostPolicy()
+	if err := policy.SetBucket(u.bucket); err != nil {
+		return nil, err
+	}
+	if err := policy.SetKey(key); err != nil {
+		return nil, err
+	}
+	exp := time.Now().UTC().Add(ttl)
+	if err := policy.SetExpires(exp); err != nil {
+		return nil, err
+	}
+	// Allow empty files? no. Enforce at least 1 byte.
+	if err := policy.SetContentLengthRange(1, maxBytes); err != nil {
+		return nil, err
+	}
+	if err := policy.SetContentType(ct); err != nil {
+		return nil, err
+	}
+
+	upl, fields, err := u.c.PresignedPostPolicy(ctx, policy)
+	if err != nil {
+		return nil, err
+	}
+	if upl == nil {
+		return nil, errors.New("presign failed: nil url")
+	}
+
+	return &PresignedPost{
+		URL:     upl.String(),
+		Fields:  fields,
+		Key:     key,
+		Public:  u.PublicURL(key),
+		Expires: exp.Unix(),
+	}, nil
+}
+
+type PresignedPut struct {
+	URL     string            `json:"upload_url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Key     string            `json:"key"`
+	Public  string            `json:"url"`
+	Expires int64             `json:"expires_unix"`
+}
+
+// PresignPut returns a presigned PUT URL for direct browser upload.
+//
+// Note: With Signature V2, extra signed headers are not supported by minio-go;
+// we still return Content-Type in Headers for best-effort metadata.
+func (u *S3Uploader) PresignPut(ctx context.Context, objectKey string, contentType string, ttl time.Duration) (*PresignedPut, error) {
+	if u == nil {
+		return nil, ErrDisabled
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return nil, errors.New("object key is required")
+	}
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		return nil, errors.New("content type is required")
+	}
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+
+	exp := time.Now().UTC().Add(ttl)
+
+	// For SigV4 we can sign Content-Type header, which makes browser uploads safer.
+	var (
+		upl *url.URL
+		err error
+	)
+	var headers map[string]string
+	if u.sigVersion == "v4" {
+		hdr := make(http.Header)
+		hdr.Set("Content-Type", ct)
+		upl, err = u.c.PresignHeader(ctx, http.MethodPut, u.bucket, key, ttl, nil, hdr)
+		headers = map[string]string{"Content-Type": ct}
+	} else {
+		upl, err = u.c.PresignedPutObject(ctx, u.bucket, key, ttl)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if upl == nil {
+		return nil, errors.New("presign failed: nil url")
+	}
+
+	return &PresignedPut{
+		URL:     upl.String(),
+		Method:  http.MethodPut,
+		Headers: headers,
+		Key:     key,
+		Public:  u.PublicURL(key),
+		Expires: exp.Unix(),
+	}, nil
 }
