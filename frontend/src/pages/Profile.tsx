@@ -89,6 +89,27 @@ export default function ProfilePage() {
   const [bgPreview, setBgPreview] = useState<string>("");
   const [pendingAvatar, setPendingAvatar] = useState<{ file: File; previewUrl: string } | null>(null);
   const [pendingBackground, setPendingBackground] = useState<{ file: File; previewUrl: string } | null>(null);
+  const MAX_MEDIA_BYTES = 1024 * 1024; // 1MB
+  const avatarUploadCtl = useRef<{ version: number; controller: AbortController | null }>({
+    version: 0,
+    controller: null,
+  });
+  const bgUploadCtl = useRef<{ version: number; controller: AbortController | null }>({
+    version: 0,
+    controller: null,
+  });
+  const [avatarUpload, setAvatarUpload] = useState<{
+    uploading: boolean;
+    uploadedUrl?: string;
+    uploadedKey?: string;
+    error?: string;
+  }>({ uploading: false });
+  const [bgUpload, setBgUpload] = useState<{
+    uploading: boolean;
+    uploadedUrl?: string;
+    uploadedKey?: string;
+    error?: string;
+  }>({ uploading: false });
   const [drawingTarget, setDrawingTarget] = useState<"background" | "avatar" | null>(null);
   const [cropTarget, setCropTarget] = useState<{
     target: "background" | "avatar";
@@ -375,6 +396,12 @@ export default function ProfilePage() {
     if (pendingBackground) URL.revokeObjectURL(pendingBackground.previewUrl);
     setPendingAvatar(null);
     setPendingBackground(null);
+    avatarUploadCtl.current.controller?.abort();
+    bgUploadCtl.current.controller?.abort();
+    avatarUploadCtl.current = { version: 0, controller: null };
+    bgUploadCtl.current = { version: 0, controller: null };
+    setAvatarUpload({ uploading: false });
+    setBgUpload({ uploading: false });
     setForm({
       full_name: profile.full_name || "",
       bio: profile.bio || "",
@@ -404,6 +431,68 @@ export default function ProfilePage() {
     setPendingBackground(null);
   };
 
+  const uploadProfileMediaNow = async (target: "background" | "avatar", file: File) => {
+    if (!token) return;
+
+    const isAvatar = target === "avatar";
+    const ctl = isAvatar ? avatarUploadCtl : bgUploadCtl;
+    const setState = isAvatar ? setAvatarUpload : setBgUpload;
+
+    ctl.current.controller?.abort();
+    const controller = new AbortController();
+    ctl.current.controller = controller;
+    ctl.current.version += 1;
+    const version = ctl.current.version;
+
+    setState({ uploading: true, uploadedUrl: undefined, uploadedKey: undefined, error: undefined });
+
+    try {
+      let uploadFile = file;
+
+      // GIFs are uploaded as-is (<= 1MB). Cropping would flatten the animation.
+      if (uploadFile.type === "image/gif") {
+        if (uploadFile.size > MAX_MEDIA_BYTES) {
+          throw new Error("GIF не должен превышать 1 МБ");
+        }
+      } else {
+        uploadFile = await fileToWebpIfNeeded(uploadFile);
+
+        // If conversion failed (Safari/unsupported), fallback to backend upload pipeline.
+        if (uploadFile.type !== "image/webp") {
+          const items = await api.uploadMedia([file], target, token);
+          const url = items[0]?.url;
+          if (!url) throw new Error("Не удалось загрузить изображение");
+          if (ctl.current.version !== version) return;
+          setState({ uploading: false, uploadedUrl: url, uploadedKey: undefined, error: undefined });
+          return;
+        }
+
+        if (uploadFile.size > MAX_MEDIA_BYTES) {
+          throw new Error("Изображение не должно превышать 1 МБ");
+        }
+      }
+
+      const presigned = await api.presignMedia(
+        [{ content_type: uploadFile.type, size_bytes: uploadFile.size }],
+        target,
+        token
+      );
+      const p = presigned[0];
+      if (!p) throw new Error("Не удалось подготовить загрузку");
+
+      await api.uploadPresignedPut(p, uploadFile, controller.signal);
+
+      if (ctl.current.version !== version) return;
+      setState({ uploading: false, uploadedUrl: p.url, uploadedKey: p.key, error: undefined });
+    } catch (e: any) {
+      if (controller.signal.aborted) return;
+      if (ctl.current.version !== version) return;
+      const msg = e?.message || "Не удалось загрузить файл";
+      setState({ uploading: false, uploadedUrl: undefined, uploadedKey: undefined, error: msg });
+      setSaveError(msg);
+    }
+  };
+
   const applyPendingImage = (target: "background" | "avatar", file: File) => {
     const url = URL.createObjectURL(file);
     if (target === "avatar") {
@@ -415,6 +504,9 @@ export default function ProfilePage() {
       setPendingBackground({ file, previewUrl: url });
       setBgPreview(url);
     }
+
+    // Upload immediately (like posts): presign -> direct PUT to storage.
+    void uploadProfileMediaNow(target, file);
   };
 
   const closeCrop = () => {
@@ -464,6 +556,19 @@ export default function ProfilePage() {
       return;
     }
 
+    if (avatarUpload.uploading || bgUpload.uploading) {
+      setSaveError("Дождитесь завершения загрузки медиа");
+      return;
+    }
+    if (pendingAvatar && !avatarUpload.uploadedUrl) {
+      setSaveError(avatarUpload.error || "Не удалось загрузить аватар");
+      return;
+    }
+    if (pendingBackground && !bgUpload.uploadedUrl) {
+      setSaveError(bgUpload.error || "Не удалось загрузить фон");
+      return;
+    }
+
     setSaving(true);
     const payload = {
       full_name: form.full_name.trim(),
@@ -471,35 +576,8 @@ export default function ProfilePage() {
       social_links,
     };
     try {
-      let avatarURL: string | undefined;
-      let backgroundURL: string | undefined;
-
-      const uploads: Promise<void>[] = [];
-      if (pendingAvatar) {
-        uploads.push(
-          (async () => {
-            const f = await fileToWebpIfNeeded(pendingAvatar.file);
-            const items = await api.uploadMedia([f], "avatar", token);
-            const url = items[0]?.url;
-            if (!url) throw new Error("Не удалось загрузить аватар");
-            avatarURL = url;
-          })()
-        );
-      }
-      if (pendingBackground) {
-        uploads.push(
-          (async () => {
-            const f = await fileToWebpIfNeeded(pendingBackground.file);
-            const items = await api.uploadMedia([f], "background", token);
-            const url = items[0]?.url;
-            if (!url) throw new Error("Не удалось загрузить фон");
-            backgroundURL = url;
-          })()
-        );
-      }
-      if (uploads.length > 0) {
-        await Promise.all(uploads);
-      }
+      const avatarURL = pendingAvatar ? avatarUpload.uploadedUrl : undefined;
+      const backgroundURL = pendingBackground ? bgUpload.uploadedUrl : undefined;
 
       const updated = await api.updateProfile(
         {
@@ -518,6 +596,8 @@ export default function ProfilePage() {
         background_url: updated.background_url,
       });
       clearPendingImages();
+      setAvatarUpload({ uploading: false });
+      setBgUpload({ uploading: false });
       setAvatarPreview(updated.avatar_url || "");
       setBgPreview(updated.background_url || "");
       closeCrop();
@@ -1022,6 +1102,12 @@ export default function ProfilePage() {
                   onClick={() => {
                     setDrawingTarget(null);
                     clearPendingImages();
+                    avatarUploadCtl.current.controller?.abort();
+                    bgUploadCtl.current.controller?.abort();
+                    avatarUploadCtl.current = { version: 0, controller: null };
+                    bgUploadCtl.current = { version: 0, controller: null };
+                    setAvatarUpload({ uploading: false });
+                    setBgUpload({ uploading: false });
                     closeCrop();
                     setEditOpen(false);
                   }}
@@ -1042,6 +1128,11 @@ export default function ProfilePage() {
                             <img src={bgPreview} alt="background" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full" />
+                          )}
+                          {bgUpload.uploading && (
+                            <div className="pointer-events-none absolute inset-0 z-10 bg-black/45 flex items-center justify-center">
+                              <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            </div>
                           )}
                           <div className="absolute right-3 bottom-3 flex items-center gap-2">
                             <button
@@ -1082,6 +1173,11 @@ export default function ProfilePage() {
                                 <img src={avatarPreview} alt="avatar" className="w-full h-full object-cover" />
                               ) : (
                                 <span>{form.full_name?.[0]?.toUpperCase() || "?"}</span>
+                              )}
+                              {avatarUpload.uploading && (
+                                <div className="pointer-events-none absolute inset-0 z-10 bg-black/45 flex items-center justify-center">
+                                  <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                </div>
                               )}
                             </div>
                             <div className="absolute -right-2 bottom-0 flex flex-col gap-2 z-20">
@@ -1243,7 +1339,13 @@ export default function ProfilePage() {
                       </button>
                       <button
                         onClick={handleSave}
-                        disabled={saving}
+                        disabled={
+                          saving ||
+                          avatarUpload.uploading ||
+                          bgUpload.uploading ||
+                          (!!pendingAvatar && !avatarUpload.uploadedUrl) ||
+                          (!!pendingBackground && !bgUpload.uploadedUrl)
+                        }
                         className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
                       >
                         {saving ? "Сохранение..." : "Сохранить"}
