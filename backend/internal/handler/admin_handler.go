@@ -209,7 +209,8 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 	idOrUsername := parts[0]
 	if len(parts) == 1 {
 		// GET /api/admin/users/:id
-		if r.Method != http.MethodGet {
+		// DELETE /api/admin/users/:id
+		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
@@ -230,6 +231,32 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 		}
 		if target.IsRootAdmin && !reqUser.IsRootAdmin {
 			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if r.Method == http.MethodDelete {
+			// Root admin is protected from deletion (even by self/root).
+			if target.IsRootAdmin {
+				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "PROTECTED_USER", Message: "cannot delete root admin"})
+				return
+			}
+			// Avoid deleting yourself by accident.
+			if target.ID == reqUser.ID {
+				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "PROTECTED_USER", Message: "cannot delete yourself"})
+				return
+			}
+
+			// Hard-delete user. DB constraints are configured with ON DELETE CASCADE,
+			// so posts/comments/likes/follows/etc will be removed automatically.
+			res := h.db.WithContext(r.Context()).Delete(&models.User{}, "id = ?", target.ID)
+			if res.Error != nil {
+				writeError(w, http.StatusInternalServerError, res.Error.Error())
+				return
+			}
+			if res.RowsAffected == 0 {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
 			return
 		}
 		p, pErr := h.profile.Get(r.Context(), target.ID, nil)

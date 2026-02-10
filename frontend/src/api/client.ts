@@ -775,6 +775,13 @@ export const api = {
       { role },
       token
     ),
+  adminDeleteUser: (idOrUsername: string, token: string) =>
+    request<{ status: string }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}`,
+      "DELETE",
+      undefined,
+      token
+    ),
   adminRemovePost: (postId: string, reason: string | undefined, token: string) =>
     request<{ status: string }>(
       `/admin/posts/${encodeURIComponent(postId)}/remove`,

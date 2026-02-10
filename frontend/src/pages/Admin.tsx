@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { UserRow } from "../components/UserRow";
@@ -51,6 +52,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -123,6 +125,26 @@ export default function AdminPage() {
       setUsersError(e?.message || "Не удалось загрузить пользователей");
     } finally {
       setUsersLoading(false);
+    }
+  };
+
+  const deleteUser = async (u: AdminUser) => {
+    if (!token) return;
+    if (deletingUserId) return;
+    const ok = window.confirm(
+      `Удалить пользователя @${u.username}?\n\nЭто удалит его профиль, посты, комментарии, лайки и подписки.`
+    );
+    if (!ok) return;
+    setDeletingUserId(u.id);
+    setUsersError(null);
+    try {
+      await api.adminDeleteUser(u.id, token);
+      setUsers((prev) => prev.filter((x) => x.id !== u.id));
+      setSelected((prev) => (prev?.id === u.id ? null : prev));
+    } catch (e: any) {
+      setUsersError(e?.message || "Не удалось удалить пользователя");
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -260,11 +282,22 @@ export default function AdminPage() {
         ) : (
           <div className="space-y-2">
             {users.map((u) => (
-              <button
+              <div
                 key={u.id}
-                type="button"
-                onClick={() => openUser(u)}
-                className="w-full text-left"
+                role="button"
+                tabIndex={0}
+                className="w-full text-left cursor-pointer"
+                onClick={(e) => {
+                  // Don't select user when clicking links/buttons inside the row.
+                  if ((e.target as HTMLElement | null)?.closest("a,button")) return;
+                  openUser(u);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openUser(u);
+                  }
+                }}
               >
                 <UserRow
                   user={{
@@ -274,12 +307,30 @@ export default function AdminPage() {
                     avatar_url: u.avatar_url,
                   }}
                   right={
-                    <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
-                      {u.role}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                        {u.role}
+                      </span>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          className="danger w-9 h-9 rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10 grid place-items-center disabled:opacity-60"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            deleteUser(u);
+                          }}
+                          disabled={deletingUserId === u.id}
+                          aria-label={`Удалить пользователя @${u.username}`}
+                          title="Удалить пользователя"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      ) : null}
+                    </div>
                   }
                 />
-              </button>
+              </div>
             ))}
           </div>
         )}
