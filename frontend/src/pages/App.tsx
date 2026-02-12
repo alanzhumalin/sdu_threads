@@ -8,6 +8,8 @@ import ProfilePage from "./Profile";
 import ProfileUserPage from "./ProfileUser";
 import SearchPage from "./Search";
 import NotificationsPage from "./Notifications";
+import ChatsPage from "./Chats";
+import ChatConversationPage from "./ChatConversation";
 import PostPermalinkPage from "./PostPermalink";
 import AdminPage from "./Admin";
 import ModerationPage from "./Moderation";
@@ -15,6 +17,7 @@ import ModerationReportsPage from "./ModerationReports";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 import { useNotificationStore } from "../store/notifications";
+import { useChatStore } from "../store/chats";
 import { api } from "../api/client";
 import { AuthGateOverlay } from "../components/AuthGateOverlay";
 import { AuthGateModal } from "../components/AuthGateModal";
@@ -43,6 +46,7 @@ export default function App() {
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
   const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
+  const setChatsUnreadCount = useChatStore((s) => s.setUnreadCount);
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
@@ -95,9 +99,96 @@ export default function App() {
     };
   }, [token, setUnreadCount]);
 
+  useEffect(() => {
+    if (!token) {
+      setChatsUnreadCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let attempts = 0;
+
+    const refreshUnread = async () => {
+      try {
+        const res = await api.chatsUnread(token);
+        if (!cancelled) setChatsUnreadCount(res.unread_count || 0);
+      } catch {
+        // silent: chat badge is non-critical indicator
+      }
+    };
+
+    const reconnect = () => {
+      if (cancelled) return;
+      const delay = Math.min(1000 * 2 ** attempts, 10000);
+      attempts += 1;
+      reconnectTimer = window.setTimeout(connect, delay);
+    };
+
+    const connect = () => {
+      if (cancelled) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(`${protocol}://${window.location.host}/api/chats/ws`);
+
+      socket.onopen = () => {
+        socket?.send(
+          JSON.stringify({
+            type: "auth",
+            token,
+          })
+        );
+        attempts = 0;
+      };
+
+      socket.onmessage = (evt) => {
+        try {
+          const parsed = JSON.parse(String(evt.data)) as { type?: string };
+          if (parsed?.type === "chat_list_updated") {
+            void refreshUnread();
+          }
+        } catch {
+          // ignore malformed frames
+        }
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+
+      socket.onclose = () => {
+        if (cancelled) return;
+        reconnect();
+      };
+    };
+
+    void refreshUnread();
+    connect();
+
+    const pollID = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshUnread();
+    }, 30000);
+    const onFocus = () => {
+      void refreshUnread();
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      window.clearInterval(pollID);
+      window.removeEventListener("focus", onFocus);
+      socket?.close();
+    };
+  }, [token, setChatsUnreadCount]);
+
   const items = [
     { label: "Лента", path: "/" , icon: "feed"},
     { label: "Поиск", path: "/search", icon: "search"},
+    { label: "Чаты", path: "/chats", icon: "messages"},
     { label: "Уведомления", path: "/notifications", icon: "bell"},
     { label: "Telegram", path: telegramChannelUrl, icon: "telegram" },
     { label: "Профиль", path: "/profile", icon: "user"},
@@ -155,11 +246,11 @@ export default function App() {
                 )
               }
             />
-          <Route
-            path="/notifications"
-            element={
-              isAuthed ? (
-                <NotificationsPage />
+            <Route
+              path="/notifications"
+              element={
+                isAuthed ? (
+                  <NotificationsPage />
               ) : (
                 <AuthGateOverlay
                   mode="page"
@@ -170,9 +261,45 @@ export default function App() {
                 >
                   <NotificationsSkeleton />
                 </AuthGateOverlay>
-              )
-            }
-          />
+                )
+              }
+            />
+            <Route
+              path="/chats"
+              element={
+                isAuthed ? (
+                  <ChatsPage />
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Чаты доступны только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <NotificationsSkeleton />
+                  </AuthGateOverlay>
+                )
+              }
+            />
+            <Route
+              path="/chats/:chatId"
+              element={
+                isAuthed ? (
+                  <ChatConversationPage />
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Чаты доступны только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <NotificationsSkeleton />
+                  </AuthGateOverlay>
+                )
+              }
+            />
             <Route
               path="/profile"
               element={

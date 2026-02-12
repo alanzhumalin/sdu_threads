@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useFeedStore } from "./feed";
 import { useNotificationStore } from "./notifications";
+import { useChatStore } from "./chats";
 import { usePostCacheStore } from "./postCache";
 import { useProfileMeStore } from "./profileMe";
 import { usePostCooldownStore } from "./postCooldown";
@@ -30,6 +31,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       usePostCacheStore.getState().clear();
       useFeedStore.getState().setCache([], null);
       useNotificationStore.getState().setUnreadCount(0);
+      useChatStore.getState().setUnreadCount(0);
       usePostCooldownStore.getState().clear();
       useSubscriptionsStore.getState().clear();
       useUserStatsStore.getState().clear();

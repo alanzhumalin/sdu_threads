@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { Heart, MessageCircle, Eye } from "lucide-react";
@@ -38,6 +38,7 @@ function timeAgo(iso: string) {
 
 export default function ProfileUserPage() {
   const token = useAuthStore((s) => s.token);
+  const navigate = useNavigate();
   const { username } = useParams();
   const feedStore = useFeedStore();
   const postPatches = usePostCacheStore((s) => s.byId);
@@ -50,9 +51,14 @@ export default function ProfileUserPage() {
   const [posts, setPosts] = useState<any[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [openingChat, setOpeningChat] = useState(false);
   const [commentsPost, setCommentsPost] = useState<any | null>(null);
   const observer = useRef<IntersectionObserver | null>(null);
   const viewed = useRef<Set<string>>(new Set());
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [username]);
 
   const fetchData = async () => {
     if (!token || !username) return;
@@ -167,6 +173,19 @@ export default function ProfileUserPage() {
     }
   };
 
+  const openDirectChat = async () => {
+    if (!token || !profile || profile.is_me || openingChat) return;
+    setOpeningChat(true);
+    try {
+      const chat = await api.openDirectChat({ user_id: profile.id }, token);
+      navigate(`/chats/${chat.id}`);
+    } catch (e: any) {
+      setError(e.message || "Не удалось открыть чат");
+    } finally {
+      setOpeningChat(false);
+    }
+  };
+
   const stats = useUserStatsStore((s) => (profile?.id ? s.byUserId[profile.id] : undefined));
   const followersCount = typeof stats?.followers === "number" ? stats.followers : profile?.followers ?? 0;
   const followingCount = typeof stats?.following === "number" ? stats.following : profile?.following ?? 0;
@@ -253,16 +272,25 @@ export default function ProfileUserPage() {
                   Это вы
                 </button>
               ) : (
-                <button
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition self-start ${
-                    (subs[profile.id] ?? profile.is_subscribed)
-                      ? "bg-white/10 text-white border border-white/30 hover:border-white"
-                      : "bg-white text-black hover:bg-gray-200"
-                  }`}
-                  onClick={toggleFollow}
-                >
-                  {(subs[profile.id] ?? profile.is_subscribed) ? "Отписаться" : "Подписаться"}
-                </button>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <button
+                    className={`rounded-full px-4 py-2 text-sm font-semibold transition self-start ${
+                      (subs[profile.id] ?? profile.is_subscribed)
+                        ? "bg-white/10 text-white border border-white/30 hover:border-white"
+                        : "bg-white text-black hover:bg-gray-200"
+                    }`}
+                    onClick={toggleFollow}
+                  >
+                    {(subs[profile.id] ?? profile.is_subscribed) ? "Отписаться" : "Подписаться"}
+                  </button>
+                  <button
+                    className="rounded-full px-4 py-2 text-sm font-semibold border border-white/30 bg-white/5 text-white hover:border-white transition self-start disabled:opacity-60"
+                    onClick={openDirectChat}
+                    disabled={openingChat}
+                  >
+                    {openingChat ? "Открываем..." : "Отправить сообщение"}
+                  </button>
+                </div>
               )}
             </div>
             <SocialLinksOverlay

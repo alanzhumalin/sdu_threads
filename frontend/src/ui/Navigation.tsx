@@ -3,12 +3,14 @@ import {
   Home,
   LogIn,
   LogOut,
+  MessagesSquare,
   Plus,
   Search,
   User,
 } from "lucide-react";
 import { useRef } from "react";
 import { useNotificationStore } from "../store/notifications";
+import { useChatStore } from "../store/chats";
 import telegramIconUrl from "../assets/telegram.png";
 
 type NavItem = { label: string; path: string; icon: string };
@@ -23,6 +25,7 @@ const icons: Record<string, JSX.Element> = {
   feed: <Home size={22} strokeWidth={1.7} />,
   search: <Search size={22} strokeWidth={1.7} />,
   bell: <Bell size={22} strokeWidth={1.7} />,
+  messages: <MessagesSquare size={22} strokeWidth={1.7} />,
   telegram: (
     <img
       src={telegramIconUrl}
@@ -42,7 +45,10 @@ const icons: Record<string, JSX.Element> = {
 export default function Navigation({ items, onClick, activePath }: Props) {
   const navRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
-  const mobileItems = items.filter((i) => i.icon !== "telegram");
+  const chatsUnreadCount = useChatStore((s) => s.unreadCount);
+  const mobileItems = items.filter((i) => i.icon !== "telegram" && i.icon !== "exit");
+  const isActive = (path: string) =>
+    !!activePath && (activePath === path || (path !== "/" && activePath.startsWith(`${path}/`)));
 
   return (
     <>
@@ -59,7 +65,7 @@ export default function Navigation({ items, onClick, activePath }: Props) {
             className={`nav-icon ${
               item.icon === "exit"
                 ? "danger"
-                : activePath === item.path
+                : isActive(item.path)
                   ? "active"
                   : item.icon === "telegram"
                     ? "sidebar-pill hover:border-white/30"
@@ -71,7 +77,7 @@ export default function Navigation({ items, onClick, activePath }: Props) {
               className={
                 item.icon === "exit"
                   ? "text-red-400"
-                  : activePath === item.path
+                  : isActive(item.path)
                     ? "text-black"
                     : "text-white/60"
               }
@@ -79,6 +85,9 @@ export default function Navigation({ items, onClick, activePath }: Props) {
               <span className="relative grid place-items-center w-6 h-6">
                 {icons[item.icon] || null}
                 {item.icon === "bell" && unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+                )}
+                {item.icon === "messages" && chatsUnreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
                 )}
               </span>
@@ -98,7 +107,7 @@ export default function Navigation({ items, onClick, activePath }: Props) {
             className={`grid place-items-center w-12 h-12 rounded-full transition ${
               item.icon === "exit"
                 ? "text-red-400 hover:bg-white/5"
-                : activePath === item.path
+                : isActive(item.path)
                   ? "text-black bg-white"
                   : "text-white/60 hover:text-white hover:bg-white/5"
             }`}
@@ -107,6 +116,9 @@ export default function Navigation({ items, onClick, activePath }: Props) {
             <span className="relative grid place-items-center w-6 h-6">
               {icons[item.icon] || null}
               {item.icon === "bell" && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+              )}
+              {item.icon === "messages" && chatsUnreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
               )}
             </span>

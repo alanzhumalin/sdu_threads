@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useProfileMeStore } from "../store/profileMe";
-import { X, Heart, Paperclip, SendHorizontal, MessageCircle, Eye } from "lucide-react";
+import { X, Heart, SendHorizontal, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { ErrorMessage } from "./ErrorMessage";
 import { CommentSkeleton } from "./CommentSkeleton";
@@ -1090,9 +1090,6 @@ useLayoutEffect(() => {
             </div>
           )}
           <div className="flex items-center gap-3">
-            <button className="nav-icon bg-white/5 border border-white/10 text-white/80 hover:text-white" type="button" aria-label="attach" disabled>
-              <Paperclip className="w-5 h-5" />
-            </button>
             <div className="flex-1 min-w-0 relative">
               <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2">
                 <div className="pointer-events-none whitespace-pre-wrap break-words text-white relative z-0 min-h-[48px]">

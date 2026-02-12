@@ -53,6 +53,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	followRepo := repository.NewFollowRepository(client.DB)
 	tagRepo := repository.NewHashtagRepository(client.DB)
 	reportRepo := repository.NewReportRepository(client.DB)
+	chatRepo := repository.NewChatRepository(client.DB)
 	viewService := service.NewViewService(postRepo, cfg.ViewTTLMin)
 
 	// services
@@ -65,10 +66,12 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	hashtagService := service.NewHashtagService(tagRepo, postRepo, userRepo, followRepo)
 	notificationService := service.NewNotificationService(client.DB, userRepo)
 	reportService := service.NewReportService(reportRepo, userRepo, postRepo)
+	chatService := service.NewChatService(chatRepo, userRepo)
 	searchHandler := handler.NewSearchHandler(userRepo)
 	topUsersHandler := handler.NewTopUsersHandler(followService)
 	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
 	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr)
+	chatHandler := handler.NewChatHandler(chatService, jwtMgr)
 	adminHandler := handler.NewAdminHandler(client.DB, userRepo, postRepo, profileService, postService, jwtMgr)
 	moderationHandler := handler.NewModerationHandler(userRepo, postRepo, postService, reportService, jwtMgr)
 
@@ -89,6 +92,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	topUsersHandler.Register(mux)
 	reportHandler.Register(mux)
 	mediaHandler.Register(mux)
+	chatHandler.Register(mux)
 	adminHandler.Register(mux)
 	moderationHandler.Register(mux)
 

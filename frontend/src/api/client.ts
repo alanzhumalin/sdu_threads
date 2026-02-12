@@ -9,6 +9,38 @@ type SocialLinks = Partial<
   Record<"instagram" | "telegram" | "github" | "linkedin", string>
 >;
 
+export type ChatParticipant = {
+  id: string;
+  username: string;
+  full_name: string;
+  avatar_url?: string;
+};
+
+export type ChatLastMessage = {
+  id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+};
+
+export type ChatPreview = {
+  id: string;
+  participant: ChatParticipant;
+  last_message?: ChatLastMessage;
+  last_message_at?: string;
+  unread_count: number;
+};
+
+export type ChatMessage = {
+  id: string;
+  chat_id: string;
+  sender_id: string;
+  reply_to_id?: string;
+  body: string;
+  read_at?: string;
+  created_at: string;
+};
+
 type ApiErrorShape =
   | { error: string }
   | { error: { code?: string; message?: string; retry_after_seconds?: number } }
@@ -573,6 +605,46 @@ export const api = {
         nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
       })
     ),
+  openDirectChat: (payload: { user_id?: string; username?: string }, token: string) =>
+    request<ChatPreview>("/chats/direct", "POST", payload, token),
+  chats: (limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<ChatPreview[]>(
+      `/chats?limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  chatById: (chatId: string, token?: string | null) =>
+    request<ChatPreview>(`/chats/${encodeURIComponent(chatId)}`, "GET", undefined, token),
+  chatMessages: (chatId: string, limit = 30, offset = 0, token?: string | null) =>
+    requestWithHeaders<ChatMessage[]>(
+      `/chats/${encodeURIComponent(chatId)}/messages?limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  sendChatMessage: (chatId: string, body: string, token: string, replyToID?: string) =>
+    request<ChatMessage>(
+      `/chats/${encodeURIComponent(chatId)}/messages`,
+      "POST",
+      { body, reply_to_id: replyToID },
+      token
+    ),
+  markChatRead: (chatId: string, token?: string | null) =>
+    request<{ status: string; updated: number }>(
+      `/chats/${encodeURIComponent(chatId)}/read`,
+      "POST",
+      undefined,
+      token
+    ),
+  chatsUnread: (token?: string | null) =>
+    request<{ unread_count: number }>(`/chats-unread`, "GET", undefined, token),
   notificationsUnread: (token?: string | null) =>
     request<{ unread_count: number }>(`/notifications-unread`, "GET", undefined, token),
   notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>

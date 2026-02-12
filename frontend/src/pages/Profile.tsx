@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
@@ -53,6 +53,8 @@ const timeAgo = (iso: string) => {
 
 export default function ProfilePage() {
   const token = useAuthStore((s) => s.token);
+  const setToken = useAuthStore((s) => s.setToken);
+  const navigate = useNavigate();
   const updateFeedByUser = useFeedStore((s) => s.updateByUser);
   const cachedProfile = useProfileMeStore((s) => s.profile);
   const cachedMyPosts = useProfileMeStore((s) => s.myPosts);
@@ -167,6 +169,11 @@ export default function ProfilePage() {
     } finally {
       setLoadingProfile(false);
     }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    navigate("/login");
   };
 
   useEffect(() => {
@@ -875,12 +882,18 @@ export default function ProfilePage() {
               </div>
             </div>
           </div>
-          <div className="md:pt-0 pt-2 flex md:justify-end">
+          <div className="md:pt-0 pt-2 flex md:justify-end gap-2">
             <button
               className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition self-start"
               onClick={openEdit}
             >
               Редактировать
+            </button>
+            <button
+              className="min-[871px]:hidden rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 hover:border-red-300/70 hover:text-red-200 transition self-start"
+              onClick={handleLogout}
+            >
+              Выйти
             </button>
           </div>
           <SocialLinksOverlay
