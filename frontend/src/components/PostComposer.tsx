@@ -49,6 +49,35 @@ type MediaItem = {
   error?: string;
 };
 
+const HEIC_MIME_SET = new Set([
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+]);
+
+const isHeicOrHeifFile = (file: File) => {
+  const type = String(file.type || "").toLowerCase();
+  if (HEIC_MIME_SET.has(type)) return true;
+  if (type.includes("heic") || type.includes("heif")) return true;
+  const name = String(file.name || "").trim().toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif");
+};
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutReason: string): Promise<T> => {
+  let timer: number | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(timeoutReason)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+  }
+};
+
 const highlightInlineHashtags = (
   text: string,
   ignoredHashtagStarts?: Set<number>,
@@ -406,10 +435,20 @@ export default function PostComposer({ onCreated }: Props) {
   };
 
   const startUpload = async (targets: { id: string; file: File; oldKey?: string }[]) => {
-    if (!token) return;
     if (targets.length === 0) return;
 
-    const MAX_BYTES = 1024 * 1024;
+    if (!token) {
+      setMedia((prev) =>
+        prev.map((m) =>
+          targets.some((t) => t.id === m.id)
+            ? { ...m, status: "error", error: "Войдите в аккаунт, чтобы загружать медиа" }
+            : m
+        )
+      );
+      return;
+    }
+
+    const MAX_BYTES = 5 * 1024 * 1024;
 
     // Abort any previous in-flight uploads for these items and mark them as preparing.
     const uploadTokenByID = new Map<string, string>();
@@ -448,9 +487,16 @@ export default function PostComposer({ onCreated }: Props) {
         try {
           const f = await fileToWebpIfNeeded(t.file);
           if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
-          if (f.type !== "image/webp" && f.type !== "image/gif") throw new Error("unsupported_image_type");
+          if (isHeicOrHeifFile(f)) throw new Error("unsupported_heic");
+          if (!f.type.startsWith("image/") || f.type === "image/svg+xml") {
+            throw new Error("unsupported_image_type");
+          }
           if (f.size > MAX_BYTES) throw new Error("file_too_large");
-          const { width, height } = await getImageDimensions(f);
+          const { width, height } = await withTimeout(
+            getImageDimensions(f),
+            4000,
+            "image_decode_timeout"
+          );
           if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
           return { id: t.id, ok: true as const, file: f, width, height, oldKey: t.oldKey };
         } catch (e: any) {
@@ -460,36 +506,36 @@ export default function PostComposer({ onCreated }: Props) {
       })
     );
 
-    const dropRefIfCurrent = (id: string) => {
-      const entry = uploadRef.current.get(id);
-      if (entry && entry.token === uploadTokenByID.get(id)) uploadRef.current.delete(id);
-    };
-
-    prepared.forEach((p) => {
-      if (!p.ok && p.reason !== "canceled" && p.reason !== "stale") dropRefIfCurrent(p.id);
-    });
-
     // Apply preparation results to state (dimensions + potentially converted file).
     setMedia((prev) =>
       prev.map((m) => {
         const p = prepared.find((x) => x.id === m.id);
         if (!p) return m;
-        const entry = uploadRef.current.get(m.id);
-        if (!entry || entry.token !== uploadTokenByID.get(m.id)) return m; // stale
 
         if (!p.ok) {
           if (p.reason === "canceled" || p.reason === "stale") return m;
+          const current = uploadRef.current.get(m.id);
+          if (current && current.token === uploadTokenByID.get(m.id)) {
+            uploadRef.current.delete(m.id);
+          }
           return {
             ...m,
             status: "error",
             error:
               p.reason === "file_too_large"
-                ? "Файл слишком большой (максимум 1MB)"
+                ? "Файл слишком большой (максимум 5MB)"
+                : p.reason === "unsupported_heic"
+                  ? "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF."
+                : p.reason === "image_decode_timeout" || p.reason === "image_load_failed"
+                  ? "Формат изображения не поддерживается. Выберите JPG, PNG, WebP или GIF."
                 : p.reason === "unsupported_image_type"
-                  ? "Поддерживаются только изображения и GIF"
+                  ? "Поддерживаются только JPG, PNG, WebP или GIF."
                   : "Не удалось подготовить файл",
           };
         }
+
+        const entry = uploadRef.current.get(m.id);
+        if (!entry || entry.token !== uploadTokenByID.get(m.id)) return m; // stale
 
         return {
           ...m,
@@ -607,14 +653,20 @@ export default function PostComposer({ onCreated }: Props) {
     const allowed = /^image\//i;
     const currentCount = media.length;
     let rejected = false;
-    const MAX_BYTES = 1024 * 1024;
+    let rejectedHeic = false;
+    const MAX_BYTES = 5 * 1024 * 1024;
 
     for (const f of incoming) {
+      if (isHeicOrHeifFile(f)) {
+        rejected = true;
+        rejectedHeic = true;
+        continue;
+      }
       if (!allowed.test(f.type) || f.type === "image/svg+xml") {
         rejected = true;
         continue;
       }
-      if (f.type === "image/gif" && f.size > MAX_BYTES) {
+      if (f.size > MAX_BYTES) {
         rejected = true;
         continue;
       }
@@ -631,7 +683,11 @@ export default function PostComposer({ onCreated }: Props) {
     }
 
     if (rejected) {
-      setMediaError("Можно добавить только изображения (максимум 5 вложений)");
+      setMediaError(
+        rejectedHeic
+          ? "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF."
+          : "Можно добавить только изображения до 5MB (максимум 5 вложений)"
+      );
       setTimeout(() => setMediaError(""), 3000);
     }
 
@@ -1024,7 +1080,7 @@ export default function PostComposer({ onCreated }: Props) {
             <ImageIcon className="w-5 h-5" strokeWidth={1.7} />
             <input
               type="file"
-              accept="image/*,image/gif"
+              accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
               className="hidden"
               multiple
               onChange={(e) => {

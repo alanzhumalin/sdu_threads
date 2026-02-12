@@ -95,7 +95,7 @@ func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media 
 		return media, nil
 	}
 
-	const maxBytes = 1 * 1024 * 1024
+	const maxBytes = 5 * 1024 * 1024
 	prefix := s.uploader.KeyPrefix("post", userID) + "/"
 
 	out := make([]dto.MediaItem, 0, len(media))
@@ -104,11 +104,6 @@ func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media 
 		if !ok || !strings.HasPrefix(key, prefix) {
 			return nil, errors.New("invalid media url")
 		}
-		// Basic defense-in-depth: enforce only the formats we allow through upload.
-		if !strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".gif") {
-			return nil, errors.New("invalid media type")
-		}
-
 		st, err := s.uploader.Stat(ctx, key)
 		if err != nil {
 			// Object doesn't exist or can't be read.
@@ -117,7 +112,7 @@ func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media 
 		if st.Size <= 0 || st.Size > maxBytes {
 			// If client lied about size, clean up best-effort.
 			_ = s.uploader.Remove(ctx, key)
-			return nil, errors.New("file too large (max 1MB)")
+			return nil, errors.New("file too large (max 5MB)")
 		}
 
 		m.URL = s.uploader.PublicURL(key) // normalize

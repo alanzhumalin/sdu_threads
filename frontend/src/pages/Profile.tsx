@@ -18,7 +18,6 @@ import { CommentsModal } from "../components/CommentsModal";
 import { SocialLinksOverlay, type SocialLinks, type SocialType } from "../components/SocialLinks";
 import { MentionPreview } from "../components/MentionPreview";
 import { FollowListModal } from "../components/FollowListModal";
-import { fileToWebpIfNeeded } from "../utils/media";
 import FabricImageEditor from "../components/FabricImageEditor";
 
 function formatDate(iso: string) {
@@ -89,7 +88,7 @@ export default function ProfilePage() {
   const [bgPreview, setBgPreview] = useState<string>("");
   const [pendingAvatar, setPendingAvatar] = useState<{ file: File; previewUrl: string } | null>(null);
   const [pendingBackground, setPendingBackground] = useState<{ file: File; previewUrl: string } | null>(null);
-  const MAX_MEDIA_BYTES = 1024 * 1024; // 1MB
+  const MAX_MEDIA_BYTES = 5 * 1024 * 1024; // 5MB
   const avatarUploadCtl = useRef<{ version: number; controller: AbortController | null }>({
     version: 0,
     controller: null,
@@ -447,29 +446,12 @@ export default function ProfilePage() {
     setState({ uploading: true, uploadedUrl: undefined, uploadedKey: undefined, error: undefined });
 
     try {
-      let uploadFile = file;
-
-      // GIFs are uploaded as-is (<= 1MB). Cropping would flatten the animation.
-      if (uploadFile.type === "image/gif") {
-        if (uploadFile.size > MAX_MEDIA_BYTES) {
-          throw new Error("GIF не должен превышать 1 МБ");
-        }
-      } else {
-        uploadFile = await fileToWebpIfNeeded(uploadFile);
-
-        // If conversion failed (Safari/unsupported), fallback to backend upload pipeline.
-        if (uploadFile.type !== "image/webp") {
-          const items = await api.uploadMedia([file], target, token);
-          const url = items[0]?.url;
-          if (!url) throw new Error("Не удалось загрузить изображение");
-          if (ctl.current.version !== version) return;
-          setState({ uploading: false, uploadedUrl: url, uploadedKey: undefined, error: undefined });
-          return;
-        }
-
-        if (uploadFile.size > MAX_MEDIA_BYTES) {
-          throw new Error("Изображение не должно превышать 1 МБ");
-        }
+      const uploadFile = file;
+      if (!uploadFile.type.startsWith("image/") || uploadFile.type === "image/svg+xml") {
+        throw new Error("Можно загрузить только изображения");
+      }
+      if (uploadFile.size > MAX_MEDIA_BYTES) {
+        throw new Error("Изображение не должно превышать 5 МБ");
       }
 
       const presigned = await api.presignMedia(

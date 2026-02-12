@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chai2010/webp"
-	"github.com/disintegration/imaging"
 	"github.com/minio/minio-go/v7"
 	_ "golang.org/x/image/webp"
 	"golang.org/x/time/rate"
@@ -26,7 +24,55 @@ import (
 	"sduthreads/internal/storage"
 )
 
-var errGifTooLarge = errors.New("gif_too_large")
+var errFileTooLarge = errors.New("file_too_large")
+
+const maxMediaBytes = 5 * 1024 * 1024
+
+func normalizeImageContentType(raw string) (string, bool) {
+	ct := strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	if !strings.HasPrefix(ct, "image/") || ct == "image/svg+xml" {
+		return "", false
+	}
+	return ct, true
+}
+
+func imageExtFromContentType(ct string) string {
+	switch ct {
+	case "image/jpeg", "image/jpg", "image/pjpeg":
+		return "jpg"
+	case "image/png", "image/apng":
+		return "png"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	case "image/bmp", "image/x-ms-bmp":
+		return "bmp"
+	case "image/tiff", "image/x-tiff":
+		return "tiff"
+	case "image/avif":
+		return "avif"
+	case "image/heic":
+		return "heic"
+	case "image/heif":
+		return "heif"
+	}
+
+	subtype := strings.TrimPrefix(ct, "image/")
+	subtype = strings.TrimSpace(subtype)
+	subtype = strings.TrimPrefix(subtype, "x-")
+	if i := strings.Index(subtype, "+"); i >= 0 {
+		subtype = subtype[:i]
+	}
+	subtype = strings.ReplaceAll(subtype, ".", "")
+	if subtype == "" {
+		return "img"
+	}
+	return subtype
+}
 
 type MediaHandler struct {
 	uploader *storage.S3Uploader
@@ -169,29 +215,25 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const maxBytes = 1 * 1024 * 1024
 	items := make([]*storage.PresignedPut, 0, len(req.Files))
 	for _, f := range req.Files {
-		ct := strings.ToLower(strings.TrimSpace(f.ContentType))
-		if ct != "image/webp" && ct != "image/gif" {
+		ct, ok := normalizeImageContentType(f.ContentType)
+		if !ok {
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "INVALID_MEDIA_TYPE",
-				Message: "Можно загрузить только webp или gif",
+				Message: "Можно загрузить только изображения (без SVG)",
 			})
 			return
 		}
-		if f.SizeBytes <= 0 || f.SizeBytes > maxBytes {
+		if f.SizeBytes <= 0 || f.SizeBytes > maxMediaBytes {
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "FILE_TOO_LARGE",
-				Message: "Размер файла не должен превышать 1MB",
+				Message: "Размер файла не должен превышать 5MB",
 			})
 			return
 		}
 
-		ext := "webp"
-		if ct == "image/gif" {
-			ext = "gif"
-		}
+		ext := imageExtFromContentType(ct)
 		key := h.uploader.BuildKey(purpose, userID, ext)
 		// Short TTL reduces the window in which a leaked presigned URL can be abused.
 		pp, err := h.uploader.PresignPut(r.Context(), key, ct, 2*time.Minute)
@@ -276,13 +318,6 @@ func (h *MediaHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if !strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".gif") {
-			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
-				Code:    "INVALID_MEDIA_TYPE",
-				Message: "Можно удалить только webp или gif",
-			})
-			return
-		}
 
 		// Best-effort cleanup; ignore not-found / storage errors.
 		_ = h.uploader.Remove(r.Context(), key)
@@ -317,9 +352,10 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 
-	// 20MB cap
-	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
-	if err := r.ParseMultipartForm(20 << 20); err != nil {
+	// 30MB request cap to allow up to 5 files x 5MB plus multipart overhead.
+	const maxBodyBytes = 30 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := r.ParseMultipartForm(maxBodyBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
@@ -354,10 +390,6 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]outItem, len(files))
 	errs := make(chan error, len(files))
-
-	const (
-		maxOutBytes = 1 * 1024 * 1024
-	)
 
 	for i := range files {
 		i := i
@@ -400,9 +432,13 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Only raster images (no SVG)
-			if !strings.HasPrefix(strings.ToLower(ct), "image/") || strings.EqualFold(ct, "image/svg+xml") {
+			ct, ok := normalizeImageContentType(ct)
+			if !ok {
 				errs <- errors.New("only raster images are allowed")
+				return
+			}
+			if len(data) == 0 || len(data) > maxMediaBytes {
+				errs <- errFileTooLarge
 				return
 			}
 
@@ -413,81 +449,19 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				width, height = cfg.Width, cfg.Height
 			}
 
-			// GIF: keep as-is (animation), but enforce <= 1MB.
-			if strings.EqualFold(ct, "image/gif") {
-				if len(data) > maxOutBytes {
-					errs <- errGifTooLarge
-					return
-				}
-				key := h.uploader.BuildKey(purpose, userID, "gif")
-				url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), "image/gif")
-				if err != nil {
-					h.logS3Err(purpose, userID, fh.Filename, fh.Size, ct, err)
-					errs <- err
-					return
-				}
-				out[i] = outItem{
-					URL:    url,
-					Width:  width,
-					Height: height,
-					SizeKB: len(data) / 1024,
-				}
-				errs <- nil
-				return
-			}
-
-			// If client already sent WEBP and it's within limit: don't decode/re-encode (big win)
-			if strings.EqualFold(ct, "image/webp") && len(data) <= maxOutBytes {
-				key := h.uploader.BuildKey(purpose, userID, "webp")
-				url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), "image/webp")
-				if err != nil {
-					h.logS3Err(purpose, userID, fh.Filename, fh.Size, ct, err)
-					errs <- err
-					return
-				}
-
-				out[i] = outItem{
-					URL:    url,
-					Width:  width,
-					Height: height,
-					SizeKB: len(data) / 1024,
-				}
-				errs <- nil
-				return
-			}
-
-			// Decode full image (needed for conversion)
-			img, _, err := image.Decode(bytes.NewReader(data))
-			if err != nil {
-				errs <- errors.New("unsupported image format")
-				return
-			}
-
-			// Fast compress to WebP <= 900KB (few encodes)
-			webpBytes, w2, h2, err := compressWebPFast(img, maxOutBytes)
-			if err != nil {
-				errs <- err
-				return
-			}
-
-			key := h.uploader.BuildKey(purpose, userID, "webp")
-			url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(webpBytes), int64(len(webpBytes)), "image/webp")
+			key := h.uploader.BuildKey(purpose, userID, imageExtFromContentType(ct))
+			url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), ct)
 			if err != nil {
 				h.logS3Err(purpose, userID, fh.Filename, fh.Size, ct, err)
 				errs <- err
 				return
 			}
 
-			// If decodeconfig failed earlier, use resulting dims from processed img
-			if w2 > 0 && h2 > 0 {
-				width, height = w2, h2
-			}
-
 			out[i] = outItem{
 				URL:    url,
 				Width:  width,
 				Height: height,
-				SizeKB: len(webpBytes) / 1024,
+				SizeKB: len(data) / 1024,
 			}
 			errs <- nil
 		}()
@@ -495,10 +469,10 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	for range files {
 		if e := <-errs; e != nil {
-			if errors.Is(e, errGifTooLarge) {
+			if errors.Is(e, errFileTooLarge) {
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "FILE_TOO_LARGE",
-					Message: "GIF не должен превышать 1MB",
+					Message: "Файл не должен превышать 5MB",
 				})
 				return
 			}
@@ -550,85 +524,4 @@ func (h *MediaHandler) logS3Err(purpose, userID, filename string, origSize int64
 		"media upload failed: purpose=%s user_id=%s filename=%q orig_size=%d orig_ct=%q err=%v",
 		purpose, userID, filename, origSize, ct, err,
 	)
-}
-
-// compressWebPFast tries to fit into maxBytes with few encodes (usually 1–3).
-// Key speedups vs your old version:
-//   - no binary search loop
-//   - no many iterations
-//   - imaging.Linear instead of Lanczos (much faster)
-func compressWebPFast(img image.Image, maxBytes int) ([]byte, int, int, error) {
-	if maxBytes <= 0 {
-		return nil, 0, 0, errors.New("invalid maxBytes")
-	}
-
-	encode := func(im image.Image, q float32) ([]byte, error) {
-		var buf bytes.Buffer
-		if err := webp.Encode(&buf, im, &webp.Options{
-			Lossless: false,
-			Quality:  q,
-		}); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	}
-
-	resizeByScale := func(src image.Image, scale float64) image.Image {
-		if scale >= 0.999 {
-			return src
-		}
-		w := int(math.Round(float64(src.Bounds().Dx()) * scale))
-		h := int(math.Round(float64(src.Bounds().Dy()) * scale))
-		if w < 1 {
-			w = 1
-		}
-		if h < 1 {
-			h = 1
-		}
-		// Lanczos is expensive; Linear is much faster and good enough for uploads.
-		return imaging.Resize(src, w, h, imaging.Linear)
-	}
-
-	// 1) first try: good quality
-	b, err := encode(img, 82)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	if len(b) <= maxBytes {
-		return b, img.Bounds().Dx(), img.Bounds().Dy(), nil
-	}
-
-	// 2) downscale by sqrt ratio (size ~ area)
-	scale1 := math.Sqrt(float64(maxBytes)/float64(len(b))) * 0.95
-	if scale1 > 0.98 {
-		scale1 = 0.98
-	}
-	if scale1 < 0.10 {
-		scale1 = 0.10
-	}
-	img1 := resizeByScale(img, scale1)
-
-	b1, err := encode(img1, 78)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	if len(b1) <= maxBytes {
-		return b1, img1.Bounds().Dx(), img1.Bounds().Dy(), nil
-	}
-
-	// 3) last attempt: a bit more downscale + lower quality
-	scale2 := math.Sqrt(float64(maxBytes)/float64(len(b1))) * 0.95
-	if scale2 > 0.98 {
-		scale2 = 0.98
-	}
-	if scale2 < 0.10 {
-		scale2 = 0.10
-	}
-	img2 := resizeByScale(img1, scale2)
-
-	b2, err := encode(img2, 70)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return b2, img2.Bounds().Dx(), img2.Bounds().Dy(), nil
 }
