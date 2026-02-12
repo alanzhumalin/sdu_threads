@@ -50,7 +50,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
-  const telegramChannelUrl = "https://t.me/+DGppZq0WZipkNDEy";
+  const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
   // We still rely on backend 401/403 for security.
