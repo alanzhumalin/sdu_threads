@@ -2,9 +2,11 @@ import io
 import logging
 import os
 import re
+import time
 import unicodedata
 from functools import lru_cache
 from typing import Any, Dict, List
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -19,10 +21,12 @@ logging.basicConfig(level=os.getenv("MODERATION_LOG_LEVEL", "INFO"))
 MAX_TEXT_CHARS = int(os.getenv("MODERATION_MAX_TEXT_CHARS", "5000"))
 MAX_IMAGE_BYTES = int(os.getenv("MODERATION_MAX_IMAGE_BYTES", str(7 * 1024 * 1024)))
 FETCH_TIMEOUT_SEC = float(os.getenv("MODERATION_FETCH_TIMEOUT_SEC", "5"))
+INFER_MAX_SIDE = int(os.getenv("MODERATION_INFER_MAX_SIDE", "1024"))
 TEXT_THRESHOLD = float(os.getenv("MODERATION_TEXT_THRESHOLD", "0.75"))
 IMAGE_THRESHOLD = float(os.getenv("MODERATION_IMAGE_THRESHOLD", "0.70"))
 SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_THRESHOLD", "0.45"))
 BLOCK_SUGGESTIVE = os.getenv("MODERATION_BLOCK_SUGGESTIVE", "true").lower() in {"1", "true", "yes", "on"}
+PRELOAD_MODELS = os.getenv("MODERATION_PRELOAD_MODELS", "true").lower() in {"1", "true", "yes", "on"}
 
 TEXT_MODEL_NAME = os.getenv("MODERATION_TEXT_MODEL", "s-nlp/russian_toxicity_classifier")
 IMAGE_MODEL_NAME = os.getenv("MODERATION_IMAGE_MODEL", "Falconsai/nsfw_image_detection")
@@ -344,11 +348,43 @@ def _compile_term_patterns() -> List[tuple[str, re.Pattern[str]]]:
 TERM_PATTERNS = _compile_term_patterns()
 
 
+def _duration_ms(started_at: float) -> float:
+    return round((time.perf_counter() - started_at) * 1000, 1)
+
+
+def _safe_url_for_log(raw_url: str) -> str:
+    try:
+        p = urlsplit(raw_url)
+        # Strip query/fragment because presigned URLs may contain secrets.
+        return urlunsplit((p.scheme, p.netloc, p.path, "", ""))
+    except Exception:
+        return "invalid_url"
+
+
+def _resize_for_inference(image: Image.Image) -> tuple[Image.Image, tuple[int, int], tuple[int, int], bool]:
+    original_size = image.size
+    if INFER_MAX_SIDE <= 0:
+        return image, original_size, image.size, False
+    max_side = max(image.size)
+    if max_side <= INFER_MAX_SIDE:
+        return image, original_size, image.size, False
+
+    ratio = INFER_MAX_SIDE / float(max_side)
+    new_w = max(1, int(round(image.size[0] * ratio)))
+    new_h = max(1, int(round(image.size[1] * ratio)))
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    resized = image.resize((new_w, new_h), resample=resampling)
+    return resized, original_size, resized.size, True
+
+
 @lru_cache(maxsize=1)
 def _text_model() -> Any:
+    started_at = time.perf_counter()
     try:
         logger.info("loading text moderation model: %s", TEXT_MODEL_NAME)
-        return pipeline("text-classification", model=TEXT_MODEL_NAME, tokenizer=TEXT_MODEL_NAME, top_k=None)
+        model = pipeline("text-classification", model=TEXT_MODEL_NAME, tokenizer=TEXT_MODEL_NAME, top_k=None)
+        logger.info("text moderation model loaded in %.1fms", _duration_ms(started_at))
+        return model
     except Exception as exc:
         logger.exception("text model load failed: %s", exc)
         return None
@@ -356,9 +392,12 @@ def _text_model() -> Any:
 
 @lru_cache(maxsize=1)
 def _image_model() -> Any:
+    started_at = time.perf_counter()
     try:
         logger.info("loading image moderation model: %s", IMAGE_MODEL_NAME)
-        return pipeline("image-classification", model=IMAGE_MODEL_NAME, top_k=None)
+        model = pipeline("image-classification", model=IMAGE_MODEL_NAME, top_k=None)
+        logger.info("image moderation model loaded in %.1fms", _duration_ms(started_at))
+        return model
     except Exception as exc:
         logger.exception("image model load failed: %s", exc)
         return None
@@ -366,9 +405,12 @@ def _image_model() -> Any:
 
 @lru_cache(maxsize=1)
 def _suggestive_model() -> Any:
+    started_at = time.perf_counter()
     try:
         logger.info("loading suggestive image model: %s", SUGGESTIVE_MODEL_NAME)
-        return pipeline("image-classification", model=SUGGESTIVE_MODEL_NAME, top_k=None)
+        model = pipeline("image-classification", model=SUGGESTIVE_MODEL_NAME, top_k=None)
+        logger.info("suggestive image model loaded in %.1fms", _duration_ms(started_at))
+        return model
     except Exception as exc:
         logger.exception("suggestive model load failed: %s", exc)
         return None
@@ -463,6 +505,7 @@ def _ensure_image_bytes(data: bytes) -> Image.Image:
 
 
 def _fetch_image(url: str) -> bytes:
+    started_at = time.perf_counter()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="only http(s) image urls are allowed")
 
@@ -491,7 +534,14 @@ def _fetch_image(url: str) -> bytes:
                 buf.extend(chunk)
                 if len(buf) > MAX_IMAGE_BYTES:
                     raise HTTPException(status_code=400, detail="image too large")
-            return bytes(buf)
+            raw = bytes(buf)
+            logger.info(
+                "image fetch done url=%s bytes=%d ms=%.1f",
+                _safe_url_for_log(url),
+                len(raw),
+                _duration_ms(started_at),
+            )
+            return raw
     except HTTPException:
         raise
     except requests.RequestException as exc:
@@ -499,8 +549,10 @@ def _fetch_image(url: str) -> bytes:
 
 
 def _moderate_text(text: str) -> ModerationDecision:
+    started_at = time.perf_counter()
     matched = _find_blocked_terms(text)
     if matched:
+        logger.info("text moderation blocked by keywords ms=%.1f matched_terms=%d", _duration_ms(started_at), len(matched))
         return ModerationDecision(
             allowed=False,
             reason="Текст содержит запрещенные слова",
@@ -514,6 +566,7 @@ def _moderate_text(text: str) -> ModerationDecision:
     if model is None:
         if TEXT_MODEL_REQUIRED:
             raise HTTPException(status_code=503, detail="text moderation model unavailable")
+        logger.info("text moderation skipped (model unavailable, fail-open) ms=%.1f", _duration_ms(started_at))
         return ModerationDecision(allowed=True, reason="", score=0.0, source="keyword-only", matched_terms=[], labels={})
 
     raw = model(text[:MAX_TEXT_CHARS], truncation=True)
@@ -529,7 +582,7 @@ def _moderate_text(text: str) -> ModerationDecision:
             labels=labels,
         )
 
-    return ModerationDecision(
+    decision = ModerationDecision(
         allowed=True,
         reason="",
         score=toxicity,
@@ -537,10 +590,34 @@ def _moderate_text(text: str) -> ModerationDecision:
         matched_terms=[],
         labels=labels,
     )
+    logger.info(
+        "text moderation done allowed=%s score=%.4f labels=%d ms=%.1f",
+        decision.allowed,
+        decision.score,
+        len(decision.labels),
+        _duration_ms(started_at),
+    )
+    return decision
 
 
 def _moderate_image_bytes(data: bytes) -> ModerationDecision:
+    total_started_at = time.perf_counter()
+    decode_started_at = time.perf_counter()
     image = _ensure_image_bytes(data)
+    decode_ms = _duration_ms(decode_started_at)
+
+    resize_started_at = time.perf_counter()
+    infer_image, original_size, infer_size, resized_for_infer = _resize_for_inference(image)
+    resize_ms = _duration_ms(resize_started_at)
+    if resized_for_infer:
+        logger.info(
+            "image resized for inference from=%dx%d to=%dx%d ms=%.1f",
+            original_size[0],
+            original_size[1],
+            infer_size[0],
+            infer_size[1],
+            resize_ms,
+        )
 
     nsfw_model = _image_model()
     if nsfw_model is None:
@@ -548,10 +625,21 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
             raise HTTPException(status_code=503, detail="image moderation model unavailable")
         return ModerationDecision(allowed=True, reason="", score=0.0, source="disabled", matched_terms=[], labels={})
 
-    nsfw_raw = nsfw_model(image)
+    nsfw_started_at = time.perf_counter()
+    nsfw_raw = nsfw_model(infer_image)
+    nsfw_ms = _duration_ms(nsfw_started_at)
     nsfw_labels = _labels_to_map(_flatten_labels(nsfw_raw))
     nsfw_score = _score_by_hints(nsfw_labels, NSFW_LABEL_HINTS)
     if nsfw_score >= IMAGE_THRESHOLD:
+        logger.info(
+            "image moderation blocked nsfw_score=%.4f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f total_ms=%.1f",
+            nsfw_score,
+            len(data),
+            decode_ms,
+            resize_ms,
+            nsfw_ms,
+            _duration_ms(total_started_at),
+        )
         return ModerationDecision(
             allowed=False,
             reason="Изображение распознано как NSFW",
@@ -563,18 +651,31 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
 
     suggestive_labels: Dict[str, float] = {}
     suggestive_score = 0.0
+    suggestive_ms = 0.0
     if BLOCK_SUGGESTIVE:
         suggestive_model = _suggestive_model()
         if suggestive_model is None:
             if SUGGESTIVE_MODEL_REQUIRED:
                 raise HTTPException(status_code=503, detail="suggestive moderation model unavailable")
         else:
-            suggestive_raw = suggestive_model(image)
+            suggestive_started_at = time.perf_counter()
+            suggestive_raw = suggestive_model(infer_image)
+            suggestive_ms = _duration_ms(suggestive_started_at)
             suggestive_labels = _labels_to_map(_flatten_labels(suggestive_raw))
             suggestive_score = _score_by_hints(suggestive_labels, SUGGESTIVE_LABEL_HINTS)
 
     labels = _merge_labels(nsfw_labels, suggestive_labels)
     if BLOCK_SUGGESTIVE and suggestive_score >= SUGGESTIVE_THRESHOLD:
+        logger.info(
+            "image moderation blocked suggestive_score=%.4f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+            suggestive_score,
+            len(data),
+            decode_ms,
+            resize_ms,
+            nsfw_ms,
+            suggestive_ms,
+            _duration_ms(total_started_at),
+        )
         return ModerationDecision(
             allowed=False,
             reason="Изображение слишком откровенное (купальник/сексуализированный контент)",
@@ -584,7 +685,7 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
             labels=labels,
         )
 
-    return ModerationDecision(
+    decision = ModerationDecision(
         allowed=True,
         reason="",
         score=max(nsfw_score, suggestive_score),
@@ -592,6 +693,23 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
         matched_terms=[],
         labels=labels,
     )
+    logger.info(
+        "image moderation done allowed=%s score=%.4f bytes=%d from=%dx%d infer=%dx%d resized=%s decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+        decision.allowed,
+        decision.score,
+        len(data),
+        original_size[0],
+        original_size[1],
+        infer_size[0],
+        infer_size[1],
+        str(resized_for_infer).lower(),
+        decode_ms,
+        resize_ms,
+        nsfw_ms,
+        suggestive_ms,
+        _duration_ms(total_started_at),
+    )
+    return decision
 
 
 @app.get("/healthz")
@@ -626,6 +744,28 @@ def healthz() -> Dict[str, Any]:
 def livez() -> Dict[str, str]:
     # Lightweight liveness probe: do not trigger model loading/downloading.
     return {"status": "ok"}
+
+
+@app.on_event("startup")
+def preload_models_on_startup() -> None:
+    if not PRELOAD_MODELS:
+        logger.info("startup preload is disabled")
+        return
+    started_at = time.perf_counter()
+    text_loaded = _text_model() is not None
+    image_loaded = _image_model() is not None
+    suggestive_loaded = True
+    suggestive_preload_skipped = BLOCK_SUGGESTIVE and not SUGGESTIVE_MODEL_REQUIRED
+    if BLOCK_SUGGESTIVE and SUGGESTIVE_MODEL_REQUIRED:
+        suggestive_loaded = _suggestive_model() is not None
+    logger.info(
+        "startup preload done text_loaded=%s image_loaded=%s suggestive_loaded=%s suggestive_preload_skipped=%s total_ms=%.1f",
+        text_loaded,
+        image_loaded,
+        suggestive_loaded,
+        suggestive_preload_skipped,
+        _duration_ms(started_at),
+    )
 
 
 @app.post("/moderate/text", response_model=ModerationDecision)

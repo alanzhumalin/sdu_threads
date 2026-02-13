@@ -89,6 +89,8 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `MODERATION_SUGGESTIVE_THRESHOLD`, `MODERATION_BLOCK_SUGGESTIVE`
   - `MODERATION_TEXT_MODEL`, `MODERATION_IMAGE_MODEL`, `MODERATION_SUGGESTIVE_MODEL`
   - `MODERATION_TEXT_MODEL_REQUIRED`, `MODERATION_IMAGE_MODEL_REQUIRED`, `MODERATION_SUGGESTIVE_MODEL_REQUIRED`
+  - `MODERATION_INFER_MAX_SIDE` (resize только для ML-инференса; исходный файл не меняется)
+  - `MODERATION_PRELOAD_MODELS` (прогрев моделей на старте сервиса)
   - `MODERATION_BLOCKED_TERMS` (дополнительные слова через запятую)
   - По умолчанию:
     - текст: `s-nlp/russian_toxicity_classifier`

@@ -131,6 +131,8 @@ services:
       MODERATION_MAX_TEXT_CHARS: ${MODERATION_MAX_TEXT_CHARS:-5000}
       MODERATION_MAX_IMAGE_BYTES: ${MODERATION_MAX_IMAGE_BYTES:-7340032}
       MODERATION_FETCH_TIMEOUT_SEC: ${MODERATION_FETCH_TIMEOUT_SEC:-5}
+      MODERATION_INFER_MAX_SIDE: ${MODERATION_INFER_MAX_SIDE:-1024}
+      MODERATION_PRELOAD_MODELS: ${MODERATION_PRELOAD_MODELS:-true}
       MODERATION_BLOCKED_TERMS: ${MODERATION_BLOCKED_TERMS:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/livez', timeout=5).read()"]
@@ -138,6 +140,9 @@ services:
       timeout: 10s
       retries: 20
       start_period: 180s
+    volumes:
+      - moderation_hf_cache:/root/.cache/huggingface
+      - moderation_torch_cache:/root/.cache/torch
     networks:
       - app
 
@@ -153,7 +158,7 @@ services:
       db_restore:
         condition: service_completed_successfully
       moderation:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
@@ -218,6 +223,8 @@ volumes:
   redis_data:
   nginx_cache:
   nginx_logs:
+  moderation_hf_cache:
+  moderation_torch_cache:
 
 networks:
   app:

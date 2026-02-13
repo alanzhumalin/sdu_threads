@@ -326,6 +326,7 @@ func (c *Client) handleServiceErr(err error) error {
 	if err == nil {
 		return nil
 	}
+	log.Printf("moderation request failed (fail_closed=%t): %v", c.failClosed, err)
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		// 4xx means the moderation service is reachable, but rejected/invalid request.
