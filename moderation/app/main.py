@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 from functools import lru_cache
@@ -27,6 +28,7 @@ IMAGE_THRESHOLD = float(os.getenv("MODERATION_IMAGE_THRESHOLD", "0.70"))
 SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_THRESHOLD", "0.45"))
 BLOCK_SUGGESTIVE = os.getenv("MODERATION_BLOCK_SUGGESTIVE", "true").lower() in {"1", "true", "yes", "on"}
 PRELOAD_MODELS = os.getenv("MODERATION_PRELOAD_MODELS", "true").lower() in {"1", "true", "yes", "on"}
+SUGGESTIVE_BG_WARMUP = os.getenv("MODERATION_SUGGESTIVE_BG_WARMUP", "true").lower() in {"1", "true", "yes", "on"}
 
 TEXT_MODEL_NAME = os.getenv("MODERATION_TEXT_MODEL", "s-nlp/russian_toxicity_classifier")
 IMAGE_MODEL_NAME = os.getenv("MODERATION_IMAGE_MODEL", "Falconsai/nsfw_image_detection")
@@ -346,6 +348,8 @@ def _compile_term_patterns() -> List[tuple[str, re.Pattern[str]]]:
 
 
 TERM_PATTERNS = _compile_term_patterns()
+_suggestive_warmup_lock = threading.Lock()
+_suggestive_warmup_started = False
 
 
 def _duration_ms(started_at: float) -> float:
@@ -414,6 +418,36 @@ def _suggestive_model() -> Any:
     except Exception as exc:
         logger.exception("suggestive model load failed: %s", exc)
         return None
+
+
+def _suggestive_model_if_ready() -> Any:
+    # Do not trigger a heavy model load from request path if suggestive model is optional.
+    if _suggestive_model.cache_info().currsize == 0:
+        return None
+    return _suggestive_model()
+
+
+def _start_suggestive_warmup_background() -> None:
+    if not BLOCK_SUGGESTIVE or SUGGESTIVE_MODEL_REQUIRED or not SUGGESTIVE_BG_WARMUP:
+        return
+
+    global _suggestive_warmup_started
+    with _suggestive_warmup_lock:
+        if _suggestive_warmup_started:
+            return
+        _suggestive_warmup_started = True
+
+    def _run() -> None:
+        started_at = time.perf_counter()
+        loaded = _suggestive_model() is not None
+        logger.info(
+            "background suggestive warmup done loaded=%s ms=%.1f",
+            loaded,
+            _duration_ms(started_at),
+        )
+
+    t = threading.Thread(target=_run, name="suggestive-warmup", daemon=True)
+    t.start()
 
 
 def _flatten_labels(raw: Any) -> List[Dict[str, Any]]:
@@ -653,10 +687,12 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
     suggestive_score = 0.0
     suggestive_ms = 0.0
     if BLOCK_SUGGESTIVE:
-        suggestive_model = _suggestive_model()
+        suggestive_model = _suggestive_model() if SUGGESTIVE_MODEL_REQUIRED else _suggestive_model_if_ready()
         if suggestive_model is None:
             if SUGGESTIVE_MODEL_REQUIRED:
                 raise HTTPException(status_code=503, detail="suggestive moderation model unavailable")
+            logger.info("suggestive model not ready, skipping optional suggestive check")
+            _start_suggestive_warmup_background()
         else:
             suggestive_started_at = time.perf_counter()
             suggestive_raw = suggestive_model(infer_image)
@@ -716,7 +752,12 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
 def healthz() -> Dict[str, Any]:
     text_loaded = _text_model() is not None
     image_loaded = _image_model() is not None
-    suggestive_loaded = _suggestive_model() is not None if BLOCK_SUGGESTIVE else False
+    suggestive_loaded = False
+    if BLOCK_SUGGESTIVE:
+        if SUGGESTIVE_MODEL_REQUIRED:
+            suggestive_loaded = _suggestive_model() is not None
+        else:
+            suggestive_loaded = _suggestive_model_if_ready() is not None
 
     degraded = (TEXT_MODEL_REQUIRED and not text_loaded) or (IMAGE_MODEL_REQUIRED and not image_loaded)
     if BLOCK_SUGGESTIVE and SUGGESTIVE_MODEL_REQUIRED and not suggestive_loaded:
@@ -758,6 +799,8 @@ def preload_models_on_startup() -> None:
     suggestive_preload_skipped = BLOCK_SUGGESTIVE and not SUGGESTIVE_MODEL_REQUIRED
     if BLOCK_SUGGESTIVE and SUGGESTIVE_MODEL_REQUIRED:
         suggestive_loaded = _suggestive_model() is not None
+    elif suggestive_preload_skipped:
+        _start_suggestive_warmup_background()
     logger.info(
         "startup preload done text_loaded=%s image_loaded=%s suggestive_loaded=%s suggestive_preload_skipped=%s total_ms=%.1f",
         text_loaded,
