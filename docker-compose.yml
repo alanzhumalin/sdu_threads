@@ -133,10 +133,11 @@ services:
       MODERATION_FETCH_TIMEOUT_SEC: ${MODERATION_FETCH_TIMEOUT_SEC:-5}
       MODERATION_BLOCKED_TERMS: ${MODERATION_BLOCKED_TERMS:-}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=2).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/livez', timeout=5).read()"]
       interval: 15s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 20
+      start_period: 180s
     networks:
       - app
 
@@ -152,7 +153,7 @@ services:
       db_restore:
         condition: service_completed_successfully
       moderation:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
     environment:

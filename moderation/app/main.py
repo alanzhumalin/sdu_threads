@@ -622,6 +622,12 @@ def healthz() -> Dict[str, Any]:
     }
 
 
+@app.get("/livez")
+def livez() -> Dict[str, str]:
+    # Lightweight liveness probe: do not trigger model loading/downloading.
+    return {"status": "ok"}
+
+
 @app.post("/moderate/text", response_model=ModerationDecision)
 def moderate_text(req: TextModerationRequest) -> ModerationDecision:
     return _moderate_text(req.text)
