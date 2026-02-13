@@ -2,11 +2,14 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/service"
 
 	"github.com/google/uuid"
@@ -17,10 +20,11 @@ type FollowHandler struct {
 	profile *service.ProfileService
 	posts   *service.PostService
 	jwt     *auth.JWTManager
+	cache   *cache.QueryCache
 }
 
-func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts *service.PostService, jwt *auth.JWTManager) *FollowHandler {
-	return &FollowHandler{follows: f, profile: p, posts: posts, jwt: jwt}
+func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts *service.PostService, jwt *auth.JWTManager, c *cache.QueryCache) *FollowHandler {
+	return &FollowHandler{follows: f, profile: p, posts: posts, jwt: jwt, cache: c}
 }
 
 func (h *FollowHandler) Register(mux *http.ServeMux) {
@@ -70,12 +74,14 @@ func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, tar
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixTopUsers)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "followed"})
 	case http.MethodDelete:
 		if err := h.follows.Unfollow(r.Context(), userID, targetID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixTopUsers)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "unfollowed"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -172,9 +178,22 @@ func (h *FollowHandler) handleProfile(w http.ResponseWriter, r *http.Request, id
 		}
 		p, err := h.profile.Update(r.Context(), currentID, req)
 		if err != nil {
+			var viol *moderation.ViolationError
+			if errors.As(err, &viol) {
+				writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+				return
+			}
+			if moderation.IsUnavailable(err) {
+				writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+					Code:    "MODERATION_UNAVAILABLE",
+					Message: "Сервис модерации временно недоступен",
+				})
+				return
+			}
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixUsersSearch, cachePrefixTopUsers)
 		writeJSON(w, http.StatusOK, p)
 
 	default:

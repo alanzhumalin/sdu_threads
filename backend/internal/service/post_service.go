@@ -9,6 +9,7 @@ import (
 
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/repository"
 	"sduthreads/internal/storage"
 
@@ -84,10 +85,11 @@ type PostService struct {
 	users    *repository.UserRepository
 	fols     *repository.FollowRepository
 	uploader *storage.S3Uploader
+	mod      *moderation.Client
 }
 
-func NewPostService(posts *repository.PostRepository, likes *repository.LikeRepository, tags *repository.HashtagRepository, users *repository.UserRepository, fols *repository.FollowRepository, uploader *storage.S3Uploader) *PostService {
-	return &PostService{posts: posts, likes: likes, tags: tags, users: users, fols: fols, uploader: uploader}
+func NewPostService(posts *repository.PostRepository, likes *repository.LikeRepository, tags *repository.HashtagRepository, users *repository.UserRepository, fols *repository.FollowRepository, uploader *storage.S3Uploader, mod *moderation.Client) *PostService {
+	return &PostService{posts: posts, likes: likes, tags: tags, users: users, fols: fols, uploader: uploader, mod: mod}
 }
 
 func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media []dto.MediaItem) ([]dto.MediaItem, error) {
@@ -198,6 +200,21 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 	if len(content) > 500 {
 		return nil, errors.New("content too long (max 500)")
 	}
+	preview := strings.TrimSpace(content)
+	if len(preview) > 160 {
+		preview = preview[:160] + "..."
+	}
+	if err := s.mod.CheckText(ctx, content, "post_text", &moderation.AuditMeta{
+		ActorUserID: userID,
+		Action:      "create_post",
+		TargetType:  "post",
+		Payload: map[string]any{
+			"content_preview": preview,
+			"media_count":     len(media),
+		},
+	}); err != nil {
+		return nil, err
+	}
 
 	clean := make([]dto.MediaItem, 0, len(media))
 	for _, m := range media {
@@ -222,6 +239,18 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 			return nil, err
 		}
 		clean = verified
+	}
+	for _, m := range clean {
+		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
+			ActorUserID: userID,
+			Action:      "create_post",
+			TargetType:  "post",
+			Payload: map[string]any{
+				"media_url": m.URL,
+			},
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if len(clean) > 5 {
 		return nil, errors.New("too many media files (max 5)")

@@ -117,6 +117,13 @@ export default function ModerationPage() {
             </button>
             <button
               type="button"
+              className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10"
+              onClick={() => navigate("/moderation/logs")}
+            >
+              Логи
+            </button>
+            <button
+              type="button"
               className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
               onClick={refresh}
               disabled={!token || loading}

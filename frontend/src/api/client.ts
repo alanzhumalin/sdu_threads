@@ -912,4 +912,16 @@ export const api = {
       { status, note },
       token
     ),
+  moderationLogs: (scope = "", query = "", limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<any[]>(
+      `/moderation/logs?scope=${encodeURIComponent(scope)}&query=${encodeURIComponent(
+        query
+      )}&limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
 };

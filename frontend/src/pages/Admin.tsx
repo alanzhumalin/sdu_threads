@@ -226,14 +226,23 @@ export default function AdminPage() {
       <div className="card p-4">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-lg font-semibold">Admin Dashboard</h1>
-          <button
-            type="button"
-            className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10"
-            onClick={() => runUserSearch()}
-            disabled={!token || usersLoading}
-          >
-            Обновить
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10"
+              onClick={() => navigate("/moderation/logs")}
+            >
+              Логи модерации
+            </button>
+            <button
+              type="button"
+              className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10"
+              onClick={() => runUserSearch()}
+              disabled={!token || usersLoading}
+            >
+              Обновить
+            </button>
+          </div>
         </div>
         {statsLoading ? (
           <div className="mt-3 text-white/60 text-sm">Загрузка статистики...</div>

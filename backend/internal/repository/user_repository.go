@@ -53,6 +53,8 @@ func (r *UserRepository) Search(ctx context.Context, q string, limit, offset int
 	}
 	var users []models.User
 	err := r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Select("id, username, full_name, bio, avatar_url, background_url").
 		Where("username ILIKE ? OR full_name ILIKE ?", "%"+q+"%", "%"+q+"%").
 		Order("username ASC").
 		Limit(limit).Offset(offset).

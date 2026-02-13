@@ -1,18 +1,24 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"time"
 
+	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
+	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
 )
 
 type SearchHandler struct {
 	users *repository.UserRepository
+	cache *cache.QueryCache
 }
 
-func NewSearchHandler(users *repository.UserRepository) *SearchHandler {
-	return &SearchHandler{users: users}
+func NewSearchHandler(users *repository.UserRepository, c *cache.QueryCache) *SearchHandler {
+	return &SearchHandler{users: users, cache: c}
 }
 
 func (h *SearchHandler) Register(mux *http.ServeMux) {
@@ -25,10 +31,19 @@ func (h *SearchHandler) searchUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query().Get("q")
+	q = strings.TrimSpace(q)
 	limit := parseIntQuery(r, "limit", 20)
 	offset := parseIntQuery(r, "offset", 0)
 
-	users, err := h.users.Search(r.Context(), q, limit, offset)
+	users, err := cache.GetOrLoadJSON(
+		r.Context(),
+		h.cache,
+		cacheKeyUsersSearch(q, limit, offset),
+		30*time.Second,
+		func(ctx context.Context) ([]models.User, error) {
+			return h.users.Search(ctx, q, limit, offset)
+		},
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

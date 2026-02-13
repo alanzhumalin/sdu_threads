@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"sduthreads/internal/auth"
+	"sduthreads/internal/dto"
 	"sduthreads/internal/repository"
 	"sduthreads/internal/service"
 )
@@ -19,15 +20,24 @@ type ModerationHandler struct {
 	posts     *repository.PostRepository
 	postSvc   *service.PostService
 	reportSvc *service.ReportService
+	logs      *repository.ModerationEventRepository
 	jwt       *auth.JWTManager
 }
 
-func NewModerationHandler(users *repository.UserRepository, posts *repository.PostRepository, postSvc *service.PostService, reportSvc *service.ReportService, jwt *auth.JWTManager) *ModerationHandler {
+func NewModerationHandler(
+	users *repository.UserRepository,
+	posts *repository.PostRepository,
+	postSvc *service.PostService,
+	reportSvc *service.ReportService,
+	logs *repository.ModerationEventRepository,
+	jwt *auth.JWTManager,
+) *ModerationHandler {
 	return &ModerationHandler{
 		users:     users,
 		posts:     posts,
 		postSvc:   postSvc,
 		reportSvc: reportSvc,
+		logs:      logs,
 		jwt:       jwt,
 	}
 }
@@ -37,6 +47,7 @@ func (h *ModerationHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/moderation/posts/", h.postsDynamic)
 	mux.HandleFunc("/api/moderation/reports", h.reportsList)
 	mux.HandleFunc("/api/moderation/reports/", h.reportsDynamic)
+	mux.HandleFunc("/api/moderation/logs", h.logsList)
 }
 
 func (h *ModerationHandler) requireModeratorOrAdmin(r *http.Request) (string, error) {
@@ -229,4 +240,67 @@ func (h *ModerationHandler) reportsDynamic(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+func (h *ModerationHandler) logsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, err := h.requireModeratorOrAdmin(r); err != nil {
+		if err.Error() == "forbidden" {
+			writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "FORBIDDEN", Message: "forbidden"})
+			return
+		}
+		writeErrorPayload(w, http.StatusUnauthorized, errorPayload{Code: "UNAUTHORIZED", Message: "unauthorized"})
+		return
+	}
+	if h.logs == nil {
+		writeJSON(w, http.StatusOK, []dto.ModerationLogItem{})
+		return
+	}
+
+	limit := parseIntQuery(r, "limit", 20)
+	offset := parseIntQuery(r, "offset", 0)
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+
+	rows, err := h.logs.List(r.Context(), scope, query, limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]dto.ModerationLogItem, 0, len(rows))
+	for _, row := range rows {
+		var matched []string
+		_ = json.Unmarshal([]byte(row.MatchedTermsJSON), &matched)
+		var labels map[string]float64
+		_ = json.Unmarshal([]byte(row.LabelsJSON), &labels)
+		var payload map[string]any
+		_ = json.Unmarshal([]byte(row.PayloadJSON), &payload)
+
+		out = append(out, dto.ModerationLogItem{
+			ID:             row.ID,
+			ActorUserID:    row.ActorUserID,
+			ActorUsername:  row.ActorUsername,
+			ActorFullName:  row.ActorFullName,
+			ActorAvatarURL: row.ActorAvatarURL,
+			Scope:          row.Scope,
+			Action:         row.Action,
+			TargetType:     row.TargetType,
+			TargetID:       row.TargetID,
+			Blocked:        row.Blocked,
+			Reason:         row.Reason,
+			Score:          row.Score,
+			Source:         row.Source,
+			MatchedTerms:   matched,
+			Labels:         labels,
+			Payload:        payload,
+			CreatedAt:      row.CreatedAt,
+		})
+	}
+
+	setNextOffset(w, offset, limit, len(out))
+	writeJSON(w, http.StatusOK, out)
 }

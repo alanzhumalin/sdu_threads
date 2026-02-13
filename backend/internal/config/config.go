@@ -31,6 +31,21 @@ type Config struct {
 	S3Prefix        string
 	// v4 (default) or v2 for some Swift/Ceph gateways.
 	S3SignatureVersion string
+
+	// External moderation service (FastAPI).
+	ModerationEnabled    bool
+	ModerationURL        string
+	ModerationTimeout    int
+	ModerationFailClosed bool
+
+	// Query cache (L1 in-memory + optional Redis L2).
+	CacheEnabled       bool
+	CacheRedisAddr     string
+	CacheRedisPassword string
+	CacheRedisDB       int
+	CacheKeyPrefix     string
+	CacheL1MaxEntries  int
+	CacheL1CleanupSec  int
 }
 
 func Load() Config {
@@ -58,6 +73,19 @@ func Load() Config {
 		// Optional. Leave empty to avoid an extra path segment in object keys.
 		S3Prefix:           getEnv("S3_PREFIX", ""),
 		S3SignatureVersion: getEnv("S3_SIGNATURE_VERSION", "v4"),
+
+		ModerationEnabled:    getEnvBool("MODERATION_ENABLED", false),
+		ModerationURL:        getEnv("MODERATION_URL", ""),
+		ModerationTimeout:    getEnvInt("MODERATION_TIMEOUT_MS", 4000),
+		ModerationFailClosed: getEnvBool("MODERATION_FAIL_CLOSED", true),
+
+		CacheEnabled:       getEnvBool("CACHE_ENABLED", true),
+		CacheRedisAddr:     getEnv("CACHE_REDIS_ADDR", ""),
+		CacheRedisPassword: getEnv("CACHE_REDIS_PASSWORD", ""),
+		CacheRedisDB:       getEnvInt("CACHE_REDIS_DB", 0),
+		CacheKeyPrefix:     getEnv("CACHE_KEY_PREFIX", "sdu:cache:"),
+		CacheL1MaxEntries:  getEnvInt("CACHE_L1_MAX_ENTRIES", 5000),
+		CacheL1CleanupSec:  getEnvInt("CACHE_L1_CLEANUP_SEC", 60),
 	}
 }
 

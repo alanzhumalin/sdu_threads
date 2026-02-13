@@ -1,16 +1,22 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"time"
+
+	"sduthreads/internal/cache"
+	"sduthreads/internal/repository"
 	"sduthreads/internal/service"
 )
 
 type TopUsersHandler struct {
 	follows *service.FollowService
+	cache   *cache.QueryCache
 }
 
-func NewTopUsersHandler(f *service.FollowService) *TopUsersHandler {
-	return &TopUsersHandler{follows: f}
+func NewTopUsersHandler(f *service.FollowService, c *cache.QueryCache) *TopUsersHandler {
+	return &TopUsersHandler{follows: f, cache: c}
 }
 
 func (h *TopUsersHandler) Register(mux *http.ServeMux) {
@@ -23,7 +29,9 @@ func (h *TopUsersHandler) top(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := parseIntQuery(r, "limit", 3)
-	users, err := h.follows.TopFollowed(r.Context(), limit)
+	users, err := cache.GetOrLoadJSON(r.Context(), h.cache, cacheKeyTopUsers(limit), 45*time.Second, func(ctx context.Context) ([]repository.TopUser, error) {
+		return h.follows.TopFollowed(ctx, limit)
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

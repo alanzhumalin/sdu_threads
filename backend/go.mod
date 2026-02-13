@@ -3,13 +3,14 @@ module sduthreads
 go 1.25.6
 
 require (
-	github.com/chai2010/webp v1.4.0
-	github.com/disintegration/imaging v1.6.2
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.0.98
+	github.com/redis/go-redis/v9 v9.17.3
 	golang.org/x/crypto v0.46.0
 	golang.org/x/image v0.35.0
+	golang.org/x/net v0.48.0
+	golang.org/x/sync v0.19.0
 	golang.org/x/time v0.5.0
 	gorm.io/driver/postgres v1.5.7
 	gorm.io/driver/sqlite v1.5.7
@@ -17,6 +18,8 @@ require (
 )
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -36,7 +39,6 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 )

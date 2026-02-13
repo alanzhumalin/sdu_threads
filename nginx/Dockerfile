@@ -1,9 +1,6 @@
-# Multi-stage: build frontend, then ship with Nginx and custom config.
-
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY frontend/package*.json ./
-# If no lockfile, fallback to npm install
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY frontend/ .
 RUN npm run build

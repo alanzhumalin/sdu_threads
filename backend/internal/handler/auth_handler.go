@@ -6,17 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
 	"sduthreads/internal/service"
 )
 
 type AuthHandler struct {
-	auth *service.AuthService
+	auth  *service.AuthService
+	cache *cache.QueryCache
 }
 
-func NewAuthHandler(auth *service.AuthService) *AuthHandler {
-	return &AuthHandler{auth: auth}
+func NewAuthHandler(auth *service.AuthService, c *cache.QueryCache) *AuthHandler {
+	return &AuthHandler{auth: auth, cache: c}
 }
 
 func (h *AuthHandler) Register(mux *http.ServeMux) {
@@ -57,6 +59,7 @@ func (h *AuthHandler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	invalidateCachePrefixes(r.Context(), h.cache, cachePrefixUsersSearch)
 	writeJSON(w, http.StatusCreated, dto.AuthResponse{Token: token})
 }
 

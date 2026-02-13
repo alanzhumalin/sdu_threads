@@ -14,6 +14,7 @@ import PostPermalinkPage from "./PostPermalink";
 import AdminPage from "./Admin";
 import ModerationPage from "./Moderation";
 import ModerationReportsPage from "./ModerationReports";
+import ModerationLogsPage from "./ModerationLogs";
 import { useAuthStore } from "../store/auth";
 import Navigation from "../ui/Navigation";
 import { useNotificationStore } from "../store/notifications";
@@ -408,6 +409,26 @@ export default function App() {
                     mode="page"
                     title="Сначала авторизуйся"
                     message="Доступ к жалобам возможен только после входа."
+                    ctaLabel="Войти"
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
+                      <ProfileSkeleton />
+                    </div>
+                  </AuthGateOverlay>
+                )
+              }
+            />
+            <Route
+              path="/moderation/logs"
+              element={
+                isAuthed ? (
+                  <ModerationLogsPage />
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title="Сначала авторизуйся"
+                    message="Доступ к логам модерации возможен только после входа."
                     ctaLabel="Войти"
                     className="min-h-[calc(100vh-9rem)]"
                   >

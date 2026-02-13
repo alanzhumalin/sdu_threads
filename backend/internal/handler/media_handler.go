@@ -21,6 +21,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/storage"
 )
 
@@ -78,15 +79,17 @@ type MediaHandler struct {
 	uploader *storage.S3Uploader
 	jwt      *auth.JWTManager
 	presign  *userPresignLimiter
+	mod      *moderation.Client
 }
 
-func NewMediaHandler(uploader *storage.S3Uploader, jwt *auth.JWTManager) *MediaHandler {
+func NewMediaHandler(uploader *storage.S3Uploader, jwt *auth.JWTManager, mod *moderation.Client) *MediaHandler {
 	// Limit presign spam per user: 30 files per minute, burst 30.
 	// Each presign request "costs" len(files) tokens.
 	return &MediaHandler{
 		uploader: uploader,
 		jwt:      jwt,
 		presign:  newUserPresignLimiter(30, 30),
+		mod:      mod,
 	}
 }
 
@@ -441,6 +444,20 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errFileTooLarge
 				return
 			}
+			if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
+				ActorUserID: userID,
+				Action:      "upload_media",
+				TargetType:  purpose,
+				Payload: map[string]any{
+					"purpose":      purpose,
+					"filename":     fh.Filename,
+					"content_type": ct,
+					"size_bytes":   len(data),
+				},
+			}); err != nil {
+				errs <- err
+				return
+			}
 
 			// Get dimensions cheaply (works for jpeg/png/gif/webp)
 			cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(data))
@@ -469,6 +486,18 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	for range files {
 		if e := <-errs; e != nil {
+			var viol *moderation.ViolationError
+			if errors.As(e, &viol) {
+				writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+				return
+			}
+			if moderation.IsUnavailable(e) {
+				writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+					Code:    "MODERATION_UNAVAILABLE",
+					Message: "Сервис модерации временно недоступен",
+				})
+				return
+			}
 			if errors.Is(e, errFileTooLarge) {
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "FILE_TOO_LARGE",

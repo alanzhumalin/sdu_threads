@@ -1,15 +1,19 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"sduthreads/internal/apperror"
 	"sduthreads/internal/auth"
+	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/service"
 )
 
@@ -17,10 +21,11 @@ type PostHandler struct {
 	service *service.PostService
 	views   *service.ViewService
 	jwt     *auth.JWTManager
+	cache   *cache.QueryCache
 }
 
-func NewPostHandler(s *service.PostService, views *service.ViewService, jwt *auth.JWTManager) *PostHandler {
-	return &PostHandler{service: s, views: views, jwt: jwt}
+func NewPostHandler(s *service.PostService, views *service.ViewService, jwt *auth.JWTManager, c *cache.QueryCache) *PostHandler {
+	return &PostHandler{service: s, views: views, jwt: jwt, cache: c}
 }
 
 func (h *PostHandler) Register(mux *http.ServeMux) {
@@ -68,9 +73,22 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+			var viol *moderation.ViolationError
+			if errors.As(err, &viol) {
+				writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+				return
+			}
+			if moderation.IsUnavailable(err) {
+				writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+					Code:    "MODERATION_UNAVAILABLE",
+					Message: "Сервис модерации временно недоступен",
+				})
+				return
+			}
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 	case http.MethodGet:
 		h.handleFeed(w, r)
@@ -122,6 +140,7 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixFeedPublic)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})
 		case http.MethodDelete:
 			userID, err := requireUserID(r, h.jwt)
@@ -133,6 +152,7 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixFeedPublic)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -162,7 +182,23 @@ func (h *PostHandler) handleFeed(w http.ResponseWriter, r *http.Request) {
 	if id, err := tryGetUserID(r, h.jwt); err == nil {
 		viewerID = &id
 	}
-	items, err := h.service.Feed(r.Context(), limit, offset, viewerID)
+	var (
+		items []dto.FeedResponseItem
+		err   error
+	)
+	if viewerID == nil {
+		items, err = cache.GetOrLoadJSON(
+			r.Context(),
+			h.cache,
+			cacheKeyFeedPublic(limit, offset),
+			10*time.Second,
+			func(ctx context.Context) ([]dto.FeedResponseItem, error) {
+				return h.service.Feed(ctx, limit, offset, nil)
+			},
+		)
+	} else {
+		items, err = h.service.Feed(r.Context(), limit, offset, viewerID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

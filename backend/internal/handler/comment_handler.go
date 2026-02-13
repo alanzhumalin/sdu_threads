@@ -2,21 +2,25 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/service"
 )
 
 type CommentHandler struct {
 	comments *service.CommentService
 	jwt      *auth.JWTManager
+	cache    *cache.QueryCache
 }
 
-func NewCommentHandler(c *service.CommentService, jwt *auth.JWTManager) *CommentHandler {
-	return &CommentHandler{comments: c, jwt: jwt}
+func NewCommentHandler(c *service.CommentService, jwt *auth.JWTManager, qc *cache.QueryCache) *CommentHandler {
+	return &CommentHandler{comments: c, jwt: jwt, cache: qc}
 }
 
 func (h *CommentHandler) Register(mux *http.ServeMux) {
@@ -47,9 +51,22 @@ func (h *CommentHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.comments.Create(r.Context(), req.PostID, userID, req.Content, req.ReplyTo, req.Hashtags); err != nil {
+		var viol *moderation.ViolationError
+		if errors.As(err, &viol) {
+			writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+			return
+		}
+		if moderation.IsUnavailable(err) {
+			writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+				Code:    "MODERATION_UNAVAILABLE",
+				Message: "Сервис модерации временно недоступен",
+			})
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 

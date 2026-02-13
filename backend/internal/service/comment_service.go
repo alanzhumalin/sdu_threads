@@ -7,6 +7,7 @@ import (
 
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/repository"
 )
 
@@ -16,10 +17,11 @@ type CommentService struct {
 	likes    *repository.LikeRepository
 	users    *repository.UserRepository
 	tags     *repository.HashtagRepository
+	mod      *moderation.Client
 }
 
-func NewCommentService(comments *repository.CommentRepository, posts *repository.PostRepository, likes *repository.LikeRepository, users *repository.UserRepository, tags *repository.HashtagRepository) *CommentService {
-	return &CommentService{comments: comments, posts: posts, likes: likes, users: users, tags: tags}
+func NewCommentService(comments *repository.CommentRepository, posts *repository.PostRepository, likes *repository.LikeRepository, users *repository.UserRepository, tags *repository.HashtagRepository, mod *moderation.Client) *CommentService {
+	return &CommentService{comments: comments, posts: posts, likes: likes, users: users, tags: tags, mod: mod}
 }
 
 func normalizeTagsLocal(raw []string) []string {
@@ -46,6 +48,21 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 	}
 	if len(body) == 0 {
 		return errors.New("content is required")
+	}
+	preview := strings.TrimSpace(body)
+	if len(preview) > 160 {
+		preview = preview[:160] + "..."
+	}
+	if err := s.mod.CheckText(ctx, body, "comment_text", &moderation.AuditMeta{
+		ActorUserID: userID,
+		Action:      "create_comment",
+		TargetType:  "post",
+		TargetID:    postID,
+		Payload: map[string]any{
+			"content_preview": preview,
+		},
+	}); err != nil {
+		return err
 	}
 	exists, err := s.posts.Exists(ctx, postID)
 	if err != nil {

@@ -1,20 +1,25 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/cache"
+	"sduthreads/internal/repository"
 	"sduthreads/internal/service"
 )
 
 type HashtagHandler struct {
-	tags *service.HashtagService
-	jwt  *auth.JWTManager
+	tags  *service.HashtagService
+	jwt   *auth.JWTManager
+	cache *cache.QueryCache
 }
 
-func NewHashtagHandler(tags *service.HashtagService, jwt *auth.JWTManager) *HashtagHandler {
-	return &HashtagHandler{tags: tags, jwt: jwt}
+func NewHashtagHandler(tags *service.HashtagService, jwt *auth.JWTManager, c *cache.QueryCache) *HashtagHandler {
+	return &HashtagHandler{tags: tags, jwt: jwt, cache: c}
 }
 
 func (h *HashtagHandler) Register(mux *http.ServeMux) {
@@ -30,7 +35,15 @@ func (h *HashtagHandler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query().Get("q")
 	limit := parseIntQuery(r, "limit", 20)
-	tags, err := h.tags.Search(r.Context(), q, limit)
+	tags, err := cache.GetOrLoadJSON(
+		r.Context(),
+		h.cache,
+		cacheKeyHashtagsSearch(q, limit),
+		45*time.Second,
+		func(ctx context.Context) ([]repository.Hashtag, error) {
+			return h.tags.Search(ctx, q, limit)
+		},
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -44,7 +57,15 @@ func (h *HashtagHandler) popular(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := parseIntQuery(r, "limit", 10)
-	tags, err := h.tags.Popular(r.Context(), limit)
+	tags, err := cache.GetOrLoadJSON(
+		r.Context(),
+		h.cache,
+		cacheKeyHashtagsPopular(limit),
+		60*time.Second,
+		func(ctx context.Context) ([]repository.PopularHashtag, error) {
+			return h.tags.Popular(ctx, limit)
+		},
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

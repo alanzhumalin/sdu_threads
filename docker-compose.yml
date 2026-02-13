@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: sdu-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - app
+
   db:
     image: postgres:16-alpine
     container_name: sdu-db
@@ -95,6 +110,36 @@ services:
     networks:
       - app
 
+  moderation:
+    build:
+      context: ./moderation
+      dockerfile: Dockerfile
+    container_name: sdu-moderation
+    restart: unless-stopped
+    environment:
+      MODERATION_LOG_LEVEL: ${MODERATION_LOG_LEVEL:-INFO}
+      MODERATION_TEXT_MODEL: ${MODERATION_TEXT_MODEL:-s-nlp/russian_toxicity_classifier}
+      MODERATION_IMAGE_MODEL: ${MODERATION_IMAGE_MODEL:-Falconsai/nsfw_image_detection}
+      MODERATION_SUGGESTIVE_MODEL: ${MODERATION_SUGGESTIVE_MODEL:-prithivMLmods/Mature-Content-Detection}
+      MODERATION_TEXT_THRESHOLD: ${MODERATION_TEXT_THRESHOLD:-0.75}
+      MODERATION_IMAGE_THRESHOLD: ${MODERATION_IMAGE_THRESHOLD:-0.70}
+      MODERATION_SUGGESTIVE_THRESHOLD: ${MODERATION_SUGGESTIVE_THRESHOLD:-0.45}
+      MODERATION_BLOCK_SUGGESTIVE: ${MODERATION_BLOCK_SUGGESTIVE:-true}
+      MODERATION_TEXT_MODEL_REQUIRED: ${MODERATION_TEXT_MODEL_REQUIRED:-false}
+      MODERATION_IMAGE_MODEL_REQUIRED: ${MODERATION_IMAGE_MODEL_REQUIRED:-true}
+      MODERATION_SUGGESTIVE_MODEL_REQUIRED: ${MODERATION_SUGGESTIVE_MODEL_REQUIRED:-false}
+      MODERATION_MAX_TEXT_CHARS: ${MODERATION_MAX_TEXT_CHARS:-5000}
+      MODERATION_MAX_IMAGE_BYTES: ${MODERATION_MAX_IMAGE_BYTES:-7340032}
+      MODERATION_FETCH_TIMEOUT_SEC: ${MODERATION_FETCH_TIMEOUT_SEC:-5}
+      MODERATION_BLOCKED_TERMS: ${MODERATION_BLOCKED_TERMS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app
+
   backend:
     build:
       context: ./backend
@@ -106,6 +151,10 @@ services:
         condition: service_healthy
       db_restore:
         condition: service_completed_successfully
+      moderation:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_PORT: ${APP_PORT:-8080}
@@ -129,6 +178,17 @@ services:
       S3_SIGNATURE_VERSION: ${S3_SIGNATURE_VERSION:-v4}
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
       S3_PREFIX: ${S3_PREFIX:-}
+      MODERATION_ENABLED: ${MODERATION_ENABLED:-true}
+      MODERATION_URL: ${MODERATION_URL:-http://moderation:8001}
+      MODERATION_TIMEOUT_MS: ${MODERATION_TIMEOUT_MS:-4000}
+      MODERATION_FAIL_CLOSED: ${MODERATION_FAIL_CLOSED:-true}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_REDIS_ADDR: ${CACHE_REDIS_ADDR:-redis:6379}
+      CACHE_REDIS_PASSWORD: ${CACHE_REDIS_PASSWORD:-}
+      CACHE_REDIS_DB: ${CACHE_REDIS_DB:-0}
+      CACHE_KEY_PREFIX: ${CACHE_KEY_PREFIX:-sdu:cache:}
+      CACHE_L1_MAX_ENTRIES: ${CACHE_L1_MAX_ENTRIES:-5000}
+      CACHE_L1_CLEANUP_SEC: ${CACHE_L1_CLEANUP_SEC:-60}
     ports:
       - "${APP_PORT:-8080}:8080"
     networks:
@@ -154,6 +214,7 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   nginx_cache:
   nginx_logs:
 

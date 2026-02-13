@@ -80,6 +80,31 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `S3_SIGNATURE_VERSION` (`v4` по умолчанию; `v2` если провайдер требует)
   - `S3_PUBLIC_BASE_URL` (используется для построения публичных URL)
   - `S3_PREFIX` (опционально; если пусто — без префикса в ключах)
+- `MODERATION_*` — внешний FastAPI сервис модерации:
+  - `MODERATION_ENABLED` (`true|false`)
+  - `MODERATION_URL` (по умолчанию `http://moderation:8001`)
+  - `MODERATION_TIMEOUT_MS`
+  - `MODERATION_FAIL_CLOSED` (если `true`, при недоступности сервиса контент блокируется)
+  - `MODERATION_TEXT_THRESHOLD`, `MODERATION_IMAGE_THRESHOLD`
+  - `MODERATION_SUGGESTIVE_THRESHOLD`, `MODERATION_BLOCK_SUGGESTIVE`
+  - `MODERATION_TEXT_MODEL`, `MODERATION_IMAGE_MODEL`, `MODERATION_SUGGESTIVE_MODEL`
+  - `MODERATION_TEXT_MODEL_REQUIRED`, `MODERATION_IMAGE_MODEL_REQUIRED`, `MODERATION_SUGGESTIVE_MODEL_REQUIRED`
+  - `MODERATION_BLOCKED_TERMS` (дополнительные слова через запятую)
+  - По умолчанию:
+    - текст: `s-nlp/russian_toxicity_classifier`
+    - NSFW изображения: `Falconsai/nsfw_image_detection`
+    - suggestive/купальники: `prithivMLmods/Mature-Content-Detection` (класс `Enticing or Sensual`)
+- `CACHE_*` — backend query-cache (L1 memory + Redis L2):
+  - `CACHE_ENABLED`
+  - `CACHE_REDIS_ADDR`, `CACHE_REDIS_PASSWORD`, `CACHE_REDIS_DB`
+  - `CACHE_KEY_PREFIX`
+  - `CACHE_L1_MAX_ENTRIES`, `CACHE_L1_CLEANUP_SEC`
+  - Кэшируются read-endpoints: `/api/users/search`, `/api/hashtags/search`, `/api/hashtags/popular`, `/api/top-users`, `/api/posts` (только для неавторизованных).
+  - Инвалидация:
+    - `follow/unfollow` → `top-users`
+    - создание поста/комментария с хэштегами → `hashtags:*`
+    - создание поста/комментария/like/unlike → публичный feed-cache
+    - регистрация/обновление профиля → `users/search` (и `top-users` для profile update)
 
 ## Логирование и rate limit
 - Каждый запрос логируется (method, path, status, длительность, ip, user-agent, user_id если есть токен).
@@ -92,12 +117,59 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Media: `POST /api/media/upload?purpose=post|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
 - Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
 - Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
+- Контент автоматически проходит модерацию (текст + NSFW изображения) при создании постов/комментариев и обновлении avatar/background.
+- Moderation: `GET /api/moderation/logs?scope=&query=&limit=&offset=` (для moderator/admin) — логи блокировок с причиной, score, labels.
 - Hashtags: `GET /api/hashtags/search?q=`, `GET /api/hashtags/{name}/posts`.
 - Health: `/healthz`.
 
 ## Run locally (Docker)
 ```bash
 docker compose up --build
+```
+
+## Load testing (500 users)
+Набор скриптов находится в `load/`:
+- HTTP/API (k6): `load/k6/http-500.js`
+- WebSocket chats list (Artillery): `load/artillery/ws-chats-500.yml`
+
+Перед тестом (важно):
+- Используй staging/локальный стенд, не production.
+- Для честного теста подними `RATE_LIMIT_RPM` в `.env` (иначе быстро упрёшься в 429).
+
+### 1) Получить JWT для тестов
+```bash
+LOGIN=someone PASSWORD='your_password' BASE_URL=http://localhost ./load/scripts/get-token.sh
+```
+
+### 2) HTTP нагрузка 500 VU (k6)
+```bash
+TOKEN='<jwt>' BASE_URL=http://localhost TARGET_VUS=500 RAMP_UP=3m HOLD=10m RAMP_DOWN=2m THINK_SEC=1 k6 run load/k6/http-500.js
+```
+
+Полезные флаги:
+- `ENABLE_WRITE=true WRITE_RATIO=0.03` — добавить небольшую долю write-запросов.
+- `ALLOW_429=true` — учитывать 429 как допустимый статус (если проверяешь поведение под rate-limit).
+
+### 3) WebSocket нагрузка ~500 подключений (Artillery)
+```bash
+TOKEN='<jwt>' WS_BASE_URL=ws://localhost artillery run load/artillery/ws-chats-500.yml
+```
+
+### Docker-вариант (если локально нет k6/Artillery)
+```bash
+TOKEN='<jwt>' docker run --rm -i \
+  -e BASE_URL=http://host.docker.internal \
+  -e TOKEN="$TOKEN" \
+  -e TARGET_VUS=500 -e RAMP_UP=3m -e HOLD=10m -e RAMP_DOWN=2m \
+  grafana/k6 run - < load/k6/http-500.js
+```
+
+```bash
+TOKEN='<jwt>' docker run --rm -it \
+  -v "$PWD:/work" -w /work \
+  -e TOKEN="$TOKEN" \
+  -e WS_BASE_URL=ws://host.docker.internal \
+  artilleryio/artillery:latest run load/artillery/ws-chats-500.yml
 ```
 
 ## DB backup/restore (db.dump)

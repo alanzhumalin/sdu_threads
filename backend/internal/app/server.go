@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"sduthreads/internal/auth"
+	"sduthreads/internal/cache"
 	"sduthreads/internal/config"
 	"sduthreads/internal/db"
 	"sduthreads/internal/handler"
+	modsvc "sduthreads/internal/moderation"
 	"sduthreads/internal/repository"
 	"sduthreads/internal/service"
 	"sduthreads/internal/storage"
@@ -54,26 +57,63 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	tagRepo := repository.NewHashtagRepository(client.DB)
 	reportRepo := repository.NewReportRepository(client.DB)
 	chatRepo := repository.NewChatRepository(client.DB)
+	moderationEventRepo := repository.NewModerationEventRepository(client.DB)
 	viewService := service.NewViewService(postRepo, cfg.ViewTTLMin)
+	moderationClient := modsvc.NewClient(modsvc.Config{
+		Enabled:    cfg.ModerationEnabled,
+		BaseURL:    cfg.ModerationURL,
+		Timeout:    time.Duration(cfg.ModerationTimeout) * time.Millisecond,
+		FailClosed: cfg.ModerationFailClosed,
+		RecordEvent: func(ctx context.Context, event modsvc.Event) {
+			if err := moderationEventRepo.CreateFromEvent(ctx, event); err != nil {
+				log.Printf("moderation event write failed: %v", err)
+			}
+		},
+	})
+
+	var queryCache *cache.QueryCache
+	if cfg.CacheEnabled {
+		l1 := cache.NewMemoryStore(cfg.CacheL1MaxEntries, time.Duration(cfg.CacheL1CleanupSec)*time.Second)
+		var store cache.Store = l1
+		if addr := strings.TrimSpace(cfg.CacheRedisAddr); addr != "" {
+			redisStore, err := cache.NewRedisStore(cache.RedisConfig{
+				Addr:         addr,
+				Password:     cfg.CacheRedisPassword,
+				DB:           cfg.CacheRedisDB,
+				KeyPrefix:    cfg.CacheKeyPrefix,
+				DialTimeout:  500 * time.Millisecond,
+				ReadTimeout:  500 * time.Millisecond,
+				WriteTimeout: 500 * time.Millisecond,
+			})
+			if err != nil {
+				log.Printf("cache redis unavailable, falling back to memory-only cache: %v", err)
+			} else {
+				store = cache.NewHybridStore(l1, redisStore)
+			}
+		}
+		queryCache = cache.NewQueryCache(true, store)
+	} else {
+		queryCache = cache.NewQueryCache(false, nil)
+	}
 
 	// services
 	userService := service.NewUserService(userRepo)
-	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo, uploader)
+	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo, uploader, moderationClient)
 	authService := service.NewAuthService(userRepo, jwtMgr)
-	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo, userRepo, tagRepo)
+	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo, userRepo, tagRepo, moderationClient)
 	followService := service.NewFollowService(followRepo, userRepo)
-	profileService := service.NewProfileService(userRepo, followRepo)
+	profileService := service.NewProfileService(userRepo, followRepo, moderationClient)
 	hashtagService := service.NewHashtagService(tagRepo, postRepo, userRepo, followRepo)
 	notificationService := service.NewNotificationService(client.DB, userRepo)
 	reportService := service.NewReportService(reportRepo, userRepo, postRepo)
 	chatService := service.NewChatService(chatRepo, userRepo)
-	searchHandler := handler.NewSearchHandler(userRepo)
-	topUsersHandler := handler.NewTopUsersHandler(followService)
+	searchHandler := handler.NewSearchHandler(userRepo, queryCache)
+	topUsersHandler := handler.NewTopUsersHandler(followService, queryCache)
 	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
-	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr)
+	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr, moderationClient)
 	chatHandler := handler.NewChatHandler(chatService, jwtMgr)
 	adminHandler := handler.NewAdminHandler(client.DB, userRepo, postRepo, profileService, postService, jwtMgr)
-	moderationHandler := handler.NewModerationHandler(userRepo, postRepo, postService, reportService, jwtMgr)
+	moderationHandler := handler.NewModerationHandler(userRepo, postRepo, postService, reportService, moderationEventRepo, jwtMgr)
 
 	if err := service.EnsureAdminUser(context.Background(), userRepo, cfg.AdminEmail, cfg.AdminPassword, cfg.AdminUsername, cfg.AdminFullName); err != nil {
 		log.Printf("admin bootstrap: %v", err)
@@ -81,12 +121,12 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 
 	// handlers
 	handler.NewHealthHandler().Register(mux)
-	handler.NewAuthHandler(authService).Register(mux)
+	handler.NewAuthHandler(authService, queryCache).Register(mux)
 	handler.NewUserHandler(userService).Register(mux)
-	handler.NewPostHandler(postService, viewService, jwtMgr).Register(mux)
-	handler.NewCommentHandler(commentService, jwtMgr).Register(mux)
-	handler.NewFollowHandler(followService, profileService, postService, jwtMgr).Register(mux)
-	handler.NewHashtagHandler(hashtagService, jwtMgr).Register(mux)
+	handler.NewPostHandler(postService, viewService, jwtMgr, queryCache).Register(mux)
+	handler.NewCommentHandler(commentService, jwtMgr, queryCache).Register(mux)
+	handler.NewFollowHandler(followService, profileService, postService, jwtMgr, queryCache).Register(mux)
+	handler.NewHashtagHandler(hashtagService, jwtMgr, queryCache).Register(mux)
 	handler.NewNotificationHandler(notificationService, jwtMgr).Register(mux)
 	searchHandler.Register(mux)
 	topUsersHandler.Register(mux)
