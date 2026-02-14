@@ -26,6 +26,8 @@ INFER_MAX_SIDE = int(os.getenv("MODERATION_INFER_MAX_SIDE", "1024"))
 TEXT_THRESHOLD = float(os.getenv("MODERATION_TEXT_THRESHOLD", "0.75"))
 IMAGE_THRESHOLD = float(os.getenv("MODERATION_IMAGE_THRESHOLD", "0.70"))
 SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_THRESHOLD", "0.45"))
+SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_GATE_THRESHOLD", "0.20"))
+SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_STRONG_THRESHOLD", "0.80"))
 BLOCK_SUGGESTIVE = os.getenv("MODERATION_BLOCK_SUGGESTIVE", "true").lower() in {"1", "true", "yes", "on"}
 PRELOAD_MODELS = os.getenv("MODERATION_PRELOAD_MODELS", "true").lower() in {"1", "true", "yes", "on"}
 SUGGESTIVE_BG_WARMUP = os.getenv("MODERATION_SUGGESTIVE_BG_WARMUP", "true").lower() in {"1", "true", "yes", "on"}
@@ -81,6 +83,17 @@ SUGGESTIVE_LABEL_HINTS = (
     "lingerie",
     "underwear",
     "revealing",
+)
+SUGGESTIVE_STRONG_LABEL_HINTS = (
+    "porn",
+    "pornography",
+    "hentai",
+    "nude",
+    "nudity",
+    "explicit",
+    "sexual",
+    "sex",
+    "nsfw",
 )
 
 DEFAULT_BLOCKED_TERMS = [
@@ -685,6 +698,7 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
 
     suggestive_labels: Dict[str, float] = {}
     suggestive_score = 0.0
+    suggestive_strong_score = 0.0
     suggestive_ms = 0.0
     if BLOCK_SUGGESTIVE:
         suggestive_model = _suggestive_model() if SUGGESTIVE_MODEL_REQUIRED else _suggestive_model_if_ready()
@@ -699,12 +713,20 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
             suggestive_ms = _duration_ms(suggestive_started_at)
             suggestive_labels = _labels_to_map(_flatten_labels(suggestive_raw))
             suggestive_score = _score_by_hints(suggestive_labels, SUGGESTIVE_LABEL_HINTS)
+            suggestive_strong_score = _score_by_hints(suggestive_labels, SUGGESTIVE_STRONG_LABEL_HINTS)
 
     labels = _merge_labels(nsfw_labels, suggestive_labels)
-    if BLOCK_SUGGESTIVE and suggestive_score >= SUGGESTIVE_THRESHOLD:
+    should_block_suggestive = BLOCK_SUGGESTIVE and (
+        suggestive_score >= SUGGESTIVE_STRONG_THRESHOLD
+        or (suggestive_score >= SUGGESTIVE_THRESHOLD and suggestive_strong_score >= SUGGESTIVE_GATE_THRESHOLD)
+    )
+    if should_block_suggestive:
         logger.info(
-            "image moderation blocked suggestive_score=%.4f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+            "image moderation blocked suggestive_score=%.4f strong_score=%.4f gate=%.2f strong=%.2f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
             suggestive_score,
+            suggestive_strong_score,
+            SUGGESTIVE_GATE_THRESHOLD,
+            SUGGESTIVE_STRONG_THRESHOLD,
             len(data),
             decode_ms,
             resize_ms,
@@ -776,6 +798,8 @@ def healthz() -> Dict[str, Any]:
             "text": TEXT_THRESHOLD,
             "image": IMAGE_THRESHOLD,
             "suggestive": SUGGESTIVE_THRESHOLD,
+            "suggestive_gate": SUGGESTIVE_GATE_THRESHOLD,
+            "suggestive_strong": SUGGESTIVE_STRONG_THRESHOLD,
             "block_suggestive": BLOCK_SUGGESTIVE,
         },
     }
