@@ -8,6 +8,7 @@ import { useNotificationStore } from "../store/notifications";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
 import { AvatarCircle } from "../components/Avatar";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 
 type NotificationItem = {
   id: string;
@@ -15,6 +16,7 @@ type NotificationItem = {
   actor_id: string;
   actor_username: string;
   actor_full_name?: string;
+  actor_is_verified?: boolean;
   actor_avatar_url?: string;
   post_id?: string;
   comment_id?: string;
@@ -355,7 +357,10 @@ export default function NotificationsPage() {
                       onClick={(e) => e.stopPropagation()}
                       className="hover:underline"
                     >
-                      {n.actor_full_name || n.actor_username}
+                      <span className="inline-flex items-center gap-[3px]">
+                        <span>{n.actor_full_name || n.actor_username}</span>
+                        {n.actor_is_verified ? <VerifiedBadge /> : null}
+                      </span>
                     </Link>
                   </MentionPreview>{" "}
                   {renderMessage(n)}

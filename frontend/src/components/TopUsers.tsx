@@ -4,11 +4,13 @@ import { Crown } from "lucide-react";
 import { api } from "../api/client";
 import { ErrorMessage } from "./ErrorMessage";
 import { MentionPreview } from "./MentionPreview";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 type TopUser = {
   id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   followers: number;
 };
@@ -81,7 +83,10 @@ export function TopUsers() {
                   <p className="text-white font-semibold truncate">
                     <MentionPreview username={u.username} className="">
                       <Link to={`/u/${u.username}`} className="hover:underline">
-                        {u.full_name || "Без имени"}
+                        <span className="inline-flex items-center gap-[3px]">
+                          <span>{u.full_name || "Без имени"}</span>
+                          {u.is_verified ? <VerifiedBadge /> : null}
+                        </span>
                       </Link>
                     </MentionPreview>
                   </p>

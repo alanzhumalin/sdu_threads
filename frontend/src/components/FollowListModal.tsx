@@ -235,6 +235,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
                     id: u.id,
                     username: u.username,
                     full_name: u.full_name,
+                    is_verified: u.is_verified,
                     avatar_url: u.avatar_url,
                   }}
                   right={

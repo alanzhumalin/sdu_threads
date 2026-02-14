@@ -13,6 +13,7 @@ export type ChatParticipant = {
   id: string;
   username: string;
   full_name: string;
+      is_verified?: boolean;
   avatar_url?: string;
 };
 
@@ -37,8 +38,16 @@ export type ChatMessage = {
   sender_id: string;
   reply_to_id?: string;
   body: string;
+  attachments?: ChatMessageAttachment[];
   read_at?: string;
   created_at: string;
+};
+
+export type ChatMessageAttachment = {
+  url: string;
+  width: number;
+  height: number;
+  type: "image";
 };
 
 type ApiErrorShape =
@@ -270,6 +279,7 @@ const feedPageFn = (
       content: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       avatar_url?: string;
       created_at: string;
       media?: MediaItem[];
@@ -295,6 +305,7 @@ const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
       content: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       avatar_url?: string;
       created_at: string;
       media?: MediaItem[];
@@ -327,6 +338,7 @@ export const api = {
       id: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       bio: string;
       avatar_url?: string;
       background_url?: string;
@@ -342,6 +354,7 @@ export const api = {
       id: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       bio: string;
       avatar_url?: string;
       background_url?: string;
@@ -366,6 +379,7 @@ export const api = {
       id: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       bio: string;
       avatar_url?: string;
       background_url?: string;
@@ -376,6 +390,13 @@ export const api = {
       is_me?: boolean;
       is_subscribed?: boolean;
     }>("/users/me", "PATCH", payload, token),
+  changePassword: (
+    payload: {
+      current_password: string;
+      new_password: string;
+    },
+    token: string
+  ) => request<{ status: string }>("/users/me/password", "POST", payload, token),
   feedPage: feedPageFn,
   followingFeedPage: followingFeedPageFn,
   feed: (token?: string | null) => feedPageFn(20, 0, token).then((r) => r.items),
@@ -387,6 +408,7 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         created_at: string;
         media?: MediaItem[];
@@ -409,6 +431,7 @@ export const api = {
         id: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
       }[]
     >(
@@ -429,6 +452,7 @@ export const api = {
         id: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
       }[]
     >(
@@ -451,6 +475,7 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         created_at: string;
         updated_at?: string;
@@ -574,6 +599,7 @@ export const api = {
         id: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         followers: number;
       }[]
@@ -586,6 +612,7 @@ export const api = {
         content: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         created_at: string;
         updated_at: string;
@@ -629,11 +656,17 @@ export const api = {
       items: Array.isArray(data) ? data : [],
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
-  sendChatMessage: (chatId: string, body: string, token: string, replyToID?: string) =>
+  sendChatMessage: (
+    chatId: string,
+    body: string,
+    token: string,
+    replyToID?: string,
+    attachments?: ChatMessageAttachment[]
+  ) =>
     request<ChatMessage>(
       `/chats/${encodeURIComponent(chatId)}/messages`,
       "POST",
-      { body, reply_to_id: replyToID },
+      { body, reply_to_id: replyToID, attachments: attachments || [] },
       token
     ),
   markChatRead: (chatId: string, token?: string | null) =>
@@ -655,6 +688,7 @@ export const api = {
         actor_id: string;
         actor_username: string;
         actor_full_name?: string;
+        actor_is_verified?: boolean;
         actor_avatar_url?: string;
         post_id?: string;
         comment_id?: string;
@@ -684,6 +718,7 @@ export const api = {
         id: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         bio?: string;
       }[]
@@ -699,6 +734,7 @@ export const api = {
       user_id: string;
       username: string;
       full_name: string;
+      is_verified?: boolean;
       avatar_url?: string;
       content: string;
       media?: MediaItem[];
@@ -719,6 +755,7 @@ export const api = {
         id: string;
         username: string;
         full_name?: string;
+      is_verified?: boolean;
         bio?: string;
         avatar_url?: string;
       }[]
@@ -737,6 +774,7 @@ export const api = {
         user_id: string;
       username: string;
       full_name?: string;
+      is_verified?: boolean;
       avatar_url?: string;
       body: string;
       created_at: string;
@@ -746,6 +784,7 @@ export const api = {
       reply_to_comment_id?: string;
       replies?: any[];
       reply_to_full_name?: string;
+      is_verified?: boolean;
       reply_to_username?: string;
       mentions?: string[];
       hashtags?: string[];
@@ -759,6 +798,7 @@ export const api = {
         user_id: string;
       username: string;
       full_name?: string;
+      is_verified?: boolean;
       avatar_url?: string;
       body: string;
       created_at: string;
@@ -808,6 +848,7 @@ export const api = {
         id: string;
         username: string;
         full_name: string;
+      is_verified?: boolean;
         avatar_url?: string;
         role: string;
         created_at: string;
@@ -845,6 +886,13 @@ export const api = {
       `/admin/users/${encodeURIComponent(idOrUsername)}/role`,
       "PATCH",
       { role },
+      token
+    ),
+  adminSetUserVerified: (idOrUsername: string, is_verified: boolean, token: string) =>
+    request<{ status: string }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}/verified`,
+      "PATCH",
+      { is_verified },
       token
     ),
   adminDeleteUser: (idOrUsername: string, token: string) =>

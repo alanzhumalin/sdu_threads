@@ -6,6 +6,7 @@ import { api, type ChatPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { AvatarCircle } from "../components/Avatar";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 
 const CHAT_LIST_REFRESH_MS = 20000;
 
@@ -275,7 +276,10 @@ export default function ChatsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-white font-semibold truncate">{chat.participant.full_name}</p>
+                      <p className="text-white font-semibold truncate inline-flex items-center gap-[3px]">
+                        <span>{chat.participant.full_name}</span>
+                        {chat.participant.is_verified ? <VerifiedBadge /> : null}
+                      </p>
                       <p className="text-white/60 text-sm truncate">@{chat.participant.username}</p>
                     </div>
                     <div className="shrink-0 text-right">

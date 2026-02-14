@@ -41,10 +41,11 @@ func (r *FollowRepository) FollowingCount(ctx context.Context, userID string) (i
 }
 
 type FollowUser struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	FullName  string `json:"full_name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	FullName   string `json:"full_name"`
+	IsVerified bool   `json:"is_verified"`
+	AvatarURL  string `json:"avatar_url,omitempty"`
 }
 
 func (r *FollowRepository) Followers(ctx context.Context, userID string, limit, offset int) ([]FollowUser, error) {
@@ -56,7 +57,7 @@ func (r *FollowRepository) Followers(ctx context.Context, userID string, limit, 
 	}
 	var res []FollowUser
 	q := `
-SELECT u.id, u.username, u.full_name, u.avatar_url
+SELECT u.id, u.username, u.full_name, u.is_verified, u.avatar_url
 FROM follows f
 JOIN users u ON u.id = f.follower_id
 WHERE f.followee_id = ?
@@ -80,7 +81,7 @@ func (r *FollowRepository) Following(ctx context.Context, userID string, limit, 
 	}
 	var res []FollowUser
 	q := `
-SELECT u.id, u.username, u.full_name, u.avatar_url
+SELECT u.id, u.username, u.full_name, u.is_verified, u.avatar_url
 FROM follows f
 JOIN users u ON u.id = f.followee_id
 WHERE f.follower_id = ?
@@ -140,11 +141,12 @@ func (r *FollowRepository) FollowingMap(ctx context.Context, followerID string, 
 }
 
 type TopUser struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	FullName  string `json:"full_name"`
-	AvatarURL string `json:"avatar_url"`
-	Followers int64  `json:"followers"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	FullName   string `json:"full_name"`
+	IsVerified bool   `json:"is_verified"`
+	AvatarURL  string `json:"avatar_url"`
+	Followers  int64  `json:"followers"`
 }
 
 func (r *FollowRepository) TopFollowed(ctx context.Context, limit int) ([]TopUser, error) {
@@ -156,10 +158,10 @@ func (r *FollowRepository) TopFollowed(ctx context.Context, limit int) ([]TopUse
 	}
 	var res []TopUser
 	q := `
-SELECT u.id, u.username, u.full_name, u.avatar_url, COUNT(f.followee_id) AS followers
+SELECT u.id, u.username, u.full_name, u.is_verified, u.avatar_url, COUNT(f.followee_id) AS followers
 FROM users u
 LEFT JOIN follows f ON f.followee_id = u.id
-GROUP BY u.id, u.username, u.full_name, u.avatar_url
+GROUP BY u.id, u.username, u.full_name, u.is_verified, u.avatar_url
 ORDER BY followers DESC, u.full_name ASC
 LIMIT ?`
 	if err := r.db.WithContext(ctx).Raw(q, limit).Scan(&res).Error; err != nil {

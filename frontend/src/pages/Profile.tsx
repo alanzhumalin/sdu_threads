@@ -19,6 +19,7 @@ import { SocialLinksOverlay, type SocialLinks, type SocialType } from "../compon
 import { MentionPreview } from "../components/MentionPreview";
 import { FollowListModal } from "../components/FollowListModal";
 import FabricImageEditor from "../components/FabricImageEditor";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -73,9 +74,18 @@ export default function ProfilePage() {
   const [loadingProfile, setLoadingProfile] = useState(!cachedProfile);
   const [commentsPost, setCommentsPost] = useState<any | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [editSection, setEditSection] = useState<"profile" | "password">("profile");
   const [followListMode, setFollowListMode] = useState<"followers" | "following" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: "",
+    new_password: "",
+    confirm_password: "",
+  });
   const [form, setForm] = useState({
     full_name: "",
     bio: "",
@@ -427,7 +437,36 @@ export default function ProfilePage() {
     setBgPreview(profile.background_url || "");
     setDrawingTarget(null);
     setSaveError("");
+    setPasswordError("");
+    setPasswordSuccess("");
+    setPasswordForm({
+      current_password: "",
+      new_password: "",
+      confirm_password: "",
+    });
+    setEditSection("profile");
     setEditOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setDrawingTarget(null);
+    clearPendingImages();
+    avatarUploadCtl.current.controller?.abort();
+    bgUploadCtl.current.controller?.abort();
+    avatarUploadCtl.current = { version: 0, controller: null };
+    bgUploadCtl.current = { version: 0, controller: null };
+    setAvatarUpload({ uploading: false });
+    setBgUpload({ uploading: false });
+    closeCrop();
+    setPasswordError("");
+    setPasswordSuccess("");
+    setPasswordForm({
+      current_password: "",
+      new_password: "",
+      confirm_password: "",
+    });
+    setEditSection("profile");
+    setEditOpen(false);
   };
 
   const clearPendingImages = () => {
@@ -595,6 +634,46 @@ export default function ProfilePage() {
       setSaveError(e.message || "Не удалось сохранить");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!token) return;
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (!passwordForm.current_password.trim()) {
+      setPasswordError("Введите текущий пароль");
+      return;
+    }
+    if (passwordForm.new_password.length < 8) {
+      setPasswordError("Новый пароль должен быть минимум 8 символов");
+      return;
+    }
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      setPasswordError("Новый пароль и подтверждение не совпадают");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await api.changePassword(
+        {
+          current_password: passwordForm.current_password,
+          new_password: passwordForm.new_password,
+        },
+        token
+      );
+      setPasswordForm({
+        current_password: "",
+        new_password: "",
+        confirm_password: "",
+      });
+      setPasswordSuccess("Пароль успешно изменен");
+    } catch (e: any) {
+      setPasswordError(e.message || "Не удалось изменить пароль");
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -851,7 +930,10 @@ export default function ProfilePage() {
                 )}
               </div>
               <div className="mt-12 space-y-2">
-                <p className="text-xl font-semibold text-white">{profile?.full_name || ""}</p>
+                <p className="text-xl font-semibold text-white inline-flex items-center gap-[3px]">
+                  <span>{profile?.full_name || ""}</span>
+                  {profile?.is_verified ? <VerifiedBadge /> : null}
+                </p>
                 <p className="text-white/60">@{profile?.username}</p>
                 <p className="text-white/50 text-sm">На сайте с {profile?.created_at ? formatDate(profile.created_at) : "--"}</p>
                 {profile?.bio ? (
@@ -1003,9 +1085,10 @@ export default function ProfilePage() {
                       <MentionPreview username={p.username} className="">
                         <Link
                           to={`/u/${p.username}`}
-                          className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                          className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                         >
-                          {p.full_name || "Без имени"}
+                          <span>{p.full_name || "Без имени"}</span>
+                          {p.is_verified ? <VerifiedBadge /> : null}
                         </Link>
                       </MentionPreview>
                       <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
@@ -1094,26 +1177,48 @@ export default function ProfilePage() {
               <div className="bg-[#0b0b0f] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden">
                 <button
                   className="absolute top-3 right-3 text-white/60 hover:text-white"
-                  onClick={() => {
-                    setDrawingTarget(null);
-                    clearPendingImages();
-                    avatarUploadCtl.current.controller?.abort();
-                    bgUploadCtl.current.controller?.abort();
-                    avatarUploadCtl.current = { version: 0, controller: null };
-                    bgUploadCtl.current = { version: 0, controller: null };
-                    setAvatarUpload({ uploading: false });
-                    setBgUpload({ uploading: false });
-                    closeCrop();
-                    setEditOpen(false);
-                  }}
+                  onClick={closeEditModal}
                 >
                   <X className="w-5 h-5" />
                 </button>
                 <div className="px-7 pt-7 pb-4 shrink-0">
-                  <h3 className="text-lg font-semibold text-white">Редактировать профиль</h3>
+                  <h3 className="text-lg font-semibold text-white">Настройки профиля</h3>
+                  <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-1 grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditSection("profile");
+                        setPasswordError("");
+                        setPasswordSuccess("");
+                      }}
+                      className={`rounded-lg px-3 py-2 text-sm transition ${
+                        editSection === "profile"
+                          ? "bg-white text-black font-medium"
+                          : "text-white/70 hover:text-white"
+                      }`}
+                    >
+                      Оформление профиля
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditSection("password");
+                        setSaveError("");
+                      }}
+                      className={`rounded-lg px-3 py-2 text-sm transition ${
+                        editSection === "password"
+                          ? "bg-white text-black font-medium"
+                          : "text-white/70 hover:text-white"
+                      }`}
+                    >
+                      Поменять пароль
+                    </button>
+                  </div>
                 </div>
 
                 <div className="px-7 pb-6 overflow-y-auto overflow-x-hidden flex-1">
+                  {editSection === "profile" ? (
+                    <>
                   <div className="space-y-5">
                     <div className="space-y-2">
                       <p className="text-sm text-white/60">Фон</p>
@@ -1309,47 +1414,118 @@ export default function ProfilePage() {
                       )}
                     </div>
                   </div>
+                    </>
+                  ) : (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm text-white/60 mb-1.5">Текущий пароль</label>
+                        <input
+                          type="password"
+                          value={passwordForm.current_password}
+                          onChange={(e) =>
+                            setPasswordForm((prev) => ({ ...prev, current_password: e.target.value }))
+                          }
+                          className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
+                          placeholder="Введите текущий пароль"
+                          autoComplete="current-password"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-white/60 mb-1.5">Новый пароль</label>
+                        <input
+                          type="password"
+                          value={passwordForm.new_password}
+                          onChange={(e) =>
+                            setPasswordForm((prev) => ({ ...prev, new_password: e.target.value }))
+                          }
+                          className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
+                          placeholder="Минимум 8 символов"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-white/60 mb-1.5">Подтвердите новый пароль</label>
+                        <input
+                          type="password"
+                          value={passwordForm.confirm_password}
+                          onChange={(e) =>
+                            setPasswordForm((prev) => ({ ...prev, confirm_password: e.target.value }))
+                          }
+                          className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
+                          placeholder="Повторите новый пароль"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <p className="text-xs text-white/45">
+                        После смены пароля войдите заново на других устройствах.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
-                <div className="px-7 py-4 border-t border-white/10 bg-[#0b0b0f] shrink-0 space-y-3">
-                  <ErrorMessage message={saveError} />
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-white/50">
-                      {socialLinks.length >= 4 ? "Можно добавить не более 4 соцсетей" : ""}
+                {editSection === "profile" ? (
+                  <div className="px-7 py-4 border-t border-white/10 bg-[#0b0b0f] shrink-0 space-y-3">
+                    <ErrorMessage message={saveError} />
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-white/50">
+                        {socialLinks.length >= 4 ? "Можно добавить не более 4 соцсетей" : ""}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (socialLinks.length >= 4 || availableSocialTypes.length === 0) return;
+                            setSocialDraftType(availableSocialTypes[0]);
+                            setSocialDraftUsername("");
+                            setSocialDraftError("");
+                            setSocialDraftOpen(true);
+                          }}
+                          disabled={socialLinks.length >= 4 || availableSocialTypes.length === 0}
+                          className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition disabled:opacity-50"
+                        >
+                          Добавить соцсеть
+                        </button>
+                        <button
+                          onClick={handleSave}
+                          disabled={
+                            saving ||
+                            avatarUpload.uploading ||
+                            bgUpload.uploading ||
+                            (!!pendingAvatar && !avatarUpload.uploadedUrl) ||
+                            (!!pendingBackground && !bgUpload.uploadedUrl)
+                          }
+                          className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
+                        >
+                          {saving ? "Сохранение..." : "Сохранить"}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                  </div>
+                ) : (
+                  <div className="px-7 py-4 border-t border-white/10 bg-[#0b0b0f] shrink-0 space-y-3">
+                    <ErrorMessage message={passwordError} />
+                    {passwordSuccess && <p className="text-sm text-emerald-300">{passwordSuccess}</p>}
+                    <div className="flex items-center justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (socialLinks.length >= 4 || availableSocialTypes.length === 0) return;
-                          setSocialDraftType(availableSocialTypes[0]);
-                          setSocialDraftUsername("");
-                          setSocialDraftError("");
-                          setSocialDraftOpen(true);
-                        }}
-                        disabled={socialLinks.length >= 4 || availableSocialTypes.length === 0}
-                        className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition disabled:opacity-50"
+                        onClick={closeEditModal}
+                        className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition"
                       >
-                        Добавить соцсеть
+                        Отмена
                       </button>
                       <button
-                        onClick={handleSave}
-                        disabled={
-                          saving ||
-                          avatarUpload.uploading ||
-                          bgUpload.uploading ||
-                          (!!pendingAvatar && !avatarUpload.uploadedUrl) ||
-                          (!!pendingBackground && !bgUpload.uploadedUrl)
-                        }
+                        type="button"
+                        onClick={handleChangePassword}
+                        disabled={passwordSaving}
                         className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
                       >
-                        {saving ? "Сохранение..." : "Сохранить"}
+                        {passwordSaving ? "Сохранение..." : "Сменить пароль"}
                       </button>
                     </div>
                   </div>
-                </div>
+                )}
 
-                {socialDraftOpen && (
+                {editSection === "profile" && socialDraftOpen && (
                   <div
                     className="absolute inset-0 z-30 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
                     onMouseDown={(e) => {

@@ -1,15 +1,26 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Reply, SendHorizontal, X } from "lucide-react";
+import { ArrowLeft, Loader2, Paperclip, Reply, SendHorizontal, X } from "lucide-react";
 
-import { api, type ChatMessage, type ChatPreview } from "../api/client";
+import { api, type ChatMessage, type ChatMessageAttachment, type ChatPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { AvatarCircle } from "../components/Avatar";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { MediaViewerModal } from "../components/MediaViewerModal";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 
 type UiMessage = ChatMessage & {
   pending?: boolean;
   failed?: boolean;
+};
+
+type ComposerAttachment = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: "uploading" | "uploaded" | "error";
+  uploaded?: ChatMessageAttachment;
+  error?: string;
 };
 
 type ReplyDraft = {
@@ -48,6 +59,28 @@ const trimReplyPreview = (value: string, max = 120) => {
 
 const POLL_INTERVAL_MS = 5000;
 const DEBUG_CHAT = true;
+const MAX_CHAT_ATTACHMENTS = 5;
+const MAX_CHAT_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+const HEIC_MIME_SET = new Set([
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+]);
+
+const isHeicOrHeifFile = (file: File) => {
+  const type = String(file.type || "").toLowerCase();
+  if (HEIC_MIME_SET.has(type)) return true;
+  if (type.includes("heic") || type.includes("heif")) return true;
+  const name = String(file.name || "").trim().toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif");
+};
+
+const attachmentSignature = (msg: { attachments?: ChatMessageAttachment[] }) =>
+  (msg.attachments || [])
+    .map((a) => `${a.url}|${a.width}|${a.height}|${a.type}`)
+    .join("||");
 
 const chatWSURL = (chatId: string) => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -60,11 +93,13 @@ const isIncomingMessageEvent = (
   evt.type === "message_created" || evt.type === "message.created";
 
 const mergeIncomingMessage = (current: UiMessage[], incoming: ChatMessage) => {
+  const incomingAttachmentSig = attachmentSignature(incoming);
   const incomingTs = new Date(incoming.created_at).getTime();
   const withoutMatchedPending = current.filter((m) => {
     if (!m.pending) return true;
     if ((m.body || "").trim() !== (incoming.body || "").trim()) return true;
     if ((m.reply_to_id || "") !== (incoming.reply_to_id || "")) return true;
+    if (attachmentSignature(m) !== incomingAttachmentSig) return true;
     const pendingTs = new Date(m.created_at).getTime();
     return Math.abs(pendingTs - incomingTs) > 15000;
   });
@@ -91,23 +126,229 @@ export default function ChatConversationPage() {
   const [error, setError] = useState("");
   const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  const [mediaError, setMediaError] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
+  const [viewer, setViewer] = useState<{ urls: string[]; initialIndex: number } | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const pollInFlightRef = useRef(false);
   const autoScrollAfterRenderRef = useRef(false);
+  const initialAutoScrolledChatRef = useRef("");
   const wsConnectedRef = useRef(false);
   const peerIDRef = useRef("");
   const markReadInFlightRef = useRef(false);
   const lastMarkReadAtRef = useRef(0);
+  const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
+  const mediaErrorTimerRef = useRef<number | null>(null);
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
 
   useEffect(() => {
+    const media = window.matchMedia("(max-width: 870px)");
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlOverscroll = html.style.overscrollBehaviorY;
+    const prevBodyOverscroll = body.style.overscrollBehaviorY;
+
+    const updateLock = () => {
+      if (media.matches) {
+        html.style.overflow = "hidden";
+        body.style.overflow = "hidden";
+        html.style.overscrollBehaviorY = "none";
+        body.style.overscrollBehaviorY = "none";
+      } else {
+        html.style.overflow = prevHtmlOverflow;
+        body.style.overflow = prevBodyOverflow;
+        html.style.overscrollBehaviorY = prevHtmlOverscroll;
+        body.style.overscrollBehaviorY = prevBodyOverscroll;
+      }
+    };
+
+    updateLock();
+    const unsubscribe =
+      typeof media.addEventListener === "function"
+        ? (() => {
+            media.addEventListener("change", updateLock);
+            return () => media.removeEventListener("change", updateLock);
+          })()
+        : (() => {
+            media.addListener(updateLock);
+            return () => media.removeListener(updateLock);
+          })();
+    return () => {
+      unsubscribe();
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      html.style.overscrollBehaviorY = prevHtmlOverscroll;
+      body.style.overscrollBehaviorY = prevBodyOverscroll;
+    };
+  }, []);
+
+  useEffect(() => {
     peerIDRef.current = peerID;
   }, [peerID]);
+
+  useEffect(() => {
+    composerAttachmentsRef.current = composerAttachments;
+  }, [composerAttachments]);
+
+  useEffect(() => {
+    return () => {
+      composerAttachmentsRef.current.forEach((item) => {
+        URL.revokeObjectURL(item.previewUrl);
+      });
+      if (mediaErrorTimerRef.current !== null) {
+        window.clearTimeout(mediaErrorTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showMediaError = (message: string) => {
+    setMediaError(message);
+    if (mediaErrorTimerRef.current !== null) {
+      window.clearTimeout(mediaErrorTimerRef.current);
+    }
+    mediaErrorTimerRef.current = window.setTimeout(() => {
+      setMediaError("");
+      mediaErrorTimerRef.current = null;
+    }, 3200);
+  };
+
+  const clearComposerAttachments = () => {
+    setComposerAttachments((prev) => {
+      prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      return [];
+    });
+  };
+
+  const removeComposerAttachment = (id: string) => {
+    setComposerAttachments((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const uploadComposerAttachment = async (id: string, file: File) => {
+    if (!token) {
+      setComposerAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, status: "error", error: "Сначала авторизуйся" }
+            : item
+        )
+      );
+      return;
+    }
+
+    try {
+      const uploaded = await api.uploadMedia([file], "chat", token);
+      const first = uploaded[0];
+      if (!first?.url) {
+        throw new Error("upload_failed");
+      }
+      setComposerAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                status: "uploaded",
+                uploaded: {
+                  url: first.url,
+                  width: Number(first.width) || 0,
+                  height: Number(first.height) || 0,
+                  type: "image",
+                },
+                error: undefined,
+              }
+            : item
+        )
+      );
+    } catch (e: any) {
+      const msg = e?.message || "Не удалось загрузить файл";
+      setComposerAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                status: "error",
+                error: msg,
+              }
+            : item
+        )
+      );
+      showMediaError(msg);
+    }
+  };
+
+  const handleAttachFiles = (files: FileList | null) => {
+    if (!files) return;
+
+    const incoming = Array.from(files);
+    const allowed: ComposerAttachment[] = [];
+    const existingCount = composerAttachmentsRef.current.length;
+    let rejected = false;
+    let hasSizeError = false;
+    let hasTypeError = false;
+    let hasHeicError = false;
+
+    for (const file of incoming) {
+      const type = String(file.type || "").toLowerCase();
+      if (existingCount + allowed.length >= MAX_CHAT_ATTACHMENTS) {
+        rejected = true;
+        break;
+      }
+      if (isHeicOrHeifFile(file)) {
+        rejected = true;
+        hasHeicError = true;
+        continue;
+      }
+      if (!type.startsWith("image/") || type === "image/svg+xml") {
+        rejected = true;
+        hasTypeError = true;
+        continue;
+      }
+      if (file.size <= 0 || file.size > MAX_CHAT_ATTACHMENT_BYTES) {
+        rejected = true;
+        hasSizeError = true;
+        continue;
+      }
+
+      allowed.push({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: "uploading",
+      });
+    }
+
+    if (rejected) {
+      if (hasHeicError) {
+        showMediaError("Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF.");
+      } else if (hasSizeError) {
+        showMediaError("Максимальный размер файла 5MB.");
+      } else if (hasTypeError) {
+        showMediaError("Разрешены только изображения и GIF.");
+      } else {
+        showMediaError("Можно прикрепить максимум 5 изображений в одном сообщении.");
+      }
+    }
+
+    if (allowed.length === 0) return;
+
+    setComposerAttachments((prev) => [...prev, ...allowed]);
+    allowed.forEach((item) => {
+      void uploadComposerAttachment(item.id, item.file);
+    });
+  };
 
   const messageByID = useMemo(() => {
     const map = new Map<string, UiMessage>();
@@ -203,7 +444,27 @@ export default function ChatConversationPage() {
 
   useEffect(() => {
     setReplyTo(null);
+    initialAutoScrolledChatRef.current = "";
+    setViewer(null);
+    setMediaError("");
+    setComposerAttachments((prev) => {
+      prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      return [];
+    });
   }, [chatId]);
+
+  useEffect(() => {
+    if (!chatId || loading || messages.length === 0) return;
+    if (initialAutoScrolledChatRef.current === chatId) return;
+    initialAutoScrolledChatRef.current = chatId;
+    debugChat(chatId, "autoscroll_initial_open", { messageCount: messages.length });
+
+    requestAnimationFrame(() => {
+      scrollToBottom("auto");
+      window.setTimeout(() => scrollToBottom("auto"), 60);
+      window.setTimeout(() => scrollToBottom("auto"), 180);
+    });
+  }, [chatId, loading, messages.length]);
 
   useEffect(() => {
     if (!autoScrollAfterRenderRef.current) return;
@@ -437,7 +698,22 @@ export default function ChatConversationPage() {
   const sendMessage = async () => {
     if (!token || !chatId || sending) return;
     const text = body.trim();
-    if (!text) return;
+    const activeComposerAttachments = composerAttachmentsRef.current;
+    const hasUploadingAttachments = activeComposerAttachments.some((a) => a.status === "uploading");
+    if (hasUploadingAttachments) {
+      setError("Дождитесь завершения загрузки вложений.");
+      return;
+    }
+    const hasFailedAttachments = activeComposerAttachments.some((a) => a.status === "error");
+    if (hasFailedAttachments) {
+      setError("Есть вложения с ошибкой. Удалите их или загрузите заново.");
+      return;
+    }
+    const uploadedAttachments = activeComposerAttachments
+      .filter((a): a is ComposerAttachment & { uploaded: ChatMessageAttachment } => a.status === "uploaded" && !!a.uploaded)
+      .map((a) => a.uploaded);
+
+    if (!text && uploadedAttachments.length === 0) return;
     const activeReply = replyTo;
 
     const tempID = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -447,12 +723,15 @@ export default function ChatConversationPage() {
       sender_id: "me",
       reply_to_id: activeReply?.id,
       body: text,
+      attachments: uploadedAttachments,
       created_at: new Date().toISOString(),
       pending: true,
     };
 
+    setError("");
     setBody("");
     setReplyTo(null);
+    clearComposerAttachments();
     setMessages((prev) => toAsc([...prev, optimistic]));
     requestAnimationFrame(() => {
       scrollToBottom("smooth");
@@ -460,7 +739,7 @@ export default function ChatConversationPage() {
 
     setSending(true);
     try {
-      const saved = await api.sendChatMessage(chatId, text, token, activeReply?.id);
+      const saved = await api.sendChatMessage(chatId, text, token, activeReply?.id, uploadedAttachments);
       setMessages((prev) => toAsc(prev.map((m) => (m.id === tempID ? { ...saved } : m))));
       setChat((prev) =>
         prev
@@ -491,6 +770,11 @@ export default function ChatConversationPage() {
     void sendMessage();
   };
 
+  const hasUploadingComposer = composerAttachments.some((item) => item.status === "uploading");
+  const hasFailedComposer = composerAttachments.some((item) => item.status === "error");
+  const hasUploadedComposer = composerAttachments.some((item) => item.status === "uploaded" && !!item.uploaded);
+  const canSend = !sending && !hasUploadingComposer && !hasFailedComposer && (body.trim().length > 0 || hasUploadedComposer);
+
   if (!loading && !chat) {
     return (
       <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
@@ -507,7 +791,10 @@ export default function ChatConversationPage() {
   }
 
   return (
-    <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-3 page-fade">
+    <main
+      data-page-root
+      className="max-w-[672px] w-full mx-auto h-full py-3 min-[871px]:py-6 space-y-3 page-fade flex flex-col overflow-hidden min-[871px]:overflow-visible"
+    >
       <div className="card p-3 flex items-center gap-3">
         <button
           type="button"
@@ -526,7 +813,10 @@ export default function ChatConversationPage() {
               alt={chat.participant.username}
             />
             <div className="min-w-0">
-              <p className="text-white font-semibold truncate">{chat.participant.full_name}</p>
+              <p className="text-white font-semibold truncate inline-flex items-center gap-[3px]">
+                <span>{chat.participant.full_name}</span>
+                {chat.participant.is_verified ? <VerifiedBadge /> : null}
+              </p>
               <p className="text-white/60 text-sm truncate">@{chat.participant.username}</p>
             </div>
           </>
@@ -537,8 +827,11 @@ export default function ChatConversationPage() {
 
       <ErrorMessage message={error} />
 
-      <div className="card overflow-hidden">
-        <div ref={listRef} className="h-[62vh] md:h-[64vh] overflow-y-auto scrollbar-hide px-3 py-4 space-y-3">
+      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div
+          ref={listRef}
+          className="flex-1 min-h-0 min-[871px]:h-[64vh] min-[871px]:flex-none overflow-y-auto scrollbar-hide px-3 py-4 space-y-3"
+        >
           <div ref={topRef} className="h-6 flex items-center justify-center">
             {loadingMore && <Loader2 className="w-4 h-4 animate-spin text-white/60" />}
           </div>
@@ -562,6 +855,10 @@ export default function ChatConversationPage() {
             const repliedMessage = m.reply_to_id ? messageByID.get(m.reply_to_id) : undefined;
             const replyPreview = repliedMessage ? trimReplyPreview(repliedMessage.body, 90) : "Сообщение";
             const replyPreviewAuthor = repliedMessage ? replyAuthorLabel(repliedMessage.sender_id) : "Ответ";
+            const messageAttachments = (m.attachments || []).filter((att) => String(att.url || "").trim() !== "");
+            const hasBody = (m.body || "").trim().length > 0;
+            const attachmentUrls = messageAttachments.map((att) => att.url);
+            const isMultiAttachment = messageAttachments.length > 1;
             return (
               <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className={`group flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
@@ -577,7 +874,7 @@ export default function ChatConversationPage() {
                     }
                     className={`h-8 w-8 shrink-0 rounded-full border transition ${
                       mine
-                        ? "border-black/15 bg-white/80 text-black hover:bg-white"
+                        ? "border-sky-500/40 bg-sky-500/25 text-sky-100 hover:bg-sky-500/35"
                         : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
                     } disabled:opacity-40 disabled:cursor-not-allowed`}
                     aria-label="Ответить"
@@ -586,9 +883,13 @@ export default function ChatConversationPage() {
                     <Reply className="w-3.5 h-3.5 mx-auto" />
                   </button>
                   <div
-                    className={`max-w-[78%] rounded-2xl px-3 py-2 break-words whitespace-pre-wrap ${
+                    className={`${
+                      messageAttachments.length > 0
+                        ? "w-[min(78vw,28rem)] max-w-[28rem]"
+                        : "max-w-[78%]"
+                    } rounded-2xl px-3 py-2 break-words whitespace-pre-wrap ${
                       mine
-                        ? "bg-white text-black"
+                        ? "bg-[#1f5fbf] text-white border border-[#2b6fd1]"
                         : "bg-white/10 text-white border border-white/10"
                     }`}
                   >
@@ -596,18 +897,50 @@ export default function ChatConversationPage() {
                       <div
                         className={`mb-2 rounded-xl border px-2 py-1.5 ${
                           mine
-                            ? "border-black/15 bg-black/10 text-black/80"
+                            ? "border-white/20 bg-black/15 text-white/90"
                             : "border-white/15 bg-black/30 text-white/80"
                         }`}
                       >
                         <p className="text-[11px] font-semibold leading-tight">{replyPreviewAuthor}</p>
-                        <p className={`text-xs leading-tight ${mine ? "text-black/70" : "text-white/70"}`}>
+                        <p className={`text-xs leading-tight ${mine ? "text-white/80" : "text-white/70"}`}>
                           {replyPreview}
                         </p>
                       </div>
                     )}
-                    <p className="text-sm leading-relaxed">{m.body}</p>
-                    <div className={`mt-1 text-[11px] ${mine ? "text-black/60" : "text-white/50"}`}>
+                    {messageAttachments.length > 0 && (
+                      <div
+                        className={`grid w-full gap-2 ${
+                          isMultiAttachment ? "grid-cols-2" : "grid-cols-1"
+                        } ${hasBody ? "mb-2" : ""}`}
+                      >
+                        {messageAttachments.map((att, idx) => (
+                          <button
+                            type="button"
+                            key={`${m.id}-attachment-${idx}`}
+                            onClick={() => setViewer({ urls: attachmentUrls, initialIndex: idx })}
+                            className={`w-full overflow-hidden rounded-xl border focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${
+                              mine ? "border-black/15 bg-black/10" : "border-white/15 bg-black/30"
+                            }`}
+                            aria-label={`Открыть вложение ${idx + 1}`}
+                          >
+                            <img
+                              src={att.url}
+                              alt="attachment"
+                              className={`w-full bg-black/20 ${
+                                isMultiAttachment ? "h-44 object-cover" : "max-h-[420px] h-auto object-contain"
+                              }`}
+                              loading="lazy"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {hasBody && <p className="text-sm leading-relaxed">{m.body}</p>}
+                    <div
+                      className={`mt-1 text-[11px] ${
+                        mine ? "text-right text-white/70" : "text-left text-white/50"
+                      }`}
+                    >
                       {timeLabel(m.created_at)}
                       {m.pending && " · отправка..."}
                       {m.failed && " · ошибка"}
@@ -620,6 +953,51 @@ export default function ChatConversationPage() {
         </div>
 
         <form onSubmit={onSubmit} className="border-t border-white/10 p-3 space-y-2">
+          <ErrorMessage message={mediaError} />
+          {composerAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {composerAttachments.map((item, idx) => {
+                const previewUrls = composerAttachments.map((x) => x.previewUrl);
+                return (
+                  <div
+                    key={item.id}
+                    className="relative h-16 w-16 overflow-hidden rounded-xl border border-white/15 bg-black/30"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setViewer({ urls: previewUrls, initialIndex: idx })}
+                      className="h-full w-full"
+                      aria-label={`Открыть выбранное изображение ${idx + 1}`}
+                    >
+                      <img
+                        src={item.previewUrl}
+                        alt="selected attachment"
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
+                    {item.status === "uploading" && (
+                      <div className="absolute inset-0 bg-black/55 grid place-items-center">
+                        <Loader2 className="w-4 h-4 animate-spin text-white/80" />
+                      </div>
+                    )}
+                    {item.status === "error" && (
+                      <div className="absolute inset-0 bg-red-500/35 grid place-items-center px-1">
+                        <span className="text-[10px] text-white text-center leading-tight">Ошибка</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeComposerAttachment(item.id)}
+                      className="absolute top-1 right-1 h-5 w-5 rounded-full border border-white/20 bg-black/70 text-white/90 hover:bg-black"
+                      aria-label="Удалить вложение"
+                    >
+                      <X className="w-3 h-3 mx-auto" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {replyTo && (
             <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 flex items-start gap-2">
               <div className="min-w-0 flex-1">
@@ -638,6 +1016,26 @@ export default function ChatConversationPage() {
             </div>
           )}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
+              aria-label="attach"
+              disabled={composerAttachments.length >= MAX_CHAT_ATTACHMENTS || sending}
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.gif,image/*,image/gif"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                handleAttachFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -653,15 +1051,29 @@ export default function ChatConversationPage() {
             />
             <button
               type="submit"
-              disabled={sending || body.trim().length === 0}
+              disabled={!canSend}
               className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
               aria-label="send"
             >
               {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <SendHorizontal className="w-5 h-5" />}
             </button>
           </div>
+          {(hasUploadingComposer || hasFailedComposer) && (
+            <p className="text-[11px] text-white/55">
+              {hasUploadingComposer
+                ? "Загрузка вложений..."
+                : "Есть вложения с ошибкой. Удалите их перед отправкой."}
+            </p>
+          )}
         </form>
       </div>
+      {viewer && (
+        <MediaViewerModal
+          urls={viewer.urls}
+          initialIndex={viewer.initialIndex}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </main>
   );
 }

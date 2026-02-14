@@ -51,6 +51,7 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
+  const isChatConversationPage = /^\/chats\/[^/]+$/.test(location.pathname);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
@@ -216,13 +217,22 @@ export default function App() {
   return (
     <div className="min-h-screen bg-black text-white relative">
       {!isAuthPage && (
-        <Navigation items={items} onClick={handleTabClick} activePath={location.pathname} />
+        <Navigation
+          items={items}
+          onClick={handleTabClick}
+          activePath={location.pathname}
+          hideMobileBottomBar={isChatConversationPage}
+        />
       )}
       <AuthGateModal />
       <div className="mx-auto max-w-6xl px-3 md:px-8">
         <div
           key={location.pathname}
-          className="pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
+          className={
+            isChatConversationPage
+              ? "h-[100dvh] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
+              : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
+          }
         >
           <Routes location={location}>
             <Route

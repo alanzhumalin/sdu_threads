@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { AvatarCircle } from "../components/Avatar";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { ModerationRemovePostModal } from "../components/ModerationRemovePostModal";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 import type { MediaItem } from "../types/media";
 
 type ModPost = {
@@ -12,6 +13,7 @@ type ModPost = {
   user_id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   content: string;
   media?: MediaItem[];
@@ -176,7 +178,10 @@ export default function ModerationPage() {
                   />
                   <div className="min-w-0">
                     <div className="text-white font-semibold truncate">
-                      {p.full_name}{" "}
+                      <span className="inline-flex items-center gap-[3px]">
+                        <span>{p.full_name}</span>
+                        {p.is_verified ? <VerifiedBadge /> : null}
+                      </span>{" "}
                       <span className="text-white/60 text-sm">@{p.username}</span>
                     </div>
                     <div className="text-white/60 text-xs truncate">

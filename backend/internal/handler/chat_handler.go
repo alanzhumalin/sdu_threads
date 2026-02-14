@@ -161,7 +161,17 @@ func (h *ChatHandler) handleMessages(w http.ResponseWriter, r *http.Request, cha
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
-		item, err := h.service.Send(r.Context(), userID, chatID, req.Body, req.ReplyToID)
+		attachments := make([]service.ChatAttachmentInput, 0, len(req.Attachments))
+		for _, att := range req.Attachments {
+			attachments = append(attachments, service.ChatAttachmentInput{
+				URL:    att.URL,
+				Width:  att.Width,
+				Height: att.Height,
+				Type:   att.Type,
+			})
+		}
+
+		item, err := h.service.Send(r.Context(), userID, chatID, req.Body, req.ReplyToID, attachments)
 		if err != nil {
 			h.writeChatError(w, err)
 			return
@@ -331,7 +341,9 @@ func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrChatMessageEmpty),
 		errors.Is(err, service.ErrChatMessageLong),
 		errors.Is(err, service.ErrChatMessageSelf),
-		errors.Is(err, service.ErrChatReplyNotFound):
+		errors.Is(err, service.ErrChatReplyNotFound),
+		errors.Is(err, service.ErrChatAttachInvalid),
+		errors.Is(err, service.ErrChatAttachTooMany):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")

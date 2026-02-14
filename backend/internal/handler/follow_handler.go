@@ -28,7 +28,54 @@ func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts
 }
 
 func (h *FollowHandler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("/api/users/me/password", h.handleChangePassword)
 	mux.HandleFunc("/api/users/", h.handleFollowRoutes)
+}
+
+func (h *FollowHandler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	currentID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	var req dto.ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if err := h.profile.ChangePassword(r.Context(), currentID, req.CurrentPassword, req.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, service.ErrCurrentPasswordInvalid):
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "INVALID_CURRENT_PASSWORD",
+				Message: "Текущий пароль неверный",
+			})
+			return
+		case errors.Is(err, service.ErrNewPasswordTooShort):
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "WEAK_PASSWORD",
+				Message: "Новый пароль должен быть минимум 8 символов",
+			})
+			return
+		case errors.Is(err, service.ErrNewPasswordSameAsOld):
+			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+				Code:    "PASSWORD_UNCHANGED",
+				Message: "Новый пароль должен отличаться от текущего",
+			})
+			return
+		default:
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "password_changed"})
 }
 
 func (h *FollowHandler) handleFollowRoutes(w http.ResponseWriter, r *http.Request) {

@@ -172,7 +172,7 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background":
+	case "post", "avatar", "background", "chat":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",
@@ -278,7 +278,7 @@ func (h *MediaHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background":
+	case "post", "avatar", "background", "chat":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",
@@ -444,19 +444,22 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errFileTooLarge
 				return
 			}
-			if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
-				ActorUserID: userID,
-				Action:      "upload_media",
-				TargetType:  purpose,
-				Payload: map[string]any{
-					"purpose":      purpose,
-					"filename":     fh.Filename,
-					"content_type": ct,
-					"size_bytes":   len(data),
-				},
-			}); err != nil {
-				errs <- err
-				return
+			// Для личных чатов не применяем ML-модерацию изображений.
+			if purpose != "chat" && h.mod != nil {
+				if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
+					ActorUserID: userID,
+					Action:      "upload_media",
+					TargetType:  purpose,
+					Payload: map[string]any{
+						"purpose":      purpose,
+						"filename":     fh.Filename,
+						"content_type": ct,
+						"size_bytes":   len(data),
+					},
+				}); err != nil {
+					errs <- err
+					return
+				}
 			}
 
 			// Get dimensions cheaply (works for jpeg/png/gif/webp)

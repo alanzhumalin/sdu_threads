@@ -27,6 +27,7 @@ CREATE TABLE users (
     email text NOT NULL UNIQUE,
     username text NOT NULL UNIQUE,
     full_name text NOT NULL,
+    is_verified boolean NOT NULL DEFAULT 0,
     password_hash text NOT NULL,
     role text NOT NULL DEFAULT 'user',
     is_root_admin boolean NOT NULL DEFAULT 0,

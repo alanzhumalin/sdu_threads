@@ -37,6 +37,7 @@ type FeedItem struct {
 	UserID       string
 	Username     string
 	FullName     string
+	IsVerified   bool
 	AvatarURL    string
 	Content      string
 	MediaURL     string
@@ -63,7 +64,7 @@ func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *
 	q := ""
 	if r.db.Dialector.Name() == "postgres" {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -91,7 +92,7 @@ ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -133,7 +134,7 @@ func (r *PostRepository) FeedFollowing(ctx context.Context, followerID string, l
 	q := ""
 	if r.db.Dialector.Name() == "postgres" {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -162,7 +163,7 @@ ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -206,7 +207,7 @@ func (r *PostRepository) ModerationFeed(ctx context.Context, query string, limit
 
 	if r.db.Dialector.Name() == "postgres" {
 		sql = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -244,7 +245,7 @@ LIMIT ? OFFSET ?`
 		args = append(args, limit, offset)
 	} else {
 		sql = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -292,7 +293,7 @@ func (r *PostRepository) Get(ctx context.Context, postID string, viewerID *strin
 	q := ""
 	if r.db.Dialector.Name() == "postgres" {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -319,7 +320,7 @@ WHERE p.id = ? AND p.removed_at IS NULL
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -389,7 +390,7 @@ func (r *PostRepository) ByUser(ctx context.Context, userID string, limit, offse
 	q := ""
 	if r.db.Dialector.Name() == "postgres" {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -417,7 +418,7 @@ ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -465,7 +466,7 @@ func (r *PostRepository) ByUserQuery(ctx context.Context, userID, query string, 
 	sql := ""
 	if r.db.Dialector.Name() == "postgres" {
 		sql = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -494,7 +495,7 @@ ORDER BY p.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
 		sql = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -544,7 +545,7 @@ WITH ids AS (
     LEFT JOIN hashtags h ON h.id = ph.hashtag_id
     WHERE p.removed_at IS NULL AND (h.name = ? OR LOWER(p.content) LIKE ?)
 )
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count,
        p.created_at, p.updated_at,
@@ -580,7 +581,7 @@ WITH ids AS (
     LEFT JOIN hashtags h ON h.id = ph.hashtag_id
     WHERE p.removed_at IS NULL AND (h.name = ? OR LOWER(p.content) LIKE ?)
 )
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count,
        p.created_at, p.updated_at,
@@ -621,7 +622,7 @@ func (r *PostRepository) LikedByUser(ctx context.Context, userID string, limit, 
 	q := ""
 	if r.db.Dialector.Name() == "postgres" {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        COALESCE(pm.media, CASE WHEN p.media_url IS NOT NULL AND p.media_url <> '' THEN json_build_array(json_build_object('url', p.media_url, 'width', 0, 'height', 0)) ELSE '[]'::json END) AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,
@@ -647,7 +648,7 @@ ORDER BY li.created_at DESC
 LIMIT ? OFFSET ?`
 	} else {
 		q = `
-SELECT p.id, p.user_id, u.username, u.full_name, u.avatar_url, p.content, p.media_url,
+SELECT p.id, p.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, p.content, p.media_url,
        NULL AS media,
        p.view_count, p.created_at, p.updated_at,
        COALESCE(l.likes, 0) AS like_count,

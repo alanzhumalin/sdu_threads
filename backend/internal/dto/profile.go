@@ -7,3 +7,8 @@ type UpdateProfileRequest struct {
 	BackgroundURL *string            `json:"background_url,omitempty"`
 	SocialLinks   *map[string]string `json:"social_links,omitempty"`
 }
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}

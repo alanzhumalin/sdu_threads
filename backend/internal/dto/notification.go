@@ -8,6 +8,7 @@ type Notification struct {
 	ActorID        string    `json:"actor_id"`
 	ActorUsername  string    `json:"actor_username"`
 	ActorFullName  string    `json:"actor_full_name,omitempty"`
+	ActorVerified  bool      `json:"actor_is_verified"`
 	ActorAvatarURL string    `json:"actor_avatar_url,omitempty"`
 	PostID         string    `json:"post_id,omitempty"`
 	CommentID      string    `json:"comment_id,omitempty"`

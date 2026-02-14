@@ -19,6 +19,7 @@ type Props = {
   items: NavItem[];
   activePath?: string;
   onClick: (path: string) => void;
+  hideMobileBottomBar?: boolean;
 };
 
 const icons: Record<string, JSX.Element> = {
@@ -42,7 +43,7 @@ const icons: Record<string, JSX.Element> = {
   bell2: <Bell size={22} strokeWidth={1.7} />,
 };
 
-export default function Navigation({ items, onClick, activePath }: Props) {
+export default function Navigation({ items, onClick, activePath, hideMobileBottomBar = false }: Props) {
   const navRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const chatsUnreadCount = useChatStore((s) => s.unreadCount);
@@ -97,34 +98,36 @@ export default function Navigation({ items, onClick, activePath }: Props) {
       </nav>
 
       {/* Mobile bottom bar */}
-      <nav
-        className="min-[871px]:hidden fixed bottom-0 left-0 right-0 z-[120] border-t border-white/10 bg-black/90 backdrop-blur px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] flex justify-around"
-      >
-        {mobileItems.map((item) => (
-          <button
-            key={item.path}
-            onClick={() => onClick(item.path)}
-            className={`grid place-items-center w-12 h-12 rounded-full transition ${
-              item.icon === "exit"
-                ? "text-red-400 hover:bg-white/5"
-                : isActive(item.path)
-                  ? "text-black bg-white"
-                  : "text-white/60 hover:text-white hover:bg-white/5"
-            }`}
-            title={item.label}
-          >
-            <span className="relative grid place-items-center w-6 h-6">
-              {icons[item.icon] || null}
-              {item.icon === "bell" && unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
-              )}
-              {item.icon === "messages" && chatsUnreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
-              )}
-            </span>
-          </button>
-        ))}
-      </nav>
+      {!hideMobileBottomBar && (
+        <nav
+          className="min-[871px]:hidden fixed bottom-0 left-0 right-0 z-[120] border-t border-white/10 bg-black/90 backdrop-blur px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] flex justify-around"
+        >
+          {mobileItems.map((item) => (
+            <button
+              key={item.path}
+              onClick={() => onClick(item.path)}
+              className={`grid place-items-center w-12 h-12 rounded-full transition ${
+                item.icon === "exit"
+                  ? "text-red-400 hover:bg-white/5"
+                  : isActive(item.path)
+                    ? "text-black bg-white"
+                    : "text-white/60 hover:text-white hover:bg-white/5"
+              }`}
+              title={item.label}
+            >
+              <span className="relative grid place-items-center w-6 h-6">
+                {icons[item.icon] || null}
+                {item.icon === "bell" && unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+                )}
+                {item.icon === "messages" && chatsUnreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-400 rounded-full border border-black" />
+                )}
+              </span>
+            </button>
+          ))}
+        </nav>
+      )}
     </>
   );
 }

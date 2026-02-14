@@ -21,6 +21,8 @@ var (
 	ErrChatMessageLong   = errors.New("message too long (max 4000)")
 	ErrChatMessageSelf   = errors.New("cannot message yourself")
 	ErrChatReplyNotFound = errors.New("reply message not found")
+	ErrChatAttachInvalid = errors.New("invalid message attachment")
+	ErrChatAttachTooMany = errors.New("too many message attachments (max 5)")
 )
 
 type ChatService struct {
@@ -33,10 +35,11 @@ func NewChatService(chats *repository.ChatRepository, users *repository.UserRepo
 }
 
 type ChatParticipant struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	FullName  string `json:"full_name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	FullName   string `json:"full_name"`
+	IsVerified bool   `json:"is_verified"`
+	AvatarURL  string `json:"avatar_url,omitempty"`
 }
 
 type ChatLastMessage struct {
@@ -55,22 +58,38 @@ type ChatPreview struct {
 }
 
 type ChatMessage struct {
-	ID        string  `json:"id"`
-	ChatID    string  `json:"chat_id"`
-	SenderID  string  `json:"sender_id"`
-	ReplyToID *string `json:"reply_to_id,omitempty"`
-	Body      string  `json:"body"`
-	ReadAt    *string `json:"read_at,omitempty"`
-	CreatedAt string  `json:"created_at"`
+	ID          string                  `json:"id"`
+	ChatID      string                  `json:"chat_id"`
+	SenderID    string                  `json:"sender_id"`
+	ReplyToID   *string                 `json:"reply_to_id,omitempty"`
+	Body        string                  `json:"body"`
+	Attachments []ChatMessageAttachment `json:"attachments,omitempty"`
+	ReadAt      *string                 `json:"read_at,omitempty"`
+	CreatedAt   string                  `json:"created_at"`
+}
+
+type ChatMessageAttachment struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Type   string `json:"type"`
+}
+
+type ChatAttachmentInput struct {
+	URL    string
+	Width  int
+	Height int
+	Type   string
 }
 
 func mapChatPreview(row repository.DirectChatRow) ChatPreview {
 	out := ChatPreview{
 		ID: row.ChatID,
 		Participant: ChatParticipant{
-			ID:       row.PeerID,
-			Username: row.PeerUsername,
-			FullName: row.PeerFullName,
+			ID:         row.PeerID,
+			Username:   row.PeerUsername,
+			FullName:   row.PeerFullName,
+			IsVerified: row.PeerIsVerified,
 		},
 		UnreadCount: row.UnreadCount,
 	}
@@ -108,14 +127,29 @@ func mapChatMessage(m models.Message) ChatMessage {
 		}
 	}
 
+	attachments := make([]ChatMessageAttachment, 0, len(m.Attachments))
+	for _, att := range m.Attachments {
+		typ := strings.ToLower(strings.TrimSpace(att.Type))
+		if typ == "" {
+			typ = "image"
+		}
+		attachments = append(attachments, ChatMessageAttachment{
+			URL:    strings.TrimSpace(att.URL),
+			Width:  att.Width,
+			Height: att.Height,
+			Type:   typ,
+		})
+	}
+
 	return ChatMessage{
-		ID:        m.ID,
-		ChatID:    m.ChatID,
-		SenderID:  m.SenderID,
-		ReplyToID: replyToID,
-		Body:      m.Body,
-		ReadAt:    readAt,
-		CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339),
+		ID:          m.ID,
+		ChatID:      m.ChatID,
+		SenderID:    m.SenderID,
+		ReplyToID:   replyToID,
+		Body:        m.Body,
+		Attachments: attachments,
+		ReadAt:      readAt,
+		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -217,13 +251,55 @@ func (s *ChatService) Messages(ctx context.Context, userID, chatID string, limit
 	return out, nil
 }
 
-func (s *ChatService) Send(ctx context.Context, userID, chatID, body, replyToID string) (*ChatMessage, error) {
+func (s *ChatService) Send(
+	ctx context.Context,
+	userID,
+	chatID,
+	body,
+	replyToID string,
+	attachments []ChatAttachmentInput,
+) (*ChatMessage, error) {
 	body = strings.TrimSpace(body)
-	if body == "" {
-		return nil, ErrChatMessageEmpty
-	}
 	if len([]rune(body)) > 4000 {
 		return nil, ErrChatMessageLong
+	}
+
+	if len(attachments) > 5 {
+		return nil, ErrChatAttachTooMany
+	}
+
+	repoAttachments := make([]repository.ChatAttachmentInput, 0, len(attachments))
+	for _, att := range attachments {
+		url := strings.TrimSpace(att.URL)
+		if url == "" {
+			return nil, ErrChatAttachInvalid
+		}
+		typ := strings.ToLower(strings.TrimSpace(att.Type))
+		if typ == "" {
+			typ = "image"
+		}
+		if typ != "image" {
+			return nil, ErrChatAttachInvalid
+		}
+
+		width := att.Width
+		if width < 0 {
+			width = 0
+		}
+		height := att.Height
+		if height < 0 {
+			height = 0
+		}
+
+		repoAttachments = append(repoAttachments, repository.ChatAttachmentInput{
+			URL:    url,
+			Width:  width,
+			Height: height,
+			Type:   typ,
+		})
+	}
+	if body == "" && len(repoAttachments) == 0 {
+		return nil, ErrChatMessageEmpty
 	}
 
 	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
@@ -243,7 +319,7 @@ func (s *ChatService) Send(ctx context.Context, userID, chatID, body, replyToID 
 		replyToRef = &replyToID
 	}
 
-	msg, err := s.chats.CreateMessage(ctx, chatID, userID, body, replyToRef)
+	msg, err := s.chats.CreateMessage(ctx, chatID, userID, body, replyToRef, repoAttachments)
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,13 @@ func NewChatRepository(db *gorm.DB) *ChatRepository {
 	return &ChatRepository{db: db}
 }
 
+type ChatAttachmentInput struct {
+	URL    string
+	Width  int
+	Height int
+	Type   string
+}
+
 func directChatKey(userA, userB string) string {
 	if strings.Compare(userA, userB) < 0 {
 		return userA + ":" + userB
@@ -104,6 +111,7 @@ type DirectChatRow struct {
 	PeerID              string
 	PeerUsername        string
 	PeerFullName        string
+	PeerIsVerified      bool
 	PeerAvatarURL       sql.NullString
 	LastMessageID       sql.NullString
 	LastMessageSenderID sql.NullString
@@ -130,6 +138,7 @@ SELECT
     peer.id AS peer_id,
     peer.username AS peer_username,
     peer.full_name AS peer_full_name,
+    peer.is_verified AS peer_is_verified,
     peer.avatar_url AS peer_avatar_url,
     lm.id AS last_message_id,
     lm.sender_id AS last_message_sender_id,
@@ -141,7 +150,17 @@ JOIN chat_participants me ON me.chat_id = c.id AND me.user_id = ?
 JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id <> me.user_id
 JOIN users peer ON peer.id = cp.user_id
 LEFT JOIN LATERAL (
-    SELECT m.id, m.sender_id, m.body, m.created_at
+    SELECT
+        m.id,
+        m.sender_id,
+        COALESCE(
+            NULLIF(m.body, ''),
+            CASE
+                WHEN EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.message_id = m.id) THEN '[Вложение]'
+                ELSE ''
+            END
+        ) AS body,
+        m.created_at
     FROM messages m
     WHERE m.chat_id = c.id
     ORDER BY m.created_at DESC, m.id DESC
@@ -173,6 +192,7 @@ SELECT
     peer.id AS peer_id,
     peer.username AS peer_username,
     peer.full_name AS peer_full_name,
+    peer.is_verified AS peer_is_verified,
     peer.avatar_url AS peer_avatar_url,
     lm.id AS last_message_id,
     lm.sender_id AS last_message_sender_id,
@@ -184,7 +204,17 @@ JOIN chat_participants me ON me.chat_id = c.id AND me.user_id = ?
 JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id <> me.user_id
 JOIN users peer ON peer.id = cp.user_id
 LEFT JOIN LATERAL (
-    SELECT m.id, m.sender_id, m.body, m.created_at
+    SELECT
+        m.id,
+        m.sender_id,
+        COALESCE(
+            NULLIF(m.body, ''),
+            CASE
+                WHEN EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.message_id = m.id) THEN '[Вложение]'
+                ELSE ''
+            END
+        ) AS body,
+        m.created_at
     FROM messages m
     WHERE m.chat_id = c.id
     ORDER BY m.created_at DESC, m.id DESC
@@ -231,6 +261,22 @@ LIMIT ? OFFSET ?`
 	if rows == nil {
 		rows = []models.Message{}
 	}
+
+	messageIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.ID) != "" {
+			messageIDs = append(messageIDs, row.ID)
+		}
+	}
+
+	attachmentsByMessageID, err := r.listAttachmentsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].Attachments = attachmentsByMessageID[rows[i].ID]
+	}
+
 	return rows, nil
 }
 
@@ -245,7 +291,14 @@ func (r *ChatRepository) MessageExistsInChat(ctx context.Context, chatID, messag
 	return exists, nil
 }
 
-func (r *ChatRepository) CreateMessage(ctx context.Context, chatID, senderID, body string, replyToID *string) (*models.Message, error) {
+func (r *ChatRepository) CreateMessage(
+	ctx context.Context,
+	chatID,
+	senderID,
+	body string,
+	replyToID *string,
+	attachments []ChatAttachmentInput,
+) (*models.Message, error) {
 	var out models.Message
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Raw(`
@@ -255,6 +308,16 @@ func (r *ChatRepository) CreateMessage(ctx context.Context, chatID, senderID, bo
 		`, chatID, senderID, replyToID, body).Scan(&out).Error; err != nil {
 			return err
 		}
+
+		for i, att := range attachments {
+			if err := tx.Exec(`
+				INSERT INTO message_attachments (message_id, url, width, height, type, sort_order, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, now())
+			`, out.ID, att.URL, att.Width, att.Height, att.Type, i).Error; err != nil {
+				return err
+			}
+		}
+
 		if err := tx.Exec(`UPDATE chats SET updated_at = now() WHERE id = ?`, chatID).Error; err != nil {
 			return err
 		}
@@ -263,7 +326,40 @@ func (r *ChatRepository) CreateMessage(ctx context.Context, chatID, senderID, bo
 	if err != nil {
 		return nil, err
 	}
+
+	attachmentsByMessageID, err := r.listAttachmentsByMessageIDs(ctx, []string{out.ID})
+	if err != nil {
+		return nil, err
+	}
+	out.Attachments = attachmentsByMessageID[out.ID]
+
 	return &out, nil
+}
+
+func (r *ChatRepository) listAttachmentsByMessageIDs(
+	ctx context.Context,
+	messageIDs []string,
+) (map[string][]models.MessageAttachment, error) {
+	out := make(map[string][]models.MessageAttachment, len(messageIDs))
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+
+	var rows []models.MessageAttachment
+	q := `
+SELECT id, message_id, url, width, height, type, sort_order, created_at
+FROM message_attachments
+WHERE message_id IN ?
+ORDER BY sort_order ASC, created_at ASC, id ASC`
+
+	if err := r.db.WithContext(ctx).Raw(q, messageIDs).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		out[row.MessageID] = append(out[row.MessageID], row)
+	}
+	return out, nil
 }
 
 func (r *ChatRepository) MarkRead(ctx context.Context, chatID, userID string) (int64, error) {

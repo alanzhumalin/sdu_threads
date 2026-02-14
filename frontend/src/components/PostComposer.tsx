@@ -7,6 +7,7 @@ import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush } from "lucide-react";
 import { DrawingModal } from "./DrawingModal";
 import { ErrorMessage } from "./ErrorMessage";
 import FabricImageEditor from "./FabricImageEditor";
+import { VerifiedBadge } from "./VerifiedBadge";
 import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
 import type { MediaItem as UploadedMediaItem } from "../types/media";
 
@@ -19,6 +20,7 @@ type UserSuggestion = {
   id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   bio?: string;
 };
@@ -1048,7 +1050,10 @@ export default function PostComposer({ onCreated }: Props) {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{u.full_name || u.username}</p>
+                        <p className="font-semibold truncate inline-flex items-center gap-[3px]">
+                          <span>{u.full_name || u.username}</span>
+                          {u.is_verified ? <VerifiedBadge /> : null}
+                        </p>
                         <p className="text-white/60 text-sm truncate">@{u.username}</p>
                         {u.bio && <p className="text-white/50 text-xs truncate">{u.bio}</p>}
                       </div>

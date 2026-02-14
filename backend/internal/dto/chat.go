@@ -5,7 +5,15 @@ type OpenDirectChatRequest struct {
 	Username string `json:"username"`
 }
 
+type ChatMessageAttachment struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Type   string `json:"type"`
+}
+
 type SendMessageRequest struct {
-	Body      string `json:"body"`
-	ReplyToID string `json:"reply_to_id"`
+	Body        string                  `json:"body"`
+	ReplyToID   string                  `json:"reply_to_id"`
+	Attachments []ChatMessageAttachment `json:"attachments"`
 }

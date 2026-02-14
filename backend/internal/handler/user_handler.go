@@ -56,6 +56,7 @@ func (h *UserHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		ID:            user.ID,
 		Username:      user.Username,
 		FullName:      user.FullName,
+		IsVerified:    user.IsVerified,
 		Bio:           user.Bio,
 		AvatarURL:     user.AvatarURL,
 		BackgroundURL: user.BackgroundURL,

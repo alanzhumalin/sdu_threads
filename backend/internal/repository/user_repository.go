@@ -54,7 +54,7 @@ func (r *UserRepository) Search(ctx context.Context, q string, limit, offset int
 	var users []models.User
 	err := r.db.WithContext(ctx).
 		Model(&models.User{}).
-		Select("id, username, full_name, bio, avatar_url, background_url").
+		Select("id, username, full_name, is_verified, bio, avatar_url, background_url").
 		Where("username ILIKE ? OR full_name ILIKE ?", "%"+q+"%", "%"+q+"%").
 		Order("username ASC").
 		Limit(limit).Offset(offset).
@@ -107,6 +107,13 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, id string, fields ma
 		Updates(fields).Error
 }
 
+func (r *UserRepository) UpdatePasswordHash(ctx context.Context, id string, hash string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("password_hash", hash).Error
+}
+
 func (r *UserRepository) UpdateRole(ctx context.Context, id string, role string) error {
 	role = strings.TrimSpace(strings.ToLower(role))
 	if role == "" {
@@ -116,6 +123,13 @@ func (r *UserRepository) UpdateRole(ctx context.Context, id string, role string)
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Update("role", role).Error
+}
+
+func (r *UserRepository) UpdateVerified(ctx context.Context, id string, verified bool) error {
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("is_verified", verified).Error
 }
 
 func (r *UserRepository) SetRootAdmin(ctx context.Context, id string, isRoot bool) error {

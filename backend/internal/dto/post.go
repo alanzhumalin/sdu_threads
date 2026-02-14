@@ -19,6 +19,7 @@ type FeedResponseItem struct {
 	UserID       string      `json:"user_id"`
 	Username     string      `json:"username"`
 	FullName     string      `json:"full_name"`
+	IsVerified   bool        `json:"is_verified"`
 	AvatarURL    string      `json:"avatar_url,omitempty"`
 	Content      string      `json:"content"`
 	Media        []MediaItem `json:"media,omitempty"`

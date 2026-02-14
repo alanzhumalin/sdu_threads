@@ -25,6 +25,7 @@ type CommentWithUser struct {
 	UserID           string
 	Username         string
 	FullName         string
+	IsVerified       bool
 	AvatarURL        string
 	Body             string
 	CreatedAt        string
@@ -45,7 +46,7 @@ func (r *CommentRepository) ListByPost(ctx context.Context, postID string, limit
 	}
 	var res []CommentWithUser
 	q := `
-SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, u.avatar_url, c.body, c.created_at,
+SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, c.body, c.created_at,
        COALESCE(cl.liked, false) AS liked_by_me,
        COALESCE(clc.count, 0) AS like_count,
        COALESCE(rp.count, 0) AS replies_count,
@@ -85,7 +86,7 @@ func (r *CommentRepository) ListReplies(ctx context.Context, parentID string, li
 	}
 	var res []CommentWithUser
 	q := `
-SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, u.avatar_url, c.body, c.created_at,
+SELECT c.id, c.post_id, c.user_id, u.username, u.full_name, u.is_verified, u.avatar_url, c.body, c.created_at,
        COALESCE(cl.liked, false) AS liked_by_me,
        COALESCE(clc.count, 0) AS like_count,
        COALESCE(rp.count, 0) AS replies_count,

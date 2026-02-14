@@ -2,11 +2,13 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { MentionPreview } from "./MentionPreview";
 import { AvatarCircle } from "./Avatar";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 export type UserRowData = {
   id: string;
   username: string;
   full_name?: string;
+  is_verified?: boolean;
   avatar_url?: string;
 };
 
@@ -34,7 +36,10 @@ export function UserRow({ user, right }: Props) {
               className="text-white font-semibold hover:underline"
             >
               <Link to={`/u/${user.username}`} className="text-white">
-                {user.full_name || "Без имени"}
+                <span className="inline-flex items-center gap-[3px]">
+                  <span>{user.full_name || "Без имени"}</span>
+                  {user.is_verified ? <VerifiedBadge /> : null}
+                </span>
               </Link>
             </MentionPreview>
           </p>

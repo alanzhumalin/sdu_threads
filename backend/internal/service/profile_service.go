@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"sduthreads/internal/models"
 	"sduthreads/internal/moderation"
 	"sduthreads/internal/repository"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type ProfileService struct {
@@ -18,6 +21,12 @@ type ProfileService struct {
 	follows *repository.FollowRepository
 	mod     *moderation.Client
 }
+
+var (
+	ErrCurrentPasswordInvalid = errors.New("current password is invalid")
+	ErrNewPasswordTooShort    = errors.New("password must be at least 8 characters")
+	ErrNewPasswordSameAsOld   = errors.New("new password must be different from current password")
+)
 
 func NewProfileService(users *repository.UserRepository, follows *repository.FollowRepository, mod *moderation.Client) *ProfileService {
 	return &ProfileService{users: users, follows: follows, mod: mod}
@@ -27,6 +36,7 @@ type Profile struct {
 	ID            string            `json:"id"`
 	Username      string            `json:"username"`
 	FullName      string            `json:"full_name"`
+	IsVerified    bool              `json:"is_verified"`
 	Bio           string            `json:"bio"`
 	AvatarURL     string            `json:"avatar_url"`
 	BackgroundURL string            `json:"background_url"`
@@ -162,6 +172,7 @@ func (s *ProfileService) Get(ctx context.Context, userID string, viewerID *strin
 		ID:            u.ID,
 		Username:      u.Username,
 		FullName:      u.FullName,
+		IsVerified:    u.IsVerified,
 		Bio:           u.Bio,
 		AvatarURL:     u.AvatarURL,
 		BackgroundURL: u.BackgroundURL,
@@ -237,4 +248,31 @@ func (s *ProfileService) GetByUsername(ctx context.Context, username string, vie
 		return nil, err
 	}
 	return s.Get(ctx, u.ID, viewerID)
+}
+
+func (s *ProfileService) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	currentPassword = strings.TrimSpace(currentPassword)
+	if currentPassword == "" {
+		return ErrCurrentPasswordInvalid
+	}
+	if len(newPassword) < 8 {
+		return ErrNewPasswordTooShort
+	}
+
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(currentPassword)); err != nil {
+		return ErrCurrentPasswordInvalid
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(newPassword)); err == nil {
+		return ErrNewPasswordSameAsOld
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.users.UpdatePasswordHash(ctx, userID, string(hash))
 }

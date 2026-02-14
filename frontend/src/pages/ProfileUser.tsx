@@ -16,6 +16,7 @@ import { useProfileMeStore } from "../store/profileMe";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
 import { MentionPreview } from "../components/MentionPreview";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 
 function timeAgo(iso: string) {
   const date = new Date(iso);
@@ -242,7 +243,10 @@ export default function ProfileUserPage() {
                   )}
                 </div>
                 <div className="mt-12 space-y-2">
-                  <p className="text-xl font-semibold text-white">{profile.full_name || ""}</p>
+                  <p className="text-xl font-semibold text-white inline-flex items-center gap-[3px]">
+                    <span>{profile.full_name || ""}</span>
+                    {profile.is_verified ? <VerifiedBadge /> : null}
+                  </p>
                   <p className="text-white/60">@{profile.username}</p>
                   {/* убираем вывод username, оставляем только fullname */}
                   <p className="text-white/50 text-sm">
@@ -354,7 +358,10 @@ export default function ProfileUserPage() {
                     {profile?.username ? (
                       <MentionPreview username={profile.username} className="">
                         <Link to={`/u/${profile.username}`} className="hover:underline">
-                          {profile?.full_name}
+                          <span className="inline-flex items-center gap-[3px]">
+                            <span>{profile?.full_name}</span>
+                            {profile?.is_verified ? <VerifiedBadge /> : null}
+                          </span>
                         </Link>
                       </MentionPreview>
                     ) : (

@@ -174,12 +174,13 @@ func (h *AdminHandler) usersList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(items))
 	for _, u := range items {
 		out = append(out, map[string]any{
-			"id":         u.ID,
-			"username":   u.Username,
-			"full_name":  u.FullName,
-			"avatar_url": u.AvatarURL,
-			"role":       u.Role,
-			"created_at": u.CreatedAt.Format(time.RFC3339),
+			"id":          u.ID,
+			"username":    u.Username,
+			"full_name":   u.FullName,
+			"is_verified": u.IsVerified,
+			"avatar_url":  u.AvatarURL,
+			"role":        u.Role,
+			"created_at":  u.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -359,6 +360,51 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.users.UpdateRole(r.Context(), target.ID, role); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+		return
+	case "verified":
+		// PATCH /api/admin/users/:id/verified
+		if r.Method != http.MethodPatch {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		reqUser, err := h.requireAdminUser(r)
+		if err != nil {
+			if err.Error() == "forbidden" {
+				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "FORBIDDEN", Message: "forbidden"})
+				return
+			}
+			writeErrorPayload(w, http.StatusUnauthorized, errorPayload{Code: "UNAUTHORIZED", Message: "unauthorized"})
+			return
+		}
+
+		target, err := h.resolveUser(r.Context(), idOrUsername)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		// Hide root admin from other admins entirely.
+		if target.IsRootAdmin && !reqUser.IsRootAdmin {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		var req struct {
+			IsVerified *bool `json:"is_verified"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		if req.IsVerified == nil {
+			writeError(w, http.StatusBadRequest, "is_verified is required")
+			return
+		}
+
+		if err := h.users.UpdateVerified(r.Context(), target.ID, *req.IsVerified); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

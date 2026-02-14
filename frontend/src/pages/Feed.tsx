@@ -13,6 +13,7 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { PostMedia } from "../components/PostMedia";
 import { AuthGateOverlay } from "../components/AuthGateOverlay";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 import { highlightHashtags } from "../utils/text";
 import { MentionPreview } from "../components/MentionPreview";
 import { useSubscriptionsStore } from "../store/subscriptions";
@@ -34,6 +35,7 @@ type FeedItem = {
   content: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   created_at: string;
   media?: MediaItem[];
@@ -616,9 +618,10 @@ export default function FeedPage() {
                   <MentionPreview username={item.username} className="">
                     <Link
                       to={`/u/${item.username}`}
-                      className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                      className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                     >
-                      {item.full_name || "Без имени"}
+                      <span>{item.full_name || "Без имени"}</span>
+                      {item.is_verified ? <VerifiedBadge /> : null}
                     </Link>
                   </MentionPreview>
                   <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>

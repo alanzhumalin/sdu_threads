@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { UserRow } from "../components/UserRow";
 import { AvatarCircle } from "../components/Avatar";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 import type { MediaItem } from "../types/media";
 
 type AdminStats = {
@@ -18,6 +19,7 @@ type AdminUser = {
   id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   role: string;
   created_at: string;
@@ -28,6 +30,7 @@ type AdminPost = {
   user_id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   content: string;
   media?: MediaItem[];
@@ -58,6 +61,9 @@ export default function AdminPage() {
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [selectedVerified, setSelectedVerified] = useState(false);
+  const [verifiedSaving, setVerifiedSaving] = useState(false);
+  const [verifiedError, setVerifiedError] = useState<string | null>(null);
 
   const [postsQuery, setPostsQuery] = useState<string>("");
   const [posts, setPosts] = useState<AdminPost[]>([]);
@@ -77,7 +83,7 @@ export default function AdminPage() {
       .adminMe(token)
       .then((me) => {
         if (cancelled) return;
-        setMyRole(String(me?.role || "").toLowerCase() || null);
+        setMyRole(String(me?.role || "").trim().toLowerCase() || null);
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -152,7 +158,9 @@ export default function AdminPage() {
     if (!token) return;
     setSelected(u);
     setSelectedRole(u.role || "user");
+    setSelectedVerified(Boolean(u.is_verified));
     setRoleError(null);
+    setVerifiedError(null);
     setPostsQuery("");
     setPosts([]);
     setPostsNextOffset(0);
@@ -210,6 +218,31 @@ export default function AdminPage() {
     }
   };
 
+  const saveVerified = async () => {
+    if (!token || !selected) return;
+    setVerifiedSaving(true);
+    setVerifiedError(null);
+    try {
+      await api.adminSetUserVerified(selected.id, selectedVerified, token);
+      setSelected((prev) =>
+        prev ? { ...prev, is_verified: selectedVerified } : prev
+      );
+      setUsers((prev) =>
+        prev.map((uu) =>
+          uu.id === selected.id ? { ...uu, is_verified: selectedVerified } : uu
+        )
+      );
+    } catch (e: any) {
+      if (e?.code === "FORBIDDEN") {
+        setVerifiedError("Только admin может выдавать верификацию.");
+      } else {
+        setVerifiedError(e?.message || "Не удалось обновить верификацию");
+      }
+    } finally {
+      setVerifiedSaving(false);
+    }
+  };
+
   const removePost = async (postId: string) => {
     if (!token) return;
     const reason = window.prompt("Причина удаления (необязательно):") || "";
@@ -225,7 +258,12 @@ export default function AdminPage() {
     <main className="max-w-[672px] w-full mx-auto py-6 space-y-4">
       <div className="card p-4">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-lg font-semibold">Admin Dashboard</h1>
+          <div>
+            <h1 className="text-lg font-semibold">Admin Dashboard</h1>
+            <p className="text-xs text-white/60 mt-1">
+              Ваша роль: {myRole || "unknown"}
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -313,6 +351,7 @@ export default function AdminPage() {
                     id: u.id,
                     username: u.username,
                     full_name: u.full_name,
+                    is_verified: u.is_verified,
                     avatar_url: u.avatar_url,
                   }}
                   right={
@@ -350,7 +389,10 @@ export default function AdminPage() {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-white font-semibold truncate">
-                {selected.full_name}{" "}
+                <span className="inline-flex items-center gap-[3px]">
+                  <span>{selected.full_name}</span>
+                  {selected.is_verified ? <VerifiedBadge /> : null}
+                </span>{" "}
                 <span className="text-white/60 text-sm">@{selected.username}</span>
               </div>
               <div className="text-white/60 text-xs truncate">{selected.id}</div>
@@ -375,15 +417,38 @@ export default function AdminPage() {
                   >
                     Сохранить
                   </button>
+                  <label className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-white text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedVerified}
+                      onChange={(e) => setSelectedVerified(e.target.checked)}
+                      className="accent-sky-500"
+                    />
+                    Галочка
+                  </label>
+                  <button
+                    type="button"
+                    className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                    onClick={saveVerified}
+                    disabled={verifiedSaving || selectedVerified === Boolean(selected.is_verified)}
+                  >
+                    {verifiedSaving ? "Сохраняем..." : "Применить"}
+                  </button>
                 </>
               ) : (
-                <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
-                  {selected.role}
-                </span>
+                <>
+                  <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                    {selected.role}
+                  </span>
+                  <span className="text-xs text-amber-200/80 rounded-full border border-amber-300/30 px-2 py-1">
+                    Галочку выдает только admin
+                  </span>
+                </>
               )}
             </div>
           </div>
           {isAdmin && roleError ? <div className="text-red-300 text-sm">{roleError}</div> : null}
+          {isAdmin && verifiedError ? <div className="text-red-300 text-sm">{verifiedError}</div> : null}
 
           <div className="flex items-center justify-between">
             <div className="text-white/80 text-sm">Посты пользователя</div>
@@ -440,7 +505,10 @@ export default function AdminPage() {
                       />
                       <div className="min-w-0">
                         <div className="text-white font-semibold truncate">
-                          {p.full_name}{" "}
+                          <span className="inline-flex items-center gap-[3px]">
+                            <span>{p.full_name}</span>
+                            {p.is_verified ? <VerifiedBadge /> : null}
+                          </span>{" "}
                           <span className="text-white/60 text-sm">@{p.username}</span>
                         </div>
                         <div className="text-white/60 text-xs truncate">

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 type Props = {
   username: string;
@@ -11,6 +12,7 @@ type Props = {
 
 type Profile = {
   full_name?: string;
+  is_verified?: boolean;
   username: string;
   avatar_url?: string;
   background_url?: string;
@@ -62,6 +64,7 @@ export function MentionPreview({ username, children, className }: Props) {
         .then((p) =>
           setData({
             full_name: p.full_name,
+            is_verified: p.is_verified,
             username: p.username,
             avatar_url: p.avatar_url,
             background_url: p.background_url,
@@ -127,7 +130,10 @@ export function MentionPreview({ username, children, className }: Props) {
         </div>
       </div>
       <div className="pt-8 px-4 pb-4 space-y-1 text-white">
-        <p className="font-semibold leading-tight">{data?.full_name || username}</p>
+        <p className="font-semibold leading-tight inline-flex items-center gap-[3px]">
+          <span>{data?.full_name || username}</span>
+          {data?.is_verified ? <VerifiedBadge /> : null}
+        </p>
         <p className="text-white/60 text-sm">@{username}</p>
         {data?.created_at && (
           <p className="text-white/50 text-xs">

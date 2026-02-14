@@ -55,6 +55,7 @@ func (h *SearchHandler) searchUsers(w http.ResponseWriter, r *http.Request) {
 			ID:            u.ID,
 			Username:      u.Username,
 			FullName:      u.FullName,
+			IsVerified:    u.IsVerified,
 			Bio:           u.Bio,
 			AvatarURL:     u.AvatarURL,
 			BackgroundURL: u.BackgroundURL,

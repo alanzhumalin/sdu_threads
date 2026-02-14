@@ -14,12 +14,14 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
 import { PostMedia } from "../components/PostMedia";
 import { AvatarCircle } from "../components/Avatar";
+import { VerifiedBadge } from "../components/VerifiedBadge";
 import type { MediaItem } from "../types/media";
 
 type UserResult = {
   id: string;
   username: string;
   full_name?: string;
+  is_verified?: boolean;
   bio?: string;
   avatar_url?: string;
 };
@@ -35,6 +37,7 @@ type FeedItem = {
   user_id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   content: string;
   media?: MediaItem[];
@@ -392,7 +395,10 @@ export default function SearchPage() {
                     <div>
                       <p className="text-white font-semibold">
                         <MentionPreview username={user.username} className="">
-                          <span>{user.full_name || "Без имени"}</span>
+                          <span className="inline-flex items-center gap-[3px]">
+                            <span>{user.full_name || "Без имени"}</span>
+                            {user.is_verified ? <VerifiedBadge /> : null}
+                          </span>
                         </MentionPreview>
                       </p>
                       <p className="text-white/50 text-sm">@{user.username}</p>
@@ -505,9 +511,10 @@ export default function SearchPage() {
                       <MentionPreview username={item.username} className="">
                         <Link
                           to={`/u/${item.username}`}
-                          className="text-white font-semibold leading-tight flex items-center gap-2 hover:underline"
+                          className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                         >
-                          {item.full_name || "Без имени"}
+                          <span>{item.full_name || "Без имени"}</span>
+                          {item.is_verified ? <VerifiedBadge /> : null}
                         </Link>
                       </MentionPreview>
                       <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>

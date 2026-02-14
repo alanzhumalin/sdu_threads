@@ -14,6 +14,7 @@ import { MentionPreview } from "./MentionPreview";
 import { PostMedia } from "./PostMedia";
 import type { MediaItem } from "../types/media";
 import { AvatarCircle } from "./Avatar";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 type Comment = {
   id: string;
@@ -21,6 +22,7 @@ type Comment = {
   user_id: string;
   username: string;
   full_name?: string;
+  is_verified?: boolean;
   avatar_url?: string;
   body: string;
   created_at: string;
@@ -41,6 +43,7 @@ export type PostMeta = {
   user_id: string;
   username: string;
   full_name: string;
+  is_verified?: boolean;
   avatar_url?: string;
   content: string;
   created_at: string;
@@ -203,7 +206,14 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [mentionSuggestions, setMentionSuggestions] = useState<
-    { id: string; username: string; full_name: string; avatar_url?: string; bio?: string }[]
+    {
+      id: string;
+      username: string;
+      full_name: string;
+      is_verified?: boolean;
+      avatar_url?: string;
+      bio?: string;
+    }[]
   >([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -841,7 +851,10 @@ useLayoutEffect(() => {
           <div className="flex items-center justify-between gap-2 text-sm text-white/70 min-w-0">
             <MentionPreview username={c.username} className="">
               <Link to={`/u/${c.username}`} className="font-semibold text-white hover:underline break-words">
-                {displayName}
+                <span className="inline-flex items-center gap-[3px]">
+                  <span>{displayName}</span>
+                  {c.is_verified ? <VerifiedBadge /> : null}
+                </span>
               </Link>
             </MentionPreview>
             <span className="shrink-0">{timeAgo(c.created_at)}</span>
@@ -1014,7 +1027,10 @@ useLayoutEffect(() => {
                 <p className="text-white font-semibold">
                   <MentionPreview username={post.username} className="">
                     <Link to={`/u/${post.username}`} className="hover:underline">
-                      {post.full_name || post.username}
+                      <span className="inline-flex items-center gap-[3px]">
+                        <span>{post.full_name || post.username}</span>
+                        {post.is_verified ? <VerifiedBadge /> : null}
+                      </span>
                     </Link>
                   </MentionPreview>
                 </p>
@@ -1327,7 +1343,10 @@ useLayoutEffect(() => {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{u.full_name || u.username}</p>
+                        <p className="font-semibold truncate inline-flex items-center gap-[3px]">
+                          <span>{u.full_name || u.username}</span>
+                          {u.is_verified ? <VerifiedBadge /> : null}
+                        </p>
                         <p className="text-white/60 text-sm truncate">@{u.username}</p>
                         {u.bio && <p className="text-white/50 text-xs truncate">{u.bio}</p>}
                       </div>
