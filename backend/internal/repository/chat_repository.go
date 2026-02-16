@@ -25,6 +25,27 @@ type ChatAttachmentInput struct {
 	Type   string
 }
 
+func (r *ChatRepository) GetTheme(ctx context.Context, chatID string) (string, error) {
+	var theme sql.NullString
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT theme_key FROM chats WHERE id = ? LIMIT 1`, chatID).
+		Scan(&theme).Error; err != nil {
+		return "", err
+	}
+	if !theme.Valid {
+		return "", nil
+	}
+	return strings.TrimSpace(theme.String), nil
+}
+
+func (r *ChatRepository) UpdateTheme(ctx context.Context, chatID, themeKey string) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE chats
+		SET theme_key = ?, updated_at = now()
+		WHERE id = ?
+	`, themeKey, chatID).Error
+}
+
 func directChatKey(userA, userB string) string {
 	if strings.Compare(userA, userB) < 0 {
 		return userA + ":" + userB

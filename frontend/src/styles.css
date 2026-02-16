@@ -117,3 +117,87 @@ body {
     transform: translateY(0) scale(1);
   }
 }
+
+@keyframes chatFloatUp {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0) scale(0.88) rotate(var(--chat-rotate, 0deg));
+  }
+  18% {
+    opacity: 0.24;
+  }
+  82% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -76px, 0) scale(1.08) rotate(var(--chat-rotate, 0deg));
+  }
+}
+
+@keyframes chatSway {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(var(--chat-rotate, 0deg));
+  }
+  50% {
+    transform: translate3d(12px, -9px, 0) rotate(calc(var(--chat-rotate, 0deg) + 7deg));
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotate(var(--chat-rotate, 0deg));
+  }
+}
+
+@keyframes chatPulseSoft {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.32;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes chatWaveSlide {
+  0% {
+    transform: translateX(-11%);
+  }
+  50% {
+    transform: translateX(8%);
+  }
+  100% {
+    transform: translateX(-11%);
+  }
+}
+
+@keyframes chatTwinkle {
+  0%,
+  100% {
+    opacity: 0.08;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 0.34;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes chatBob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+@keyframes chatOrbit {
+  0% {
+    transform: rotate(0deg) translateX(12px) rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg) translateX(12px) rotate(-360deg);
+  }
+}

@@ -1,6 +1,22 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Paperclip, Reply, SendHorizontal, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Droplets,
+  Heart,
+  Leaf,
+  Loader2,
+  MoonStar,
+  MoreVertical,
+  Paperclip,
+  Reply,
+  SendHorizontal,
+  Sparkles,
+  Sun,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { api, type ChatMessage, type ChatMessageAttachment, type ChatPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -33,7 +49,177 @@ type ChatSocketEvent =
   | { type: "ready"; chat_id: string }
   | { type: "message_created"; chat_id: string; message: ChatMessage }
   | { type: "message.created"; chat_id: string; message: ChatMessage }
+  | { type: "chat_theme_updated"; chat_id: string; theme_key: string }
   | { type: "error"; message: string };
+
+type ChatThemeKey = "default" | "love" | "nature" | "sunset" | "ocean" | "midnight";
+
+type ChatThemeConfig = {
+  label: string;
+  description: string;
+  listClass: string;
+  headerOverlayClass: string;
+  mineBubbleClass: string;
+  mineReplyButtonClass: string;
+  chipClass: string;
+  icon: LucideIcon;
+  iconClass: string;
+  decorClass: string;
+  decorAltIcon: LucideIcon;
+  glowClass: string;
+};
+
+const CHAT_THEME_ORDER: ChatThemeKey[] = ["default", "love", "nature", "sunset", "ocean", "midnight"];
+
+const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
+  default: {
+    label: "Классика",
+    description: "Минималистичный стиль со спокойным свечением",
+    listClass: "",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_12%_18%,rgba(255,255,255,0.06),transparent_45%),linear-gradient(to_right,rgba(255,255,255,0.03),transparent_60%)]",
+    mineBubbleClass: "bg-[#1f5fbf] text-white",
+    mineReplyButtonClass: "border-sky-500/40 bg-sky-500/25 text-sky-100 hover:bg-sky-500/35",
+    chipClass: "bg-white/10 text-white/80 border-white/15",
+    icon: Sparkles,
+    iconClass: "text-white/75",
+    decorClass: "text-white/10",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-white/10",
+  },
+  love: {
+    label: "Love",
+    description: "Романтичные сердечки и мягкие розовые акценты",
+    listClass: "bg-gradient-to-b from-rose-500/15 via-pink-500/10 to-transparent",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_18%_22%,rgba(244,63,94,0.24),transparent_48%),linear-gradient(to_right,rgba(236,72,153,0.16),rgba(255,255,255,0.02)_70%)]",
+    mineBubbleClass: "bg-rose-600 text-white",
+    mineReplyButtonClass: "border-rose-300/35 bg-rose-500/30 text-rose-100 hover:bg-rose-500/45",
+    chipClass: "bg-rose-500/20 text-rose-100 border-rose-300/35",
+    icon: Heart,
+    iconClass: "text-rose-300",
+    decorClass: "text-rose-200/20",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-rose-500/25",
+  },
+  nature: {
+    label: "Nature",
+    description: "Листья и свежий зеленый фон в спокойном тоне",
+    listClass: "bg-gradient-to-b from-emerald-500/15 via-green-500/10 to-transparent",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_18%_18%,rgba(16,185,129,0.22),transparent_46%),linear-gradient(to_right,rgba(34,197,94,0.16),rgba(255,255,255,0.02)_70%)]",
+    mineBubbleClass: "bg-emerald-600 text-white",
+    mineReplyButtonClass: "border-emerald-300/30 bg-emerald-500/25 text-emerald-100 hover:bg-emerald-500/40",
+    chipClass: "bg-emerald-500/20 text-emerald-100 border-emerald-300/35",
+    icon: Leaf,
+    iconClass: "text-emerald-300",
+    decorClass: "text-emerald-200/20",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-emerald-500/25",
+  },
+  sunset: {
+    label: "Sunset",
+    description: "Теплые лучи заката и мягкое золотистое свечение",
+    listClass: "bg-gradient-to-b from-orange-500/18 via-amber-500/10 to-transparent",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_82%_16%,rgba(251,191,36,0.24),transparent_42%),linear-gradient(to_right,rgba(249,115,22,0.2),rgba(255,255,255,0.02)_70%)]",
+    mineBubbleClass: "bg-orange-600 text-white",
+    mineReplyButtonClass: "border-amber-300/35 bg-orange-500/30 text-amber-100 hover:bg-orange-500/45",
+    chipClass: "bg-orange-500/20 text-orange-100 border-amber-300/35",
+    icon: Sun,
+    iconClass: "text-amber-300",
+    decorClass: "text-amber-200/20",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-orange-500/30",
+  },
+  ocean: {
+    label: "Ocean",
+    description: "Водные иконки и прохладный морской оттенок",
+    listClass: "bg-gradient-to-b from-cyan-500/16 via-sky-500/10 to-transparent",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_14%_20%,rgba(6,182,212,0.24),transparent_46%),linear-gradient(to_right,rgba(14,165,233,0.17),rgba(255,255,255,0.02)_70%)]",
+    mineBubbleClass: "bg-cyan-700 text-white",
+    mineReplyButtonClass: "border-cyan-300/35 bg-cyan-500/25 text-cyan-100 hover:bg-cyan-500/40",
+    chipClass: "bg-cyan-500/20 text-cyan-100 border-cyan-300/35",
+    icon: Droplets,
+    iconClass: "text-cyan-300",
+    decorClass: "text-cyan-200/20",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-cyan-500/25",
+  },
+  midnight: {
+    label: "Midnight",
+    description: "Ночная тема с луной и холодным фиолетовым свечением",
+    listClass: "bg-gradient-to-b from-indigo-500/16 via-violet-500/10 to-transparent",
+    headerOverlayClass:
+      "bg-[radial-gradient(circle_at_16%_18%,rgba(99,102,241,0.24),transparent_44%),linear-gradient(to_right,rgba(139,92,246,0.18),rgba(255,255,255,0.02)_70%)]",
+    mineBubbleClass: "bg-indigo-700 text-white",
+    mineReplyButtonClass: "border-indigo-300/35 bg-indigo-500/30 text-indigo-100 hover:bg-indigo-500/45",
+    chipClass: "bg-indigo-500/20 text-indigo-100 border-indigo-300/35",
+    icon: MoonStar,
+    iconClass: "text-indigo-300",
+    decorClass: "text-indigo-200/20",
+    decorAltIcon: Sparkles,
+    glowClass: "bg-indigo-500/25",
+  },
+};
+
+type ThemeDecorPoint = {
+  top: string;
+  left: string;
+  size: number;
+  rotate: number;
+  delay: number;
+  duration: number;
+};
+
+const CHAT_THEME_DECOR_POINTS: ThemeDecorPoint[] = [
+  { top: "8%", left: "5%", size: 14, rotate: -12, delay: 0.1, duration: 8.2 },
+  { top: "15%", left: "90%", size: 13, rotate: 10, delay: 0.9, duration: 9.4 },
+  { top: "30%", left: "8%", size: 15, rotate: -8, delay: 0.4, duration: 7.7 },
+  { top: "44%", left: "92%", size: 14, rotate: 14, delay: 1.2, duration: 10.1 },
+  { top: "61%", left: "6%", size: 13, rotate: -16, delay: 0.7, duration: 8.8 },
+  { top: "74%", left: "90%", size: 15, rotate: 9, delay: 1.5, duration: 9.7 },
+  { top: "88%", left: "12%", size: 12, rotate: 6, delay: 0.3, duration: 8.4 },
+  { top: "92%", left: "84%", size: 13, rotate: -11, delay: 1.1, duration: 9.2 },
+];
+
+const getThemeDecorStyle = (theme: ChatThemeKey, point: ThemeDecorPoint, index: number): CSSProperties => {
+  const style: CSSProperties = {
+    top: point.top,
+    left: point.left,
+    width: `${point.size}px`,
+    height: `${point.size}px`,
+  };
+  (style as Record<string, string>)["--chat-rotate"] = `${point.rotate}deg`;
+
+  if (theme === "love") {
+    style.animation = `chatFloatUp ${point.duration + 0.8}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = 0.26;
+  } else if (theme === "nature") {
+    style.animation = `chatSway ${point.duration + 0.5}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = 0.24;
+  } else if (theme === "sunset") {
+    style.animation = `chatPulseSoft ${point.duration + 1.2}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = 0.2;
+  } else if (theme === "ocean") {
+    style.animation = `chatBob ${point.duration + 0.2}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = 0.24;
+  } else if (theme === "midnight") {
+    style.animation = `chatTwinkle ${point.duration + 1.7}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = index % 2 === 0 ? 0.2 : 0.14;
+  } else {
+    style.animation = `chatTwinkle ${point.duration + 1}s ease-in-out ${point.delay}s infinite`;
+    style.opacity = 0.12;
+  }
+
+  return style;
+};
+
+const normalizeChatThemeKey = (value?: string): ChatThemeKey => {
+  const key = String(value || "").trim().toLowerCase() as ChatThemeKey;
+  return key in CHAT_THEMES ? key : "default";
+};
 
 const toAsc = <T extends { created_at: string }>(items: T[]) =>
   [...items].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -126,6 +312,10 @@ export default function ChatConversationPage() {
   const [error, setError] = useState("");
   const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+  const [themeKey, setThemeKey] = useState<ChatThemeKey>("default");
+  const [themeSaving, setThemeSaving] = useState(false);
+  const [themeError, setThemeError] = useState("");
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [mediaError, setMediaError] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
   const [viewer, setViewer] = useState<{ urls: string[]; initialIndex: number } | null>(null);
@@ -143,9 +333,11 @@ export default function ChatConversationPage() {
   const lastMarkReadAtRef = useRef(0);
   const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
   const mediaErrorTimerRef = useRef<number | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
+  const activeTheme = CHAT_THEMES[themeKey];
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 870px)");
@@ -393,14 +585,16 @@ export default function ChatConversationPage() {
     if (!token || !chatId) return;
     setLoading(true);
     try {
-      const [chatRes, msgRes] = await Promise.all([
+      const [chatRes, msgRes, themeRes] = await Promise.all([
         api.chatById(chatId, token),
         api.chatMessages(chatId, 30, 0, token),
+        api.chatTheme(chatId, token).catch(() => ({ theme_key: "default" })),
       ]);
       const initial = toAsc(msgRes.items);
       setChat(chatRes);
       setMessages(initial);
       setNextOffset(msgRes.nextOffset);
+      setThemeKey(normalizeChatThemeKey(themeRes.theme_key));
       setError("");
 
       requestAnimationFrame(() => {
@@ -411,6 +605,24 @@ export default function ChatConversationPage() {
       setError(e.message || "Не удалось загрузить чат");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const changeTheme = async (nextTheme: ChatThemeKey) => {
+    if (!token || !chatId || themeSaving || nextTheme === themeKey) return;
+    const prevTheme = themeKey;
+    setThemeKey(nextTheme);
+    setThemeSaving(true);
+    setThemeError("");
+    try {
+      const res = await api.setChatTheme(chatId, nextTheme, token);
+      setThemeKey(normalizeChatThemeKey(res.theme_key));
+      setThemeMenuOpen(false);
+    } catch (e: any) {
+      setThemeKey(prevTheme);
+      setThemeError(e.message || "Не удалось изменить тему чата");
+    } finally {
+      setThemeSaving(false);
     }
   };
 
@@ -446,12 +658,39 @@ export default function ChatConversationPage() {
     setReplyTo(null);
     initialAutoScrolledChatRef.current = "";
     setViewer(null);
+    setThemeKey("default");
+    setThemeError("");
+    setThemeSaving(false);
+    setThemeMenuOpen(false);
     setMediaError("");
     setComposerAttachments((prev) => {
       prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
       return [];
     });
   }, [chatId]);
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (themeMenuRef.current?.contains(target)) return;
+      setThemeMenuOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setThemeMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [themeMenuOpen]);
 
   useEffect(() => {
     if (!chatId || loading || messages.length === 0) return;
@@ -568,6 +807,14 @@ export default function ChatConversationPage() {
         if (parsed.type === "error" && parsed.message) {
           debugChat(chatId, "ws_error_event", parsed.message);
           setError(parsed.message);
+          return;
+        }
+
+        if (parsed.type === "chat_theme_updated" && parsed.chat_id === chatId) {
+          const nextTheme = normalizeChatThemeKey(parsed.theme_key);
+          debugChat(chatId, "ws_theme_updated", { theme: nextTheme });
+          setThemeKey(nextTheme);
+          setThemeError("");
           return;
         }
 
@@ -795,17 +1042,28 @@ export default function ChatConversationPage() {
       data-page-root
       className="max-w-[672px] w-full mx-auto h-full py-3 min-[871px]:py-6 space-y-3 page-fade flex flex-col overflow-hidden min-[871px]:overflow-visible"
     >
-      <div className="card p-3 flex items-center gap-3">
+      <div className="card p-3 flex items-center gap-3 relative">
+        <div className="pointer-events-none absolute inset-0 rounded-[18px] overflow-hidden">
+          <div className={`absolute inset-0 ${activeTheme.headerOverlayClass}`} />
+          <div
+            className={`absolute -left-6 top-1/2 h-14 w-52 -translate-y-1/2 rounded-full blur-2xl ${activeTheme.glowClass}`}
+            style={{ animation: "chatPulseSoft 8.4s ease-in-out infinite", opacity: 0.55 }}
+          />
+          <activeTheme.icon
+            className={`absolute right-16 top-1/2 -translate-y-1/2 w-7 h-7 ${activeTheme.decorClass}`}
+            style={{ animation: "chatTwinkle 7.6s ease-in-out infinite" }}
+          />
+        </div>
         <button
           type="button"
           onClick={() => navigate("/chats")}
-          className="w-9 h-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 grid place-items-center"
+          className="relative z-10 w-9 h-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 grid place-items-center"
           aria-label="Назад"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         {chat ? (
-          <>
+          <div className="relative z-10 flex-1 min-w-0 rounded-2xl px-2.5 py-1.5 flex items-center gap-3">
             <AvatarCircle
               src={chat.participant.avatar_url}
               fallback={chat.participant.full_name || chat.participant.username}
@@ -819,19 +1077,165 @@ export default function ChatConversationPage() {
               </p>
               <p className="text-white/60 text-sm truncate">@{chat.participant.username}</p>
             </div>
-          </>
+          </div>
         ) : (
           <div className="text-white/60 text-sm">Загрузка...</div>
         )}
+        <div className="ml-auto relative z-20" ref={themeMenuRef}>
+          <button
+            type="button"
+            onClick={() => setThemeMenuOpen((prev) => !prev)}
+            className="w-9 h-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 grid place-items-center"
+            aria-label="Настройки чата"
+            title="Настройки чата"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+	          {themeMenuOpen && (
+	            <div className="absolute right-0 top-11 z-30 w-72 rounded-xl border border-white/15 bg-[#0b0b0f]/95 backdrop-blur p-2 shadow-2xl">
+	              <p className="px-2 pb-2 text-[11px] text-white/55">Тема чата</p>
+	              <div className="space-y-1">
+	                {CHAT_THEME_ORDER.map((key) => {
+	                  const cfg = CHAT_THEMES[key];
+	                  const isActive = key === themeKey;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => void changeTheme(key)}
+                      disabled={themeSaving}
+	                      className={`w-full rounded-lg border px-3 py-2 text-left transition disabled:opacity-60 ${
+	                        isActive
+	                          ? "border-white/40 bg-white/10 text-white"
+	                          : "border-white/10 bg-black/30 text-white/80 hover:border-white/25 hover:text-white"
+	                      }`}
+	                    >
+	                      <div className="flex items-center gap-2">
+	                        <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${cfg.chipClass}`}>
+	                          <cfg.icon className={`w-3.5 h-3.5 ${cfg.iconClass}`} />
+	                        </span>
+	                        <div className="min-w-0 flex-1">
+	                          <p className="truncate text-sm">{cfg.label}</p>
+	                          <p className="truncate text-[11px] text-white/55">{cfg.description}</p>
+	                        </div>
+	                        {isActive ? <span className="text-[11px] text-white/70">active</span> : null}
+	                      </div>
+	                    </button>
+	                  );
+	                })}
+	              </div>
+              {themeSaving && (
+                <div className="pt-2 flex items-center gap-2 text-xs text-white/60 px-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Сохраняем...</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
+      <ErrorMessage message={themeError} />
       <ErrorMessage message={error} />
 
-      <div className="card overflow-hidden flex-1 min-h-0 flex flex-col">
-        <div
-          ref={listRef}
-          className="flex-1 min-h-0 min-[871px]:h-[64vh] min-[871px]:flex-none overflow-y-auto scrollbar-hide px-3 py-4 space-y-3"
-        >
+      <div className="card relative overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div
+            className={`absolute -top-16 -right-14 h-44 w-44 rounded-full blur-3xl ${activeTheme.glowClass}`}
+            style={{ animation: "chatPulseSoft 8.8s ease-in-out infinite" }}
+          />
+          <div
+            className={`absolute -bottom-20 -left-14 h-48 w-48 rounded-full blur-3xl ${activeTheme.glowClass}`}
+            style={{ animation: "chatPulseSoft 11.2s ease-in-out 0.7s infinite" }}
+          />
+
+          {themeKey === "default" && (
+            <>
+              <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] [background-size:26px_26px]" />
+              <div
+                className="absolute left-[62%] top-[13%] h-28 w-28 rounded-full bg-white/10 blur-2xl"
+                style={{ animation: "chatPulseSoft 9.8s ease-in-out infinite" }}
+              />
+            </>
+          )}
+
+          {themeKey === "love" && (
+            <>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(244,63,94,0.28),transparent_42%),radial-gradient(circle_at_84%_82%,rgba(236,72,153,0.20),transparent_36%)]" />
+              <div
+                className="absolute left-[10%] top-[14%] h-20 w-20 rounded-full bg-rose-400/20 blur-2xl"
+                style={{ animation: "chatPulseSoft 8.1s ease-in-out 0.4s infinite" }}
+              />
+            </>
+          )}
+
+          {themeKey === "nature" && (
+            <>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_15%,rgba(16,185,129,0.2),transparent_40%),radial-gradient(circle_at_86%_75%,rgba(34,197,94,0.18),transparent_38%)]" />
+              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-emerald-700/20 to-transparent" />
+            </>
+          )}
+
+          {themeKey === "sunset" && (
+            <>
+              <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(251,146,60,0.2),transparent_45%),radial-gradient(circle_at_84%_14%,rgba(253,186,116,0.24),transparent_35%)]" />
+              <div
+                className="absolute -right-8 top-5 h-24 w-24 rounded-full bg-amber-300/25 blur-xl"
+                style={{ animation: "chatPulseSoft 7.9s ease-in-out infinite" }}
+              />
+              <div
+                className="absolute inset-x-[-12%] top-[22%] h-px bg-gradient-to-r from-transparent via-amber-200/35 to-transparent"
+                style={{ animation: "chatWaveSlide 12.5s ease-in-out infinite" }}
+              />
+              <div
+                className="absolute inset-x-[-8%] top-[28%] h-px bg-gradient-to-r from-transparent via-orange-200/25 to-transparent"
+                style={{ animation: "chatWaveSlide 10.2s ease-in-out 0.6s infinite" }}
+              />
+            </>
+          )}
+
+          {themeKey === "ocean" && (
+            <>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_10%,rgba(56,189,248,0.2),transparent_36%),linear-gradient(to_bottom,rgba(6,182,212,0.12),transparent_34%)]" />
+              <div
+                className="absolute -left-10 bottom-10 h-16 w-[130%] rounded-[100%] border-t border-cyan-200/20"
+                style={{ animation: "chatWaveSlide 11.6s ease-in-out infinite" }}
+              />
+              <div
+                className="absolute -left-12 bottom-4 h-20 w-[135%] rounded-[100%] border-t border-sky-200/15"
+                style={{ animation: "chatWaveSlide 9.4s ease-in-out 0.7s infinite" }}
+              />
+            </>
+          )}
+
+          {themeKey === "midnight" && (
+            <>
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_84%_12%,rgba(99,102,241,0.24),transparent_34%),radial-gradient(circle_at_16%_88%,rgba(168,85,247,0.16),transparent_36%)]" />
+              <div
+                className="absolute right-10 top-8 h-16 w-16 rounded-full bg-indigo-300/20 blur-xl"
+                style={{ animation: "chatPulseSoft 9.3s ease-in-out infinite" }}
+              />
+              <div className="absolute right-[16%] top-[11%] text-indigo-200/55">
+                <Sparkles className="h-3.5 w-3.5" style={{ animation: "chatOrbit 9s linear infinite" }} />
+              </div>
+            </>
+          )}
+
+          {CHAT_THEME_DECOR_POINTS.map((point, idx) => {
+            const DecorIcon = idx % 2 === 0 ? activeTheme.icon : activeTheme.decorAltIcon;
+            return (
+              <DecorIcon
+                key={`${themeKey}-decor-${idx}`}
+                className={`absolute ${activeTheme.decorClass}`}
+                style={getThemeDecorStyle(themeKey, point, idx)}
+              />
+            );
+          })}
+        </div>
+	        <div
+	          ref={listRef}
+	          className={`relative z-10 flex-1 min-h-0 min-[871px]:h-[64vh] min-[871px]:flex-none overflow-y-auto scrollbar-hide px-3 py-4 space-y-3 ${activeTheme.listClass}`.trim()}
+	        >
           <div ref={topRef} className="h-6 flex items-center justify-center">
             {loadingMore && <Loader2 className="w-4 h-4 animate-spin text-white/60" />}
           </div>
@@ -874,7 +1278,7 @@ export default function ChatConversationPage() {
                     }
                     className={`h-8 w-8 shrink-0 rounded-full border transition ${
                       mine
-                        ? "border-sky-500/40 bg-sky-500/25 text-sky-100 hover:bg-sky-500/35"
+                        ? activeTheme.mineReplyButtonClass
                         : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
                     } disabled:opacity-40 disabled:cursor-not-allowed`}
                     aria-label="Ответить"
@@ -885,12 +1289,12 @@ export default function ChatConversationPage() {
                   <div
                     className={`${
                       messageAttachments.length > 0
-                        ? "w-[min(78vw,28rem)] max-w-[28rem]"
+                        ? "w-[min(66vw,21rem)] max-w-[21rem] sm:w-[min(78vw,28rem)] sm:max-w-[28rem]"
                         : "max-w-[78%]"
                     } rounded-2xl px-3 py-2 break-words whitespace-pre-wrap ${
                       mine
-                        ? "bg-[#1f5fbf] text-white border border-[#2b6fd1]"
-                        : "bg-white/10 text-white border border-white/10"
+                        ? activeTheme.mineBubbleClass
+                        : "bg-[#1f232d] text-white"
                     }`}
                   >
                     {m.reply_to_id && (
@@ -918,16 +1322,16 @@ export default function ChatConversationPage() {
                             type="button"
                             key={`${m.id}-attachment-${idx}`}
                             onClick={() => setViewer({ urls: attachmentUrls, initialIndex: idx })}
-                            className={`w-full overflow-hidden rounded-xl border focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${
-                              mine ? "border-black/15 bg-black/10" : "border-white/15 bg-black/30"
-                            }`}
+                            className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 bg-black"
                             aria-label={`Открыть вложение ${idx + 1}`}
                           >
                             <img
                               src={att.url}
                               alt="attachment"
-                              className={`w-full bg-black/20 ${
-                                isMultiAttachment ? "h-44 object-cover" : "max-h-[420px] h-auto object-contain"
+                              className={`w-full bg-black ${
+                                isMultiAttachment
+                                  ? "h-32 sm:h-44 object-cover"
+                                  : "max-h-[260px] sm:max-h-[420px] h-auto object-contain"
                               }`}
                               loading="lazy"
                             />

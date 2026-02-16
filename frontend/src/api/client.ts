@@ -32,6 +32,10 @@ export type ChatPreview = {
   unread_count: number;
 };
 
+export type ChatThemeResponse = {
+  theme_key: string;
+};
+
 export type ChatMessage = {
   id: string;
   chat_id: string;
@@ -646,6 +650,15 @@ export const api = {
     })),
   chatById: (chatId: string, token?: string | null) =>
     request<ChatPreview>(`/chats/${encodeURIComponent(chatId)}`, "GET", undefined, token),
+  chatTheme: (chatId: string, token?: string | null) =>
+    request<ChatThemeResponse>(`/chats/${encodeURIComponent(chatId)}/theme`, "GET", undefined, token),
+  setChatTheme: (chatId: string, themeKey: string, token: string) =>
+    request<ChatThemeResponse>(
+      `/chats/${encodeURIComponent(chatId)}/theme`,
+      "PUT",
+      { theme_key: themeKey },
+      token
+    ),
   chatMessages: (chatId: string, limit = 30, offset = 0, token?: string | null) =>
     requestWithHeaders<ChatMessage[]>(
       `/chats/${encodeURIComponent(chatId)}/messages?limit=${limit}&offset=${offset}`,

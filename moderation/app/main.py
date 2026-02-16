@@ -28,6 +28,9 @@ IMAGE_THRESHOLD = float(os.getenv("MODERATION_IMAGE_THRESHOLD", "0.70"))
 SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_THRESHOLD", "0.45"))
 SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_GATE_THRESHOLD", "0.20"))
 SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_STRONG_THRESHOLD", "0.80"))
+PROFILE_SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_THRESHOLD", "0.80"))
+PROFILE_SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD", "0.35"))
+PROFILE_SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD", "0.92"))
 BLOCK_SUGGESTIVE = os.getenv("MODERATION_BLOCK_SUGGESTIVE", "true").lower() in {"1", "true", "yes", "on"}
 PRELOAD_MODELS = os.getenv("MODERATION_PRELOAD_MODELS", "true").lower() in {"1", "true", "yes", "on"}
 SUGGESTIVE_BG_WARMUP = os.getenv("MODERATION_SUGGESTIVE_BG_WARMUP", "true").lower() in {"1", "true", "yes", "on"}
@@ -329,6 +332,23 @@ def _build_confusable_map() -> Dict[str, str]:
 
 
 CONFUSABLE_MAP = _build_confusable_map()
+PROFILE_IMAGE_CONTEXTS = {
+    "avatar_image",
+    "avatar_upload",
+    "background_image",
+    "background_upload",
+}
+
+
+def _normalize_context(context: str) -> str:
+    return str(context or "").strip().lower() or "generic"
+
+
+def _is_profile_image_context(context: str) -> bool:
+    low = _normalize_context(context)
+    if low in PROFILE_IMAGE_CONTEXTS:
+        return True
+    return low.startswith("avatar_") or low.startswith("background_")
 
 
 def _term_key(term: str) -> str:
@@ -647,8 +667,9 @@ def _moderate_text(text: str) -> ModerationDecision:
     return decision
 
 
-def _moderate_image_bytes(data: bytes) -> ModerationDecision:
+def _moderate_image_bytes(data: bytes, context: str = "generic") -> ModerationDecision:
     total_started_at = time.perf_counter()
+    normalized_context = _normalize_context(context)
     decode_started_at = time.perf_counter()
     image = _ensure_image_bytes(data)
     decode_ms = _duration_ms(decode_started_at)
@@ -716,17 +737,26 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
             suggestive_strong_score = _score_by_hints(suggestive_labels, SUGGESTIVE_STRONG_LABEL_HINTS)
 
     labels = _merge_labels(nsfw_labels, suggestive_labels)
+    suggestive_threshold = SUGGESTIVE_THRESHOLD
+    suggestive_gate_threshold = SUGGESTIVE_GATE_THRESHOLD
+    suggestive_strong_threshold = SUGGESTIVE_STRONG_THRESHOLD
+    if _is_profile_image_context(normalized_context):
+        suggestive_threshold = PROFILE_SUGGESTIVE_THRESHOLD
+        suggestive_gate_threshold = PROFILE_SUGGESTIVE_GATE_THRESHOLD
+        suggestive_strong_threshold = PROFILE_SUGGESTIVE_STRONG_THRESHOLD
+
     should_block_suggestive = BLOCK_SUGGESTIVE and (
-        suggestive_score >= SUGGESTIVE_STRONG_THRESHOLD
-        or (suggestive_score >= SUGGESTIVE_THRESHOLD and suggestive_strong_score >= SUGGESTIVE_GATE_THRESHOLD)
+        suggestive_score >= suggestive_strong_threshold
+        or (suggestive_score >= suggestive_threshold and suggestive_strong_score >= suggestive_gate_threshold)
     )
     if should_block_suggestive:
         logger.info(
-            "image moderation blocked suggestive_score=%.4f strong_score=%.4f gate=%.2f strong=%.2f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+            "image moderation blocked context=%s suggestive_score=%.4f strong_score=%.4f gate=%.2f strong=%.2f bytes=%d decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+            normalized_context,
             suggestive_score,
             suggestive_strong_score,
-            SUGGESTIVE_GATE_THRESHOLD,
-            SUGGESTIVE_STRONG_THRESHOLD,
+            suggestive_gate_threshold,
+            suggestive_strong_threshold,
             len(data),
             decode_ms,
             resize_ms,
@@ -752,7 +782,8 @@ def _moderate_image_bytes(data: bytes) -> ModerationDecision:
         labels=labels,
     )
     logger.info(
-        "image moderation done allowed=%s score=%.4f bytes=%d from=%dx%d infer=%dx%d resized=%s decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+        "image moderation done context=%s allowed=%s score=%.4f bytes=%d from=%dx%d infer=%dx%d resized=%s decode_ms=%.1f resize_ms=%.1f nsfw_ms=%.1f suggestive_ms=%.1f total_ms=%.1f",
+        normalized_context,
         decision.allowed,
         decision.score,
         len(data),
@@ -800,6 +831,9 @@ def healthz() -> Dict[str, Any]:
             "suggestive": SUGGESTIVE_THRESHOLD,
             "suggestive_gate": SUGGESTIVE_GATE_THRESHOLD,
             "suggestive_strong": SUGGESTIVE_STRONG_THRESHOLD,
+            "profile_suggestive": PROFILE_SUGGESTIVE_THRESHOLD,
+            "profile_suggestive_gate": PROFILE_SUGGESTIVE_GATE_THRESHOLD,
+            "profile_suggestive_strong": PROFILE_SUGGESTIVE_STRONG_THRESHOLD,
             "block_suggestive": BLOCK_SUGGESTIVE,
         },
     }
@@ -843,11 +877,10 @@ def moderate_text(req: TextModerationRequest) -> ModerationDecision:
 @app.post("/moderate/image/url", response_model=ModerationDecision)
 def moderate_image_url(req: ImageURLModerationRequest) -> ModerationDecision:
     data = _fetch_image(req.url)
-    return _moderate_image_bytes(data)
+    return _moderate_image_bytes(data, req.context)
 
 
 @app.post("/moderate/image/file", response_model=ModerationDecision)
 def moderate_image_file(file: UploadFile = File(...), context: str = Form(default="generic")) -> ModerationDecision:
-    _ = context
     data = file.file.read(MAX_IMAGE_BYTES + 1)
-    return _moderate_image_bytes(data)
+    return _moderate_image_bytes(data, context)

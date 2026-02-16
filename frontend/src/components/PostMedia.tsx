@@ -97,22 +97,11 @@ export function PostMedia({ media, className }: Props) {
     const h = Number(it.height);
     const hasDims = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0;
     const isPortrait = hasDims && h > w;
-    // Portraits can become extremely tall. Cap height to keep the feed usable.
-    // (600px is the minimum requested cap.)
-    const maxHeight = isPortrait ? "600px" : undefined;
+    const portraitHeightCls = isPortrait ? "max-h-[330px] md:max-h-[600px]" : "";
     grid = (
       <div
-        className={`w-full bg-black/20 ${hasDims ? "" : hCls}`}
-        style={
-          aspectStr(it)
-            ? {
-                aspectRatio: aspectStr(it),
-                ...(maxHeight ? { maxHeight, height: maxHeight } : {}),
-              }
-            : maxHeight
-              ? { maxHeight }
-              : undefined
-        }
+        className={`w-full bg-black/20 ${hasDims ? "" : hCls} ${portraitHeightCls}`.trim()}
+        style={aspectStr(it) ? { aspectRatio: aspectStr(it) } : undefined}
       >
         {tile(it, 0, undefined, { fit: isPortrait ? "contain" : "cover" })}
       </div>

@@ -17,3 +17,11 @@ type SendMessageRequest struct {
 	ReplyToID   string                  `json:"reply_to_id"`
 	Attachments []ChatMessageAttachment `json:"attachments"`
 }
+
+type UpdateChatThemeRequest struct {
+	ThemeKey string `json:"theme_key"`
+}
+
+type ChatThemeResponse struct {
+	ThemeKey string `json:"theme_key"`
+}

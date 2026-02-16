@@ -23,7 +23,19 @@ var (
 	ErrChatReplyNotFound = errors.New("reply message not found")
 	ErrChatAttachInvalid = errors.New("invalid message attachment")
 	ErrChatAttachTooMany = errors.New("too many message attachments (max 5)")
+	ErrChatThemeInvalid  = errors.New("invalid chat theme")
 )
+
+const DefaultChatTheme = "default"
+
+var allowedChatThemes = map[string]struct{}{
+	DefaultChatTheme: {},
+	"love":           {},
+	"nature":         {},
+	"sunset":         {},
+	"ocean":          {},
+	"midnight":       {},
+}
 
 type ChatService struct {
 	chats *repository.ChatRepository
@@ -80,6 +92,15 @@ type ChatAttachmentInput struct {
 	Width  int
 	Height int
 	Type   string
+}
+
+func normalizeChatThemeKey(value string) (string, bool) {
+	key := strings.ToLower(strings.TrimSpace(value))
+	if key == "" {
+		key = DefaultChatTheme
+	}
+	_, ok := allowedChatThemes[key]
+	return key, ok
 }
 
 func mapChatPreview(row repository.DirectChatRow) ChatPreview {
@@ -332,4 +353,32 @@ func (s *ChatService) MarkRead(ctx context.Context, userID, chatID string) (int6
 		return 0, err
 	}
 	return s.chats.MarkRead(ctx, chatID, userID)
+}
+
+func (s *ChatService) GetTheme(ctx context.Context, userID, chatID string) (string, error) {
+	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
+		return "", err
+	}
+	theme, err := s.chats.GetTheme(ctx, chatID)
+	if err != nil {
+		return "", err
+	}
+	if normalized, ok := normalizeChatThemeKey(theme); ok {
+		return normalized, nil
+	}
+	return DefaultChatTheme, nil
+}
+
+func (s *ChatService) SetTheme(ctx context.Context, userID, chatID, themeKey string) (string, error) {
+	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
+		return "", err
+	}
+	normalized, ok := normalizeChatThemeKey(themeKey)
+	if !ok {
+		return "", ErrChatThemeInvalid
+	}
+	if err := s.chats.UpdateTheme(ctx, chatID, normalized); err != nil {
+		return "", err
+	}
+	return normalized, nil
 }

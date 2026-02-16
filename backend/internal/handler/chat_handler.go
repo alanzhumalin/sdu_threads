@@ -112,6 +112,8 @@ func (h *ChatHandler) handleChatActions(w http.ResponseWriter, r *http.Request) 
 		h.handleRead(w, r, chatID)
 	case "ws":
 		h.handleWS(w, r, chatID)
+	case "theme":
+		h.handleTheme(w, r, chatID)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
@@ -331,6 +333,43 @@ func (h *ChatHandler) handleUnreadCount(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"unread_count": count})
 }
 
+func (h *ChatHandler) handleTheme(w http.ResponseWriter, r *http.Request, chatID string) {
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		themeKey, err := h.service.GetTheme(r.Context(), userID, chatID)
+		if err != nil {
+			h.writeChatError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, dto.ChatThemeResponse{ThemeKey: themeKey})
+	case http.MethodPut:
+		var req dto.UpdateChatThemeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		themeKey, err := h.service.SetTheme(r.Context(), userID, chatID, req.ThemeKey)
+		if err != nil {
+			h.writeChatError(w, err)
+			return
+		}
+		go h.ws.broadcast(chatID, map[string]any{
+			"type":      "chat_theme_updated",
+			"chat_id":   chatID,
+			"theme_key": themeKey,
+		})
+		writeJSON(w, http.StatusOK, dto.ChatThemeResponse{ThemeKey: themeKey})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
 func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrChatForbidden):
@@ -343,7 +382,8 @@ func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrChatMessageSelf),
 		errors.Is(err, service.ErrChatReplyNotFound),
 		errors.Is(err, service.ErrChatAttachInvalid),
-		errors.Is(err, service.ErrChatAttachTooMany):
+		errors.Is(err, service.ErrChatAttachTooMany),
+		errors.Is(err, service.ErrChatThemeInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")
