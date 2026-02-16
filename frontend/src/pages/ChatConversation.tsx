@@ -426,49 +426,6 @@ export default function ChatConversationPage() {
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 870px)");
-    const html = document.documentElement;
-    const body = document.body;
-    const prevHtmlOverflow = html.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
-    const prevHtmlOverscroll = html.style.overscrollBehaviorY;
-    const prevBodyOverscroll = body.style.overscrollBehaviorY;
-
-    const updateLock = () => {
-      if (media.matches) {
-        html.style.overflow = "hidden";
-        body.style.overflow = "hidden";
-        html.style.overscrollBehaviorY = "none";
-        body.style.overscrollBehaviorY = "none";
-      } else {
-        html.style.overflow = prevHtmlOverflow;
-        body.style.overflow = prevBodyOverflow;
-        html.style.overscrollBehaviorY = prevHtmlOverscroll;
-        body.style.overscrollBehaviorY = prevBodyOverscroll;
-      }
-    };
-
-    updateLock();
-    const unsubscribe =
-      typeof media.addEventListener === "function"
-        ? (() => {
-            media.addEventListener("change", updateLock);
-            return () => media.removeEventListener("change", updateLock);
-          })()
-        : (() => {
-            media.addListener(updateLock);
-            return () => media.removeListener(updateLock);
-          })();
-    return () => {
-      unsubscribe();
-      html.style.overflow = prevHtmlOverflow;
-      body.style.overflow = prevBodyOverflow;
-      html.style.overscrollBehaviorY = prevHtmlOverscroll;
-      body.style.overscrollBehaviorY = prevBodyOverscroll;
-    };
-  }, []);
-
-  useEffect(() => {
     peerIDRef.current = peerID;
   }, [peerID]);
 
@@ -1551,10 +1508,10 @@ export default function ChatConversationPage() {
             );
           })}
         </div>
-	        <div
-	          ref={listRef}
-	          className={`relative z-10 flex-1 min-h-0 min-[871px]:h-[64vh] min-[871px]:flex-none overflow-y-auto scrollbar-hide px-3 py-4 space-y-3 ${activeTheme.listClass}`.trim()}
-	        >
+        <div
+          ref={listRef}
+          className={`relative z-10 flex-1 min-h-0 min-[871px]:h-[64vh] min-[871px]:flex-none overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch] scrollbar-hide px-3 py-4 space-y-3 ${activeTheme.listClass}`.trim()}
+        >
           <div ref={topRef} className="h-6 flex items-center justify-center">
             {loadingMore && <Loader2 className="w-4 h-4 animate-spin text-white/60" />}
           </div>
@@ -1718,7 +1675,10 @@ export default function ChatConversationPage() {
           )}
         </div>
 
-        <form onSubmit={onSubmit} className="border-t border-white/10 p-3 space-y-2">
+        <form
+          onSubmit={onSubmit}
+          className="border-t border-white/10 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] space-y-2"
+        >
           <ErrorMessage message={mediaError} />
           {composerAttachments.length > 0 && (
             <div className="flex flex-wrap gap-2">

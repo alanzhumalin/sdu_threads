@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import FeedPage from "./Feed";
 import LoginPage from "./Login";
@@ -52,7 +53,78 @@ export default function App() {
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
   const isChatConversationPage = /^\/chats\/[^/]+$/.test(location.pathname);
+  const [chatViewportHeight, setChatViewportHeight] = useState<number | null>(null);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
+
+  useEffect(() => {
+    if (!isChatConversationPage) {
+      setChatViewportHeight(null);
+      return;
+    }
+
+    const viewport = window.visualViewport;
+    let rafID: number | null = null;
+    let delayedA: number | null = null;
+    let delayedB: number | null = null;
+
+    const applyHeight = () => {
+      const nextHeight = Math.round(
+        viewport?.height || window.innerHeight || document.documentElement.clientHeight || 0
+      );
+      if (!nextHeight) return;
+      setChatViewportHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+      if (window.innerWidth < 871 && window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    const scheduleApply = () => {
+      if (rafID !== null) window.cancelAnimationFrame(rafID);
+      rafID = window.requestAnimationFrame(() => {
+        rafID = null;
+        applyHeight();
+      });
+    };
+
+    const scheduleApplyWithDelay = () => {
+      scheduleApply();
+      if (delayedA !== null) window.clearTimeout(delayedA);
+      if (delayedB !== null) window.clearTimeout(delayedB);
+      delayedA = window.setTimeout(scheduleApply, 120);
+      delayedB = window.setTimeout(scheduleApply, 280);
+    };
+
+    scheduleApplyWithDelay();
+    viewport?.addEventListener("resize", scheduleApplyWithDelay);
+    viewport?.addEventListener("scroll", scheduleApplyWithDelay);
+    window.addEventListener("resize", scheduleApplyWithDelay);
+    window.addEventListener("orientationchange", scheduleApplyWithDelay);
+    window.addEventListener("focus", scheduleApplyWithDelay);
+    window.addEventListener("pageshow", scheduleApplyWithDelay);
+    document.addEventListener("visibilitychange", scheduleApplyWithDelay);
+    document.addEventListener("focusin", scheduleApplyWithDelay);
+    document.addEventListener("focusout", scheduleApplyWithDelay);
+
+    return () => {
+      viewport?.removeEventListener("resize", scheduleApplyWithDelay);
+      viewport?.removeEventListener("scroll", scheduleApplyWithDelay);
+      window.removeEventListener("resize", scheduleApplyWithDelay);
+      window.removeEventListener("orientationchange", scheduleApplyWithDelay);
+      window.removeEventListener("focus", scheduleApplyWithDelay);
+      window.removeEventListener("pageshow", scheduleApplyWithDelay);
+      document.removeEventListener("visibilitychange", scheduleApplyWithDelay);
+      document.removeEventListener("focusin", scheduleApplyWithDelay);
+      document.removeEventListener("focusout", scheduleApplyWithDelay);
+      if (rafID !== null) window.cancelAnimationFrame(rafID);
+      if (delayedA !== null) window.clearTimeout(delayedA);
+      if (delayedB !== null) window.clearTimeout(delayedB);
+    };
+  }, [isChatConversationPage]);
+
+  const chatViewportStyle: CSSProperties | undefined =
+    isChatConversationPage && chatViewportHeight
+      ? ({ "--chat-mobile-vh": `${chatViewportHeight}px` } as CSSProperties)
+      : undefined;
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
   // We still rely on backend 401/403 for security.
@@ -228,9 +300,10 @@ export default function App() {
       <div className="mx-auto max-w-6xl px-3 md:px-8">
         <div
           key={location.pathname}
+          style={chatViewportStyle}
           className={
             isChatConversationPage
-              ? "h-[100dvh] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
+              ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
               : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
           }
         >
