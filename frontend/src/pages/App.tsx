@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import FeedPage from "./Feed";
 import LoginPage from "./Login";
@@ -52,6 +52,7 @@ export default function App() {
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
   const isChatConversationPage = /^\/chats\/[^/]+$/.test(location.pathname);
+  const [mobileChatViewportHeight, setMobileChatViewportHeight] = useState<number | null>(null);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
@@ -187,6 +188,49 @@ export default function App() {
     };
   }, [token, setChatsUnreadCount]);
 
+  useEffect(() => {
+    if (!isChatConversationPage) {
+      setMobileChatViewportHeight(null);
+      return;
+    }
+
+    const media = window.matchMedia("(max-width: 870px)");
+    const viewport = window.visualViewport;
+
+    const updateHeight = () => {
+      if (!media.matches) {
+        setMobileChatViewportHeight(null);
+        return;
+      }
+      const raw = viewport?.height ?? window.innerHeight;
+      const next = Math.max(320, Math.round(raw));
+      setMobileChatViewportHeight(next);
+    };
+
+    updateHeight();
+    viewport?.addEventListener("resize", updateHeight);
+    viewport?.addEventListener("scroll", updateHeight);
+    window.addEventListener("orientationchange", updateHeight);
+
+    const detachMedia =
+      typeof media.addEventListener === "function"
+        ? (() => {
+            media.addEventListener("change", updateHeight);
+            return () => media.removeEventListener("change", updateHeight);
+          })()
+        : (() => {
+            media.addListener(updateHeight);
+            return () => media.removeListener(updateHeight);
+          })();
+
+    return () => {
+      detachMedia();
+      viewport?.removeEventListener("resize", updateHeight);
+      viewport?.removeEventListener("scroll", updateHeight);
+      window.removeEventListener("orientationchange", updateHeight);
+    };
+  }, [isChatConversationPage]);
+
   const items = [
     { label: "Лента", path: "/" , icon: "feed"},
     { label: "Поиск", path: "/search", icon: "search"},
@@ -232,6 +276,11 @@ export default function App() {
             isChatConversationPage
               ? "h-[100dvh] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
               : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
+          }
+          style={
+            isChatConversationPage && mobileChatViewportHeight
+              ? { height: `${mobileChatViewportHeight}px` }
+              : undefined
           }
         >
           <Routes location={location}>
