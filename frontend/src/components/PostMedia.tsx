@@ -67,7 +67,7 @@ export function PostMedia({ media, className }: Props) {
           e.stopPropagation();
           openAt(idx);
         }}
-        className={`relative w-full ${hasTileAspect ? "" : "h-full"} overflow-hidden flex items-center justify-center bg-black/20 focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
+        className={`relative w-full ${hasTileAspect ? "" : "h-full"} min-w-0 min-h-0 overflow-hidden flex items-center justify-center bg-black/20 focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
         style={hasTileAspect ? { aspectRatio: tileAspect } : undefined}
       >
         <img
@@ -75,8 +75,7 @@ export function PostMedia({ media, className }: Props) {
           alt="media"
           width={it.width || undefined}
           height={it.height || undefined}
-          style={aspectStr(it) ? { aspectRatio: aspectStr(it) } : undefined}
-          className={`w-full h-full ${fit === "cover" ? "object-cover" : "object-contain"}`}
+          className={`w-full h-full min-w-0 min-h-0 ${fit === "cover" ? "object-cover" : "object-contain object-center"}`}
           draggable={false}
           loading="lazy"
           decoding="async"
@@ -97,11 +96,12 @@ export function PostMedia({ media, className }: Props) {
     const h = Number(it.height);
     const hasDims = Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0;
     const isPortrait = hasDims && h > w;
-    const portraitHeightCls = isPortrait ? "max-h-[330px] md:max-h-[600px]" : "";
+    const portraitHeightCls = isPortrait ? "h-[330px] md:h-[600px]" : "";
     grid = (
       <div
-        className={`w-full bg-black/20 ${hasDims ? "" : hCls} ${portraitHeightCls}`.trim()}
-        style={aspectStr(it) ? { aspectRatio: aspectStr(it) } : undefined}
+        className={`w-full overflow-hidden bg-black/20 ${hasDims ? "" : hCls} ${portraitHeightCls}`.trim()}
+        // Safari can misrender portrait single media when aspect-ratio is set on both container and img.
+        style={!isPortrait && aspectStr(it) ? { aspectRatio: aspectStr(it) } : undefined}
       >
         {tile(it, 0, undefined, { fit: isPortrait ? "contain" : "cover" })}
       </div>
