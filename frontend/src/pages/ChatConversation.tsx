@@ -1303,6 +1303,7 @@ export default function ChatConversationPage() {
     if (!token || !chatId || sending) return;
     const text = body.trim();
     const activeComposerAttachments = composerAttachmentsRef.current;
+    const isMobileChat = window.innerWidth < 871;
     const hasUploadingAttachments = activeComposerAttachments.some((a) => a.status === "uploading");
     if (hasUploadingAttachments) {
       setError("Дождитесь завершения загрузки вложений.");
@@ -1332,8 +1333,11 @@ export default function ChatConversationPage() {
       pending: true,
     };
 
+    if (isMobileChat && document.activeElement === composerInputRef.current) {
+      composerInputRef.current?.blur();
+    }
     stopTyping(true);
-    if (window.innerWidth < 871) {
+    if (isMobileChat) {
       keepBottomPinnedRef.current = true;
       clearReleaseBottomPinTimer();
       pinListToBottom("send_start");
@@ -1372,7 +1376,7 @@ export default function ChatConversationPage() {
       setError(e.message || "Не удалось отправить сообщение");
     } finally {
       setSending(false);
-      if (window.innerWidth < 871 && document.activeElement !== composerInputRef.current) {
+      if (isMobileChat && document.activeElement !== composerInputRef.current) {
         clearReleaseBottomPinTimer();
         releaseBottomPinTimerRef.current = window.setTimeout(() => {
           keepBottomPinnedRef.current = false;

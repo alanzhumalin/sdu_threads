@@ -64,8 +64,8 @@ export default function App() {
 
     const viewport = window.visualViewport;
     let rafID: number | null = null;
-    let delayedA: number | null = null;
-    let delayedB: number | null = null;
+    let burstRafID: number | null = null;
+    let burstUntilMs = 0;
 
     const applyHeight = () => {
       const nextHeight = Math.round(
@@ -86,38 +86,54 @@ export default function App() {
       });
     };
 
-    const scheduleApplyWithDelay = () => {
-      scheduleApply();
-      if (delayedA !== null) window.clearTimeout(delayedA);
-      if (delayedB !== null) window.clearTimeout(delayedB);
-      delayedA = window.setTimeout(scheduleApply, 45);
-      delayedB = window.setTimeout(scheduleApply, 120);
+    const startBurstSync = () => {
+      burstUntilMs = Date.now() + 260;
+      if (burstRafID !== null) return;
+      const tick = () => {
+        applyHeight();
+        if (Date.now() < burstUntilMs) {
+          burstRafID = window.requestAnimationFrame(tick);
+        } else {
+          burstRafID = null;
+        }
+      };
+      burstRafID = window.requestAnimationFrame(tick);
     };
 
-    scheduleApplyWithDelay();
-    viewport?.addEventListener("resize", scheduleApplyWithDelay);
-    viewport?.addEventListener("scroll", scheduleApplyWithDelay);
-    window.addEventListener("resize", scheduleApplyWithDelay);
-    window.addEventListener("orientationchange", scheduleApplyWithDelay);
-    window.addEventListener("focus", scheduleApplyWithDelay);
-    window.addEventListener("pageshow", scheduleApplyWithDelay);
-    document.addEventListener("visibilitychange", scheduleApplyWithDelay);
-    document.addEventListener("focusin", scheduleApplyWithDelay);
-    document.addEventListener("focusout", scheduleApplyWithDelay);
+    const syncImmediately = () => {
+      applyHeight();
+      scheduleApply();
+      startBurstSync();
+    };
+
+    const syncLight = () => {
+      applyHeight();
+      scheduleApply();
+    };
+
+    syncImmediately();
+    viewport?.addEventListener("resize", syncImmediately);
+    viewport?.addEventListener("scroll", syncLight);
+    window.addEventListener("resize", syncImmediately);
+    window.addEventListener("orientationchange", syncImmediately);
+    window.addEventListener("focus", syncImmediately);
+    window.addEventListener("pageshow", syncImmediately);
+    document.addEventListener("visibilitychange", syncLight);
+    document.addEventListener("focusin", syncImmediately);
+    document.addEventListener("focusout", syncImmediately);
 
     return () => {
-      viewport?.removeEventListener("resize", scheduleApplyWithDelay);
-      viewport?.removeEventListener("scroll", scheduleApplyWithDelay);
-      window.removeEventListener("resize", scheduleApplyWithDelay);
-      window.removeEventListener("orientationchange", scheduleApplyWithDelay);
-      window.removeEventListener("focus", scheduleApplyWithDelay);
-      window.removeEventListener("pageshow", scheduleApplyWithDelay);
-      document.removeEventListener("visibilitychange", scheduleApplyWithDelay);
-      document.removeEventListener("focusin", scheduleApplyWithDelay);
-      document.removeEventListener("focusout", scheduleApplyWithDelay);
+      viewport?.removeEventListener("resize", syncImmediately);
+      viewport?.removeEventListener("scroll", syncLight);
+      window.removeEventListener("resize", syncImmediately);
+      window.removeEventListener("orientationchange", syncImmediately);
+      window.removeEventListener("focus", syncImmediately);
+      window.removeEventListener("pageshow", syncImmediately);
+      document.removeEventListener("visibilitychange", syncLight);
+      document.removeEventListener("focusin", syncImmediately);
+      document.removeEventListener("focusout", syncImmediately);
       if (rafID !== null) window.cancelAnimationFrame(rafID);
-      if (delayedA !== null) window.clearTimeout(delayedA);
-      if (delayedB !== null) window.clearTimeout(delayedB);
+      if (burstRafID !== null) window.cancelAnimationFrame(burstRafID);
     };
   }, [isChatConversationPage]);
 
