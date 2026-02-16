@@ -90,8 +90,8 @@ export default function App() {
       scheduleApply();
       if (delayedA !== null) window.clearTimeout(delayedA);
       if (delayedB !== null) window.clearTimeout(delayedB);
-      delayedA = window.setTimeout(scheduleApply, 120);
-      delayedB = window.setTimeout(scheduleApply, 280);
+      delayedA = window.setTimeout(scheduleApply, 45);
+      delayedB = window.setTimeout(scheduleApply, 120);
     };
 
     scheduleApplyWithDelay();

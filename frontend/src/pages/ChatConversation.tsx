@@ -359,10 +359,12 @@ export default function ChatConversationPage() {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const pollInFlightRef = useRef(false);
   const autoScrollAfterRenderRef = useRef(false);
+  const keepBottomPinnedRef = useRef(false);
   const initialAutoScrolledChatRef = useRef("");
   const wsConnectedRef = useRef(false);
   const peerIDRef = useRef("");
@@ -377,6 +379,10 @@ export default function ChatConversationPage() {
   const typingLastSentAtRef = useRef(0);
   const typingStopTimerRef = useRef<number | null>(null);
   const peerTypingTimerRef = useRef<number | null>(null);
+  const releaseBottomPinTimerRef = useRef<number | null>(null);
+  const viewportPinRafRef = useRef<number | null>(null);
+  const viewportPinTimerARef = useRef<number | null>(null);
+  const viewportPinTimerBRef = useRef<number | null>(null);
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
@@ -602,6 +608,54 @@ export default function ChatConversationPage() {
     el.scrollTo({ top: el.scrollHeight, behavior });
   };
 
+  const isNearBottom = (thresholdPx = 180) => {
+    const el = listRef.current;
+    if (!el) return true;
+    const distanceToBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+    return distanceToBottom <= thresholdPx;
+  };
+
+  const clearReleaseBottomPinTimer = () => {
+    if (releaseBottomPinTimerRef.current !== null) {
+      window.clearTimeout(releaseBottomPinTimerRef.current);
+      releaseBottomPinTimerRef.current = null;
+    }
+  };
+
+  const clearViewportPinTimers = () => {
+    if (viewportPinRafRef.current !== null) {
+      window.cancelAnimationFrame(viewportPinRafRef.current);
+      viewportPinRafRef.current = null;
+    }
+    if (viewportPinTimerARef.current !== null) {
+      window.clearTimeout(viewportPinTimerARef.current);
+      viewportPinTimerARef.current = null;
+    }
+    if (viewportPinTimerBRef.current !== null) {
+      window.clearTimeout(viewportPinTimerBRef.current);
+      viewportPinTimerBRef.current = null;
+    }
+  };
+
+  const pinListToBottom = (reason: string) => {
+    clearViewportPinTimers();
+    if (chatId) {
+      debugChat(chatId, `pin_bottom:${reason}`);
+    }
+    viewportPinRafRef.current = window.requestAnimationFrame(() => {
+      viewportPinRafRef.current = null;
+      scrollToBottom("auto");
+    });
+    viewportPinTimerARef.current = window.setTimeout(() => {
+      scrollToBottom("auto");
+      viewportPinTimerARef.current = null;
+    }, 40);
+    viewportPinTimerBRef.current = window.setTimeout(() => {
+      scrollToBottom("auto");
+      viewportPinTimerBRef.current = null;
+    }, 120);
+  };
+
   const scheduleAutoScrollToBottom = (reason: string, payload?: unknown) => {
     autoScrollAfterRenderRef.current = true;
     if (chatId) {
@@ -688,6 +742,8 @@ export default function ChatConversationPage() {
       clearMarkReadRetryTimer();
       clearTypingStopTimer();
       clearPeerTypingTimer();
+      clearReleaseBottomPinTimer();
+      clearViewportPinTimers();
     };
   }, []);
 
@@ -800,6 +856,9 @@ export default function ChatConversationPage() {
   useEffect(() => {
     stopTyping(true);
     clearMarkReadRetryTimer();
+    clearReleaseBottomPinTimer();
+    clearViewportPinTimers();
+    keepBottomPinnedRef.current = false;
     markReadInFlightRef.current = false;
     lastMarkReadAtRef.current = 0;
     typingStateRef.current = false;
@@ -882,6 +941,35 @@ export default function ChatConversationPage() {
       });
     }
   }, [peerTyping]);
+
+  useEffect(() => {
+    if (!chatId) return;
+    const viewport = window.visualViewport;
+
+    const handleViewportChange = () => {
+      if (window.innerWidth >= 871) return;
+      const composerFocused = document.activeElement === composerInputRef.current;
+      if (!(keepBottomPinnedRef.current || composerFocused || isNearBottom(200))) {
+        return;
+      }
+      pinListToBottom("viewport_change");
+    };
+
+    handleViewportChange();
+    viewport?.addEventListener("resize", handleViewportChange);
+    viewport?.addEventListener("scroll", handleViewportChange);
+    window.addEventListener("orientationchange", handleViewportChange);
+    document.addEventListener("focusin", handleViewportChange);
+    document.addEventListener("focusout", handleViewportChange);
+
+    return () => {
+      viewport?.removeEventListener("resize", handleViewportChange);
+      viewport?.removeEventListener("scroll", handleViewportChange);
+      window.removeEventListener("orientationchange", handleViewportChange);
+      document.removeEventListener("focusin", handleViewportChange);
+      document.removeEventListener("focusout", handleViewportChange);
+    };
+  }, [chatId]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -1245,6 +1333,11 @@ export default function ChatConversationPage() {
     };
 
     stopTyping(true);
+    if (window.innerWidth < 871) {
+      keepBottomPinnedRef.current = true;
+      clearReleaseBottomPinTimer();
+      pinListToBottom("send_start");
+    }
     setError("");
     setBody("");
     setReplyTo(null);
@@ -1279,6 +1372,13 @@ export default function ChatConversationPage() {
       setError(e.message || "Не удалось отправить сообщение");
     } finally {
       setSending(false);
+      if (window.innerWidth < 871 && document.activeElement !== composerInputRef.current) {
+        clearReleaseBottomPinTimer();
+        releaseBottomPinTimerRef.current = window.setTimeout(() => {
+          keepBottomPinnedRef.current = false;
+          releaseBottomPinTimerRef.current = null;
+        }, 220);
+      }
     }
   };
 
@@ -1763,13 +1863,27 @@ export default function ChatConversationPage() {
               }}
             />
             <textarea
+              ref={composerInputRef}
               value={body}
               onChange={(e) => {
                 const nextValue = e.target.value;
                 setBody(nextValue);
                 handleTypingByBody(nextValue);
               }}
-              onBlur={() => stopTyping(true)}
+              onFocus={() => {
+                keepBottomPinnedRef.current = true;
+                clearReleaseBottomPinTimer();
+                pinListToBottom("composer_focus");
+              }}
+              onBlur={() => {
+                stopTyping(true);
+                pinListToBottom("composer_blur");
+                clearReleaseBottomPinTimer();
+                releaseBottomPinTimerRef.current = window.setTimeout(() => {
+                  keepBottomPinnedRef.current = false;
+                  releaseBottomPinTimerRef.current = null;
+                }, 260);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
