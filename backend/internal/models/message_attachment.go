@@ -8,6 +8,7 @@ type MessageAttachment struct {
 	URL       string    `gorm:"type:text;not null"`
 	Width     int       `gorm:"not null;default:0"`
 	Height    int       `gorm:"not null;default:0"`
+	Duration  int       `gorm:"column:duration_sec;not null;default:0"`
 	Type      string    `gorm:"type:text;not null;default:image"`
 	SortOrder int       `gorm:"not null;default:0"`
 	CreatedAt time.Time `gorm:"not null;default:now()"`

@@ -25,22 +25,55 @@ import (
 	"sduthreads/internal/storage"
 )
 
-var errFileTooLarge = errors.New("file_too_large")
+var (
+	errFileTooLarge     = errors.New("file_too_large")
+	errInvalidMediaType = errors.New("invalid_media_type")
+)
 
 const maxMediaBytes = 5 * 1024 * 1024
 
-func normalizeImageContentType(raw string) (string, bool) {
+func normalizeContentType(raw string) string {
 	ct := strings.ToLower(strings.TrimSpace(raw))
 	if i := strings.Index(ct, ";"); i >= 0 {
 		ct = strings.TrimSpace(ct[:i])
 	}
+	return ct
+}
+
+func normalizeImageContentType(raw string) (string, bool) {
+	ct := normalizeContentType(raw)
 	if !strings.HasPrefix(ct, "image/") || ct == "image/svg+xml" {
 		return "", false
 	}
 	return ct, true
 }
 
-func imageExtFromContentType(ct string) string {
+func normalizeChatAudioContentType(raw string) (string, bool) {
+	ct := normalizeContentType(raw)
+	if !strings.HasPrefix(ct, "audio/") {
+		return "", false
+	}
+	return ct, true
+}
+
+func normalizeMediaContentType(raw, purpose string) (ct string, mediaType string, ok bool) {
+	if purpose == "chat" {
+		if c, yes := normalizeImageContentType(raw); yes {
+			return c, "image", true
+		}
+		if c, yes := normalizeChatAudioContentType(raw); yes {
+			return c, "audio", true
+		}
+		return "", "", false
+	}
+
+	if c, yes := normalizeImageContentType(raw); yes {
+		return c, "image", true
+	}
+	return "", "", false
+}
+
+func mediaExtFromContentType(ct string) string {
 	switch ct {
 	case "image/jpeg", "image/jpg", "image/pjpeg":
 		return "jpg"
@@ -60,6 +93,38 @@ func imageExtFromContentType(ct string) string {
 		return "heic"
 	case "image/heif":
 		return "heif"
+	case "audio/mpeg":
+		return "mp3"
+	case "audio/mp4":
+		return "m4a"
+	case "audio/aac":
+		return "aac"
+	case "audio/ogg":
+		return "ogg"
+	case "audio/webm":
+		return "webm"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return "wav"
+	case "audio/flac":
+		return "flac"
+	case "audio/3gpp":
+		return "3gp"
+	case "audio/amr":
+		return "amr"
+	}
+
+	if strings.HasPrefix(ct, "audio/") {
+		subtype := strings.TrimPrefix(ct, "audio/")
+		subtype = strings.TrimSpace(subtype)
+		subtype = strings.TrimPrefix(subtype, "x-")
+		if i := strings.Index(subtype, "+"); i >= 0 {
+			subtype = subtype[:i]
+		}
+		subtype = strings.ReplaceAll(subtype, ".", "")
+		if subtype == "" {
+			return "audio"
+		}
+		return subtype
 	}
 
 	subtype := strings.TrimPrefix(ct, "image/")
@@ -73,6 +138,32 @@ func imageExtFromContentType(ct string) string {
 		return "img"
 	}
 	return subtype
+}
+
+func chatAudioContentTypeFromFilename(name string) (string, bool) {
+	filename := strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case strings.HasSuffix(filename, ".mp3"):
+		return "audio/mpeg", true
+	case strings.HasSuffix(filename, ".m4a"), strings.HasSuffix(filename, ".mp4"):
+		return "audio/mp4", true
+	case strings.HasSuffix(filename, ".aac"):
+		return "audio/aac", true
+	case strings.HasSuffix(filename, ".ogg"), strings.HasSuffix(filename, ".oga"):
+		return "audio/ogg", true
+	case strings.HasSuffix(filename, ".webm"):
+		return "audio/webm", true
+	case strings.HasSuffix(filename, ".wav"):
+		return "audio/wav", true
+	case strings.HasSuffix(filename, ".flac"):
+		return "audio/flac", true
+	case strings.HasSuffix(filename, ".3gp"):
+		return "audio/3gpp", true
+	case strings.HasSuffix(filename, ".amr"):
+		return "audio/amr", true
+	default:
+		return "", false
+	}
 }
 
 type MediaHandler struct {
@@ -220,11 +311,15 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]*storage.PresignedPut, 0, len(req.Files))
 	for _, f := range req.Files {
-		ct, ok := normalizeImageContentType(f.ContentType)
+		ct, _, ok := normalizeMediaContentType(f.ContentType, purpose)
 		if !ok {
+			msg := "Можно загрузить только изображения (без SVG)"
+			if purpose == "chat" {
+				msg = "Для чата разрешены изображения или аудио до 5MB"
+			}
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "INVALID_MEDIA_TYPE",
-				Message: "Можно загрузить только изображения (без SVG)",
+				Message: msg,
 			})
 			return
 		}
@@ -236,7 +331,7 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		ext := imageExtFromContentType(ct)
+		ext := mediaExtFromContentType(ct)
 		key := h.uploader.BuildKey(purpose, userID, ext)
 		// Short TTL reduces the window in which a leaked presigned URL can be abused.
 		pp, err := h.uploader.PresignPut(r.Context(), key, ct, 2*time.Minute)
@@ -435,16 +530,23 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			ct, ok := normalizeImageContentType(ct)
+			ct, mediaType, ok := normalizeMediaContentType(ct, purpose)
+			if !ok && purpose == "chat" {
+				if inferred, yes := chatAudioContentTypeFromFilename(fh.Filename); yes {
+					ct = inferred
+					mediaType = "audio"
+					ok = true
+				}
+			}
 			if !ok {
-				errs <- errors.New("only raster images are allowed")
+				errs <- errInvalidMediaType
 				return
 			}
 			if len(data) == 0 || len(data) > maxMediaBytes {
 				errs <- errFileTooLarge
 				return
 			}
-			// Для личных чатов не применяем ML-модерацию изображений.
+			// Для личных чатов не применяем ML-модерацию медиа.
 			if purpose != "chat" && h.mod != nil {
 				if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
 					ActorUserID: userID,
@@ -462,14 +564,13 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Get dimensions cheaply (works for jpeg/png/gif/webp)
 			cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(data))
 			width, height := 0, 0
-			if cfgErr == nil {
+			if mediaType == "image" && cfgErr == nil {
 				width, height = cfg.Width, cfg.Height
 			}
 
-			key := h.uploader.BuildKey(purpose, userID, imageExtFromContentType(ct))
+			key := h.uploader.BuildKey(purpose, userID, mediaExtFromContentType(ct))
 			url, err := h.uploader.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), ct)
 			if err != nil {
 				h.logS3Err(purpose, userID, fh.Filename, fh.Size, ct, err)
@@ -505,6 +606,17 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "FILE_TOO_LARGE",
 					Message: "Файл не должен превышать 5MB",
+				})
+				return
+			}
+			if errors.Is(e, errInvalidMediaType) {
+				msg := "Можно загрузить только изображения (без SVG)"
+				if purpose == "chat" {
+					msg = "Для чата разрешены изображения или аудио до 5MB"
+				}
+				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+					Code:    "INVALID_MEDIA_TYPE",
+					Message: msg,
 				})
 				return
 			}

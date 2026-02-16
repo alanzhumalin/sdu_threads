@@ -26,6 +26,11 @@ var (
 	ErrChatThemeInvalid  = errors.New("invalid chat theme")
 )
 
+var allowedChatAttachmentTypes = map[string]struct{}{
+	"image": {},
+	"audio": {},
+}
+
 const DefaultChatTheme = "default"
 const ChatOnlineWindow = 2 * time.Minute
 
@@ -84,10 +89,11 @@ type ChatMessage struct {
 }
 
 type ChatMessageAttachment struct {
-	URL    string `json:"url"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-	Type   string `json:"type"`
+	URL      string `json:"url"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Duration int    `json:"duration_sec,omitempty"`
+	Type     string `json:"type"`
 }
 
 type ChatReadUpdate struct {
@@ -96,10 +102,11 @@ type ChatReadUpdate struct {
 }
 
 type ChatAttachmentInput struct {
-	URL    string
-	Width  int
-	Height int
-	Type   string
+	URL      string
+	Width    int
+	Height   int
+	Duration int
+	Type     string
 }
 
 func normalizeChatThemeKey(value string) (string, bool) {
@@ -170,10 +177,11 @@ func mapChatMessage(m models.Message) ChatMessage {
 			typ = "image"
 		}
 		attachments = append(attachments, ChatMessageAttachment{
-			URL:    strings.TrimSpace(att.URL),
-			Width:  att.Width,
-			Height: att.Height,
-			Type:   typ,
+			URL:      strings.TrimSpace(att.URL),
+			Width:    att.Width,
+			Height:   att.Height,
+			Duration: att.Duration,
+			Type:     typ,
 		})
 	}
 
@@ -322,7 +330,7 @@ func (s *ChatService) Send(
 		if typ == "" {
 			typ = "image"
 		}
-		if typ != "image" {
+		if _, ok := allowedChatAttachmentTypes[typ]; !ok {
 			return nil, ErrChatAttachInvalid
 		}
 
@@ -334,12 +342,26 @@ func (s *ChatService) Send(
 		if height < 0 {
 			height = 0
 		}
+		duration := att.Duration
+		if duration < 0 {
+			duration = 0
+		}
+		if duration > 24*60*60 {
+			duration = 24 * 60 * 60
+		}
+		if typ == "audio" {
+			width = 0
+			height = 0
+		} else {
+			duration = 0
+		}
 
 		repoAttachments = append(repoAttachments, repository.ChatAttachmentInput{
-			URL:    url,
-			Width:  width,
-			Height: height,
-			Type:   typ,
+			URL:      url,
+			Width:    width,
+			Height:   height,
+			Duration: duration,
+			Type:     typ,
 		})
 	}
 	if body == "" && len(repoAttachments) == 0 {

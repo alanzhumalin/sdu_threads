@@ -20,10 +20,11 @@ func NewChatRepository(db *gorm.DB) *ChatRepository {
 }
 
 type ChatAttachmentInput struct {
-	URL    string
-	Width  int
-	Height int
-	Type   string
+	URL      string
+	Width    int
+	Height   int
+	Duration int
+	Type     string
 }
 
 type ChatReadUpdateRow struct {
@@ -354,9 +355,9 @@ func (r *ChatRepository) CreateMessage(
 
 		for i, att := range attachments {
 			if err := tx.Exec(`
-				INSERT INTO message_attachments (message_id, url, width, height, type, sort_order, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, now())
-			`, out.ID, att.URL, att.Width, att.Height, att.Type, i).Error; err != nil {
+				INSERT INTO message_attachments (message_id, url, width, height, duration_sec, type, sort_order, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, now())
+			`, out.ID, att.URL, att.Width, att.Height, att.Duration, att.Type, i).Error; err != nil {
 				return err
 			}
 		}
@@ -390,7 +391,7 @@ func (r *ChatRepository) listAttachmentsByMessageIDs(
 
 	var rows []models.MessageAttachment
 	q := `
-SELECT id, message_id, url, width, height, type, sort_order, created_at
+SELECT id, message_id, url, width, height, duration_sec, type, sort_order, created_at
 FROM message_attachments
 WHERE message_id IN ?
 ORDER BY sort_order ASC, created_at ASC, id ASC`

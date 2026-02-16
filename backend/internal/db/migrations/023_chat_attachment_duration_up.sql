@@ -1,0 +1,3 @@
+ALTER TABLE message_attachments
+ADD COLUMN IF NOT EXISTS duration_sec INT NOT NULL DEFAULT 0;
+

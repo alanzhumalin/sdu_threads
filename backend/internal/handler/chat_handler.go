@@ -170,10 +170,11 @@ func (h *ChatHandler) handleMessages(w http.ResponseWriter, r *http.Request, cha
 		attachments := make([]service.ChatAttachmentInput, 0, len(req.Attachments))
 		for _, att := range req.Attachments {
 			attachments = append(attachments, service.ChatAttachmentInput{
-				URL:    att.URL,
-				Width:  att.Width,
-				Height: att.Height,
-				Type:   att.Type,
+				URL:      att.URL,
+				Width:    att.Width,
+				Height:   att.Height,
+				Duration: att.Duration,
+				Type:     att.Type,
 			})
 		}
 

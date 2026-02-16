@@ -6,10 +6,11 @@ type OpenDirectChatRequest struct {
 }
 
 type ChatMessageAttachment struct {
-	URL    string `json:"url"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
-	Type   string `json:"type"`
+	URL      string `json:"url"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	Duration int    `json:"duration_sec"`
+	Type     string `json:"type"`
 }
 
 type SendMessageRequest struct {

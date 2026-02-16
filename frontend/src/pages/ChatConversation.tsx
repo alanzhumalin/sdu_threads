@@ -9,16 +9,21 @@ import {
   Heart,
   Leaf,
   Loader2,
+  Mic,
   MoonStar,
   MoreVertical,
+  Pause,
   Paperclip,
+  Play,
   Reply,
   SendHorizontal,
   Sparkles,
+  Square,
   Sun,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useAudioPlayer } from "react-use-audio-player";
 
 import { api, type ChatMessage, type ChatMessageAttachment, type ChatPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -36,6 +41,7 @@ type ComposerAttachment = {
   id: string;
   file: File;
   previewUrl: string;
+  durationSec?: number;
   status: "uploading" | "uploaded" | "error";
   uploaded?: ChatMessageAttachment;
   error?: string;
@@ -242,6 +248,243 @@ const mergeMessages = (current: UiMessage[], incoming: ChatMessage[]) => {
 const timeLabel = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+const durationLabel = (seconds: number) => {
+  const safe = Number(seconds);
+  const total = Number.isFinite(safe) && safe > 0 ? Math.round(safe) : 0;
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+};
+
+const toFiniteSeconds = (value: unknown) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return num;
+};
+
+const toRoundedSeconds = (value: unknown) => Math.max(0, Math.round(toFiniteSeconds(value)));
+
+type ChatAudioPreviewVariant = "composer" | "mine" | "peer";
+
+const CHAT_AUDIO_PREVIEW_CLASSES: Record<ChatAudioPreviewVariant, string> = {
+  composer: "border-white/15 bg-black/35",
+  mine: "border-white/20 bg-black/15",
+  peer: "border-white/15 bg-black/30",
+};
+
+const CHAT_AUDIO_PLAYER_TONE: Record<
+  ChatAudioPreviewVariant,
+  { buttonClass: string; sliderTrackClass: string; accentColor: string }
+> = {
+  composer: {
+    buttonClass: "border-white/20 bg-white/10 text-white",
+    sliderTrackClass: "bg-white/20",
+    accentColor: "#f8fafc",
+  },
+  mine: {
+    buttonClass: "border-white/25 bg-white/15 text-cyan-100",
+    sliderTrackClass: "bg-white/25",
+    accentColor: "#7dd3fc",
+  },
+  peer: {
+    buttonClass: "border-white/20 bg-white/10 text-white/95",
+    sliderTrackClass: "bg-white/20",
+    accentColor: "#f3f4f6",
+  },
+};
+
+function ChatAudioPreview({
+  src,
+  variant,
+  title = "Голосовое сообщение",
+  durationSec = 0,
+}: {
+  src: string;
+  variant: ChatAudioPreviewVariant;
+  title?: string;
+  durationSec?: number;
+}) {
+  const { load, togglePlayPause, seek, getPosition, isPlaying, isLoading, duration, player, src: loadedSrc } =
+    useAudioPlayer();
+  const [positionSeconds, setPositionSeconds] = useState(0);
+  const initialDuration = toRoundedSeconds(durationSec);
+  const [resolvedDurationSeconds, setResolvedDurationSeconds] = useState(initialDuration);
+  const [metadataDurationSeconds, setMetadataDurationSeconds] = useState<number | null>(null);
+  const compact = variant !== "composer";
+  const tone = CHAT_AUDIO_PLAYER_TONE[variant];
+  const isLoadedCurrent = loadedSrc === src;
+  const hookDuration = toRoundedSeconds(duration);
+  const howlDuration = toRoundedSeconds(player?.duration?.());
+  const runtimeDuration = Math.max(hookDuration, howlDuration);
+  const persistedDuration = Math.max(
+    toRoundedSeconds(resolvedDurationSeconds),
+    toRoundedSeconds(metadataDurationSeconds || 0),
+    initialDuration
+  );
+  const safeDuration = persistedDuration > 0 ? persistedDuration : runtimeDuration;
+  const safePosition = toFiniteSeconds(positionSeconds);
+  const clampedPosition = Math.max(0, Math.min(safePosition, safeDuration || safePosition));
+  const sliderMax = safeDuration > 0 ? safeDuration : 1;
+  const progressPercent = safeDuration > 0 ? Math.min(100, (clampedPosition / safeDuration) * 100) : 0;
+  const displayDurationLabel = durationLabel(safeDuration);
+  const canSeek = safeDuration > 0;
+  const isBlobSource = src.startsWith("blob:");
+  const loadOptions = {
+    autoplay: true,
+    html5: isBlobSource,
+    format: ["webm", "mp4", "m4a", "ogg", "wav", "aac", "mp3"],
+  } as const;
+
+  useEffect(() => {
+    setResolvedDurationSeconds(initialDuration);
+    setMetadataDurationSeconds(null);
+  }, [src, initialDuration]);
+
+  useEffect(() => {
+    if (!isLoadedCurrent) return;
+    const next = Math.max(toRoundedSeconds(duration), toRoundedSeconds(player?.duration?.()));
+    if (next <= 0) return;
+    setResolvedDurationSeconds((prev) => (Math.abs(prev - next) > 0.05 ? next : prev));
+  }, [duration, isLoadedCurrent, player]);
+
+  useEffect(() => {
+    if (initialDuration > 0) return;
+    let cancelled = false;
+    const audio = new Audio();
+    audio.preload = "metadata";
+    audio.src = src;
+
+    const update = () => {
+      if (cancelled) return;
+      const next = toRoundedSeconds(audio.duration);
+      if (next > 0) {
+        setMetadataDurationSeconds(next);
+      }
+    };
+
+    audio.addEventListener("loadedmetadata", update);
+    audio.addEventListener("durationchange", update);
+    audio.load();
+
+    return () => {
+      cancelled = true;
+      audio.removeEventListener("loadedmetadata", update);
+      audio.removeEventListener("durationchange", update);
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    };
+  }, [src, initialDuration]);
+
+  useEffect(() => {
+    if (!isLoadedCurrent) {
+      setPositionSeconds(0);
+      return;
+    }
+
+    const updatePosition = () => {
+      const next = Number(getPosition() || 0);
+      if (Number.isFinite(next) && next >= 0) {
+        setPositionSeconds(next);
+      }
+    };
+
+    updatePosition();
+    if (!isPlaying) return;
+
+    const id = window.setInterval(updatePosition, 180);
+    return () => window.clearInterval(id);
+  }, [getPosition, isLoadedCurrent, isPlaying]);
+
+  const handleTogglePlay = () => {
+    if (!isLoadedCurrent) {
+      load(src, loadOptions);
+      return;
+    }
+    togglePlayPause();
+  };
+
+  const handleSeek = (next: number) => {
+    if (!canSeek) return;
+    const target = Math.max(0, Number(next) || 0);
+    if (!isLoadedCurrent) {
+      load(src, {
+        ...loadOptions,
+        autoplay: false,
+        onload: () => seek(target),
+      });
+      setPositionSeconds(target);
+      return;
+    }
+    seek(target);
+    setPositionSeconds(target);
+  };
+
+  return (
+    <div
+      className={`rounded-xl border text-white ${CHAT_AUDIO_PREVIEW_CLASSES[variant]} ${
+        compact ? "px-2 py-1.5" : "px-2.5 py-2"
+      }`}
+    >
+      {!compact && (
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-xs font-medium inline-flex items-center gap-1.5">
+            <Mic className="w-3.5 h-3.5 text-white/80" />
+            <span className="truncate">{title}</span>
+          </p>
+          <span className="shrink-0 text-[11px] text-white/65">{isLoading && !canSeek ? "загрузка..." : displayDurationLabel}</span>
+        </div>
+      )}
+      <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+        <button
+          type="button"
+          onClick={handleTogglePlay}
+          className={`${
+            compact ? "h-7 w-7" : "h-8 w-8"
+          } shrink-0 rounded-full border grid place-items-center transition disabled:opacity-50 disabled:cursor-not-allowed ${tone.buttonClass}`}
+          aria-label={isPlaying ? "Пауза" : "Воспроизвести"}
+          title={isPlaying ? "Пауза" : "Воспроизвести"}
+        >
+          {isLoading && isLoadedCurrent ? (
+            <Loader2 className={`${compact ? "w-3 h-3" : "w-3.5 h-3.5"} animate-spin`} />
+          ) : isPlaying ? (
+            <Pause className={compact ? "w-3 h-3" : "w-3.5 h-3.5"} />
+          ) : (
+            <Play className={`${compact ? "w-3 h-3" : "w-3.5 h-3.5"} translate-x-[1px]`} />
+          )}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+            <span className={`shrink-0 text-[10px] tabular-nums ${compact ? "w-8" : "w-10"} text-right text-white/70`}>
+              {durationLabel(clampedPosition)}
+            </span>
+            <div className="relative h-2 flex-1">
+              <div className={`absolute inset-0 rounded-full ${tone.sliderTrackClass}`} />
+              <div
+                className="absolute left-0 top-0 h-full rounded-full"
+                style={{ width: `${progressPercent}%`, backgroundColor: tone.accentColor }}
+              />
+              <input
+                type="range"
+                min={0}
+                max={sliderMax}
+                step={0.05}
+                value={safeDuration > 0 ? clampedPosition : 0}
+                onChange={(event) => handleSeek(Number(event.target.value))}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                aria-label="Позиция аудио"
+              />
+            </div>
+            <span className={`shrink-0 text-[10px] tabular-nums ${compact ? "w-8" : "w-10"} text-left text-white/70`}>
+              {displayDurationLabel}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const trimReplyPreview = (value: string, max = 120) => {
   const flat = (value || "").replace(/\s+/g, " ").trim();
   if (flat.length <= max) return flat;
@@ -290,6 +533,37 @@ const HEIC_MIME_SET = new Set([
   "image/heif-sequence",
 ]);
 
+const AUDIO_RECORD_MIME_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
+];
+
+const isAudioMimeType = (raw: string) => String(raw || "").toLowerCase().startsWith("audio/");
+const isAudioFilename = (name: string) =>
+  /\.(mp3|m4a|mp4|aac|ogg|oga|webm|wav|flac|3gp|amr)$/i.test(String(name || "").trim());
+
+const fileExtensionFromMime = (raw: string) => {
+  const mime = String(raw || "").toLowerCase();
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("mp4")) return "m4a";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("mpeg")) return "mp3";
+  if (mime.includes("wav")) return "wav";
+  if (mime.includes("aac")) return "aac";
+  return "webm";
+};
+
+const resolveRecordMimeType = () => {
+  if (typeof MediaRecorder === "undefined") return "";
+  for (const candidate of AUDIO_RECORD_MIME_CANDIDATES) {
+    if (MediaRecorder.isTypeSupported(candidate)) return candidate;
+  }
+  return "";
+};
+
 const isHeicOrHeifFile = (file: File) => {
   const type = String(file.type || "").toLowerCase();
   if (HEIC_MIME_SET.has(type)) return true;
@@ -298,9 +572,9 @@ const isHeicOrHeifFile = (file: File) => {
   return name.endsWith(".heic") || name.endsWith(".heif");
 };
 
-const attachmentSignature = (msg: { attachments?: ChatMessageAttachment[] }) =>
+const attachmentMatchSignature = (msg: { attachments?: ChatMessageAttachment[] }) =>
   (msg.attachments || [])
-    .map((a) => `${a.url}|${a.width}|${a.height}|${a.type}`)
+    .map((a) => `${a.type}|${toRoundedSeconds(a.duration_sec)}`)
     .join("||");
 
 const chatWSURL = (chatId: string) => {
@@ -314,13 +588,13 @@ const isIncomingMessageEvent = (
   evt.type === "message_created" || evt.type === "message.created";
 
 const mergeIncomingMessage = (current: UiMessage[], incoming: ChatMessage) => {
-  const incomingAttachmentSig = attachmentSignature(incoming);
+  const incomingAttachmentSig = attachmentMatchSignature(incoming);
   const incomingTs = new Date(incoming.created_at).getTime();
   const withoutMatchedPending = current.filter((m) => {
     if (!m.pending) return true;
     if ((m.body || "").trim() !== (incoming.body || "").trim()) return true;
     if ((m.reply_to_id || "") !== (incoming.reply_to_id || "")) return true;
-    if (attachmentSignature(m) !== incomingAttachmentSig) return true;
+    if (attachmentMatchSignature(m) !== incomingAttachmentSig) return true;
     const pendingTs = new Date(m.created_at).getTime();
     return Math.abs(pendingTs - incomingTs) > 15000;
   });
@@ -356,6 +630,8 @@ export default function ChatConversationPage() {
   const [viewer, setViewer] = useState<{ urls: string[]; initialIndex: number } | null>(null);
   const [presenceTick, setPresenceTick] = useState(() => Date.now());
   const [peerTyping, setPeerTyping] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
@@ -383,6 +659,13 @@ export default function ChatConversationPage() {
   const viewportPinRafRef = useRef<number | null>(null);
   const viewportPinTimerARef = useRef<number | null>(null);
   const viewportPinTimerBRef = useRef<number | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recorderChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTickTimerRef = useRef<number | null>(null);
+  const composerUploadPromisesRef = useRef<Map<string, Promise<ChatMessageAttachment>>>(new Map());
+  const optimisticBlobUrlsRef = useRef<Map<string, string[]>>(new Map());
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
@@ -441,9 +724,15 @@ export default function ChatConversationPage() {
 
   useEffect(() => {
     return () => {
+      disposeAudioRecorder();
       composerAttachmentsRef.current.forEach((item) => {
         URL.revokeObjectURL(item.previewUrl);
       });
+      composerUploadPromisesRef.current.clear();
+      optimisticBlobUrlsRef.current.forEach((urls) => {
+        urls.forEach((url) => URL.revokeObjectURL(url));
+      });
+      optimisticBlobUrlsRef.current.clear();
       if (mediaErrorTimerRef.current !== null) {
         window.clearTimeout(mediaErrorTimerRef.current);
       }
@@ -461,9 +750,258 @@ export default function ChatConversationPage() {
     }, 3200);
   };
 
-  const clearComposerAttachments = () => {
+  const isAudioComposerItem = (item: ComposerAttachment) =>
+    isAudioMimeType(item.file.type) || isAudioFilename(item.file.name) || item.uploaded?.type === "audio";
+
+  const clearRecordingTickTimer = () => {
+    if (recordingTickTimerRef.current !== null) {
+      window.clearInterval(recordingTickTimerRef.current);
+      recordingTickTimerRef.current = null;
+    }
+  };
+
+  const stopAudioStream = () => {
+    const stream = mediaStreamRef.current;
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  };
+
+  const disposeAudioRecorder = () => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          // ignore
+        }
+      }
+    }
+    clearRecordingTickTimer();
+    recordingStartedAtRef.current = 0;
+    recorderChunksRef.current = [];
+    mediaRecorderRef.current = null;
+    stopAudioStream();
+  };
+
+  const resetAudioRecordingState = () => {
+    clearRecordingTickTimer();
+    recordingStartedAtRef.current = 0;
+    recorderChunksRef.current = [];
+    mediaRecorderRef.current = null;
+    setIsRecordingAudio(false);
+    setRecordingSeconds(0);
+    stopAudioStream();
+  };
+
+  const resolveAudioBlobDurationSec = async (blob: Blob) => {
+    try {
+      const win = window as Window & { webkitAudioContext?: typeof AudioContext };
+      const AudioCtx = win.AudioContext || win.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        try {
+          const buffer = await blob.arrayBuffer();
+          const decoded = await ctx.decodeAudioData(buffer.slice(0));
+          const decodedSeconds = toRoundedSeconds(decoded.duration);
+          if (decodedSeconds > 0) {
+            return decodedSeconds;
+          }
+        } finally {
+          try {
+            await ctx.close();
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      // fallback to metadata probing below
+    }
+
+    return new Promise<number>((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio();
+      let done = false;
+      const finish = (seconds: number) => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timeoutId);
+        audio.removeEventListener("loadedmetadata", onMeta);
+        audio.removeEventListener("durationchange", onMeta);
+        audio.removeEventListener("error", onError);
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        URL.revokeObjectURL(url);
+        resolve(toRoundedSeconds(seconds));
+      };
+      const onMeta = () => {
+        const next = toFiniteSeconds(audio.duration);
+        if (next > 0) {
+          finish(next);
+        }
+      };
+      const onError = () => finish(0);
+      const timeoutId = window.setTimeout(() => finish(0), 3500);
+
+      audio.preload = "metadata";
+      audio.addEventListener("loadedmetadata", onMeta);
+      audio.addEventListener("durationchange", onMeta);
+      audio.addEventListener("error", onError);
+      audio.src = url;
+      audio.load();
+    });
+  };
+
+  const runComposerAttachmentUpload = (id: string, file: File, durationSec = 0) => {
+    const promise = uploadComposerAttachment(id, file, durationSec);
+    composerUploadPromisesRef.current.set(id, promise);
+    void promise.finally(() => {
+      if (composerUploadPromisesRef.current.get(id) === promise) {
+        composerUploadPromisesRef.current.delete(id);
+      }
+    });
+    return promise;
+  };
+
+  const queueRecordedAudioUpload = async (blob: Blob, mimeType: string, durationSec = 0) => {
+    if (blob.size <= 0) {
+      showMediaError("Не удалось записать голосовое сообщение.");
+      return;
+    }
+    if (blob.size > MAX_CHAT_ATTACHMENT_BYTES) {
+      showMediaError("Аудио превышает 5MB. Запишите короче.");
+      return;
+    }
+    if (composerAttachmentsRef.current.length >= MAX_CHAT_ATTACHMENTS) {
+      showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
+      return;
+    }
+
+    const type = isAudioMimeType(mimeType) ? mimeType : "audio/webm";
+    const ext = fileExtensionFromMime(type);
+    const file = new File([blob], `voice-${Date.now()}.${ext}`, { type });
+    const fallbackDuration = toRoundedSeconds(durationSec);
+    const draftId = crypto.randomUUID();
+    const draft: ComposerAttachment = {
+      id: draftId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      durationSec: fallbackDuration,
+      status: "uploading",
+    };
+    setComposerAttachments((prev) => [...prev, draft]);
+    void runComposerAttachmentUpload(draft.id, file, draft.durationSec || 0);
+    void resolveAudioBlobDurationSec(blob)
+      .then((measuredDuration) => {
+        if (measuredDuration <= 0) return;
+        setComposerAttachments((prev) =>
+          prev.map((item) => {
+            if (item.id !== draftId) return item;
+            const isAudio = isAudioComposerItem(item);
+            return {
+              ...item,
+              durationSec: measuredDuration,
+              uploaded:
+                item.uploaded && isAudio
+                  ? {
+                      ...item.uploaded,
+                      duration_sec: measuredDuration,
+                    }
+                  : item.uploaded,
+            };
+          })
+        );
+      })
+      .catch(() => {
+        // keep fallback duration
+      });
+  };
+
+  const stopAudioRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder) return;
+    if (recorder.state === "inactive") return;
+    recorder.stop();
+  };
+
+  const cancelAudioRecording = () => {
+    disposeAudioRecorder();
+    resetAudioRecordingState();
+  };
+
+  const startAudioRecording = async () => {
+    if (isRecordingAudio) return;
+    if (composerAttachmentsRef.current.length >= MAX_CHAT_ATTACHMENTS) {
+      showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      showMediaError("Запись аудио не поддерживается в этом браузере.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = resolveRecordMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recorderChunksRef.current = [];
+
+      recorder.ondataavailable = (evt: any) => {
+        const chunk = evt?.data as Blob | undefined;
+        if (chunk && chunk.size > 0) {
+          recorderChunksRef.current.push(chunk);
+        }
+      };
+      recorder.onerror = () => {
+        showMediaError("Не удалось записать голосовое сообщение.");
+        resetAudioRecordingState();
+      };
+      recorder.onstop = () => {
+        const recordedType = recorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(recorderChunksRef.current, { type: recordedType });
+        const startedAt = recordingStartedAtRef.current;
+        const recordedSeconds = startedAt > 0 ? Math.max(1, Math.round((Date.now() - startedAt) / 1000)) : 0;
+        resetAudioRecordingState();
+        void queueRecordedAudioUpload(blob, recordedType, recordedSeconds);
+      };
+
+      recordingStartedAtRef.current = Date.now();
+      setRecordingSeconds(0);
+      clearRecordingTickTimer();
+      recordingTickTimerRef.current = window.setInterval(() => {
+        const startedAt = recordingStartedAtRef.current;
+        if (!startedAt) return;
+        setRecordingSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+      }, 250);
+
+      recorder.start(250);
+      setIsRecordingAudio(true);
+      if (window.innerWidth < 871) {
+        keepBottomPinnedRef.current = true;
+        pinListToBottom("audio_record_start");
+      }
+    } catch {
+      showMediaError("Нет доступа к микрофону. Разрешите доступ и попробуйте снова.");
+      resetAudioRecordingState();
+    }
+  };
+
+  const clearComposerAttachments = (revokeUrls = true) => {
     setComposerAttachments((prev) => {
-      prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      if (revokeUrls) {
+        prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      }
       return [];
     });
   };
@@ -478,7 +1016,7 @@ export default function ChatConversationPage() {
     });
   };
 
-  const uploadComposerAttachment = async (id: string, file: File) => {
+  const uploadComposerAttachment = async (id: string, file: File, durationSec = 0): Promise<ChatMessageAttachment> => {
     if (!token) {
       setComposerAttachments((prev) =>
         prev.map((item) =>
@@ -487,7 +1025,7 @@ export default function ChatConversationPage() {
             : item
         )
       );
-      return;
+      throw new Error("Сначала авторизуйся");
     }
 
     try {
@@ -496,23 +1034,29 @@ export default function ChatConversationPage() {
       if (!first?.url) {
         throw new Error("upload_failed");
       }
+      const attachmentType: ChatMessageAttachment["type"] = isAudioMimeType(file.type) || isAudioFilename(file.name)
+        ? "audio"
+        : "image";
+      const nextAttachment: ChatMessageAttachment = {
+        url: first.url,
+        width: Number(first.width) || 0,
+        height: Number(first.height) || 0,
+        duration_sec: attachmentType === "audio" ? toRoundedSeconds(durationSec) : 0,
+        type: attachmentType,
+      };
       setComposerAttachments((prev) =>
         prev.map((item) =>
           item.id === id
             ? {
                 ...item,
                 status: "uploaded",
-                uploaded: {
-                  url: first.url,
-                  width: Number(first.width) || 0,
-                  height: Number(first.height) || 0,
-                  type: "image",
-                },
+                uploaded: nextAttachment,
                 error: undefined,
               }
             : item
         )
       );
+      return nextAttachment;
     } catch (e: any) {
       const msg = e?.message || "Не удалось загрузить файл";
       setComposerAttachments((prev) =>
@@ -527,6 +1071,7 @@ export default function ChatConversationPage() {
         )
       );
       showMediaError(msg);
+      throw e;
     }
   };
 
@@ -579,7 +1124,7 @@ export default function ChatConversationPage() {
       } else if (hasTypeError) {
         showMediaError("Разрешены только изображения и GIF.");
       } else {
-        showMediaError("Можно прикрепить максимум 5 изображений в одном сообщении.");
+        showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
       }
     }
 
@@ -587,7 +1132,7 @@ export default function ChatConversationPage() {
 
     setComposerAttachments((prev) => [...prev, ...allowed]);
     allowed.forEach((item) => {
-      void uploadComposerAttachment(item.id, item.file);
+      void runComposerAttachmentUpload(item.id, item.file, item.durationSec || 0);
     });
   };
 
@@ -858,6 +1403,7 @@ export default function ChatConversationPage() {
     clearMarkReadRetryTimer();
     clearReleaseBottomPinTimer();
     clearViewportPinTimers();
+    cancelAudioRecording();
     keepBottomPinnedRef.current = false;
     markReadInFlightRef.current = false;
     lastMarkReadAtRef.current = 0;
@@ -1299,26 +1845,56 @@ export default function ChatConversationPage() {
     };
   }, [token, chatId, loading, loadingMore]);
 
+  const releaseOptimisticBlobUrls = (tempID: string) => {
+    const urls = optimisticBlobUrlsRef.current.get(tempID);
+    if (!urls || urls.length === 0) return;
+    urls.forEach((url) => URL.revokeObjectURL(url));
+    optimisticBlobUrlsRef.current.delete(tempID);
+  };
+
+  const buildOptimisticAttachment = (item: ComposerAttachment): ChatMessageAttachment => {
+    if (item.status === "uploaded" && item.uploaded) return item.uploaded;
+    const isAudio = isAudioComposerItem(item);
+    return {
+      url: item.previewUrl,
+      width: 0,
+      height: 0,
+      duration_sec: isAudio ? toRoundedSeconds(item.durationSec) : 0,
+      type: isAudio ? "audio" : "image",
+    };
+  };
+
+  const resolveComposerAttachmentForSend = async (item: ComposerAttachment): Promise<ChatMessageAttachment> => {
+    if (item.status === "uploaded" && item.uploaded) {
+      return item.uploaded;
+    }
+    if (item.status === "error") {
+      throw new Error("Есть вложения с ошибкой. Удалите их или загрузите заново.");
+    }
+    const inflight = composerUploadPromisesRef.current.get(item.id);
+    if (inflight) {
+      return inflight;
+    }
+    return runComposerAttachmentUpload(item.id, item.file, item.durationSec || 0);
+  };
+
   const sendMessage = async () => {
     if (!token || !chatId || sending) return;
-    const text = body.trim();
-    const activeComposerAttachments = composerAttachmentsRef.current;
-    const isMobileChat = window.innerWidth < 871;
-    const hasUploadingAttachments = activeComposerAttachments.some((a) => a.status === "uploading");
-    if (hasUploadingAttachments) {
-      setError("Дождитесь завершения загрузки вложений.");
+    if (isRecordingAudio) {
+      showMediaError("Остановите запись перед отправкой сообщения.");
       return;
     }
+    const text = body.trim();
+    const activeComposerAttachments = [...composerAttachmentsRef.current];
+    const isMobileChat = window.innerWidth < 871;
     const hasFailedAttachments = activeComposerAttachments.some((a) => a.status === "error");
     if (hasFailedAttachments) {
       setError("Есть вложения с ошибкой. Удалите их или загрузите заново.");
       return;
     }
-    const uploadedAttachments = activeComposerAttachments
-      .filter((a): a is ComposerAttachment & { uploaded: ChatMessageAttachment } => a.status === "uploaded" && !!a.uploaded)
-      .map((a) => a.uploaded);
+    const optimisticAttachments = activeComposerAttachments.map(buildOptimisticAttachment);
 
-    if (!text && uploadedAttachments.length === 0) return;
+    if (!text && optimisticAttachments.length === 0) return;
     const activeReply = replyTo;
 
     const tempID = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1328,10 +1904,21 @@ export default function ChatConversationPage() {
       sender_id: "me",
       reply_to_id: activeReply?.id,
       body: text,
-      attachments: uploadedAttachments,
+      attachments: optimisticAttachments,
       created_at: new Date().toISOString(),
       pending: true,
     };
+    const optimisticBlobUrls = optimisticAttachments
+      .map((att) => att.url)
+      .filter((url) => typeof url === "string" && url.startsWith("blob:"));
+    if (optimisticBlobUrls.length > 0) {
+      optimisticBlobUrlsRef.current.set(tempID, optimisticBlobUrls);
+    }
+    activeComposerAttachments.forEach((item) => {
+      if (item.status === "uploaded") {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+    });
 
     if (isMobileChat && document.activeElement === composerInputRef.current) {
       composerInputRef.current?.blur();
@@ -1345,15 +1932,17 @@ export default function ChatConversationPage() {
     setError("");
     setBody("");
     setReplyTo(null);
-    clearComposerAttachments();
+    clearComposerAttachments(false);
     setMessages((prev) => toAsc([...prev, optimistic]));
     requestAnimationFrame(() => {
       scrollToBottom("smooth");
     });
 
     setSending(true);
+    let finalAttachments: ChatMessageAttachment[] | null = null;
     try {
-      const saved = await api.sendChatMessage(chatId, text, token, activeReply?.id, uploadedAttachments);
+      finalAttachments = await Promise.all(activeComposerAttachments.map((item) => resolveComposerAttachmentForSend(item)));
+      const saved = await api.sendChatMessage(chatId, text, token, activeReply?.id, finalAttachments);
       setMessages((prev) => toAsc(prev.map((m) => (m.id === tempID ? { ...saved } : m))));
       setChat((prev) =>
         prev
@@ -1369,11 +1958,24 @@ export default function ChatConversationPage() {
             }
           : prev
       );
+      releaseOptimisticBlobUrls(tempID);
     } catch (e: any) {
       setMessages((prev) =>
-        prev.map((m) => (m.id === tempID ? { ...m, pending: false, failed: true } : m))
+        prev.map((m) =>
+          m.id === tempID
+            ? {
+                ...m,
+                attachments: finalAttachments || m.attachments,
+                pending: false,
+                failed: true,
+              }
+            : m
+        )
       );
       setError(e.message || "Не удалось отправить сообщение");
+      if (finalAttachments) {
+        releaseOptimisticBlobUrls(tempID);
+      }
     } finally {
       setSending(false);
       if (isMobileChat && document.activeElement !== composerInputRef.current) {
@@ -1394,7 +1996,14 @@ export default function ChatConversationPage() {
   const hasUploadingComposer = composerAttachments.some((item) => item.status === "uploading");
   const hasFailedComposer = composerAttachments.some((item) => item.status === "error");
   const hasUploadedComposer = composerAttachments.some((item) => item.status === "uploaded" && !!item.uploaded);
-  const canSend = !sending && !hasUploadingComposer && !hasFailedComposer && (body.trim().length > 0 || hasUploadedComposer);
+  const hasComposerAttachments = composerAttachments.length > 0;
+  const bodyIsEmpty = body.trim().length === 0;
+  const canSend =
+    !sending &&
+    !isRecordingAudio &&
+    !hasFailedComposer &&
+    (!bodyIsEmpty || hasUploadedComposer || hasComposerAttachments);
+  const showRecordButton = !sending && !isRecordingAudio && bodyIsEmpty && !hasComposerAttachments;
 
   if (!loading && !chat) {
     return (
@@ -1640,9 +2249,11 @@ export default function ChatConversationPage() {
             const replyPreview = repliedMessage ? trimReplyPreview(repliedMessage.body, 90) : "Сообщение";
             const replyPreviewAuthor = repliedMessage ? replyAuthorLabel(repliedMessage.sender_id) : "Ответ";
             const messageAttachments = (m.attachments || []).filter((att) => String(att.url || "").trim() !== "");
+            const imageAttachments = messageAttachments.filter((att) => att.type !== "audio");
+            const audioAttachments = messageAttachments.filter((att) => att.type === "audio");
             const hasBody = (m.body || "").trim().length > 0;
-            const attachmentUrls = messageAttachments.map((att) => att.url);
-            const isMultiAttachment = messageAttachments.length > 1;
+            const imageAttachmentUrls = imageAttachments.map((att) => att.url);
+            const isMultiImageAttachment = imageAttachments.length > 1;
             return (
               <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className={`group flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
@@ -1691,17 +2302,17 @@ export default function ChatConversationPage() {
                         </p>
                       </div>
                     )}
-                    {messageAttachments.length > 0 && (
+                    {imageAttachments.length > 0 && (
                       <div
                         className={`grid w-full gap-2 ${
-                          isMultiAttachment ? "grid-cols-2" : "grid-cols-1"
-                        } ${hasBody ? "mb-2" : ""}`}
+                          isMultiImageAttachment ? "grid-cols-2" : "grid-cols-1"
+                        } ${audioAttachments.length > 0 || hasBody ? "mb-2" : ""}`}
                       >
-                        {messageAttachments.map((att, idx) => (
+                        {imageAttachments.map((att, idx) => (
                           <button
                             type="button"
                             key={`${m.id}-attachment-${idx}`}
-                            onClick={() => setViewer({ urls: attachmentUrls, initialIndex: idx })}
+                            onClick={() => setViewer({ urls: imageAttachmentUrls, initialIndex: idx })}
                             className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 bg-black"
                             aria-label={`Открыть вложение ${idx + 1}`}
                           >
@@ -1709,13 +2320,26 @@ export default function ChatConversationPage() {
                               src={att.url}
                               alt="attachment"
                               className={`w-full bg-black ${
-                                isMultiAttachment
+                                isMultiImageAttachment
                                   ? "h-32 sm:h-44 object-cover"
                                   : "max-h-[260px] sm:max-h-[420px] h-auto object-contain"
                               }`}
                               loading="lazy"
                             />
                           </button>
+                        ))}
+                      </div>
+                    )}
+                    {audioAttachments.length > 0 && (
+                      <div className={`space-y-2 ${hasBody ? "mb-2" : ""}`}>
+                        {audioAttachments.map((att, idx) => (
+                          <ChatAudioPreview
+                            key={`${m.id}-audio-${idx}`}
+                            src={att.url}
+                            variant={mine ? "mine" : "peer"}
+                            durationSec={att.duration_sec}
+                            title={`Голосовое сообщение${audioAttachments.length > 1 ? ` ${idx + 1}` : ""}`}
+                          />
                         ))}
                       </div>
                     )}
@@ -1784,10 +2408,56 @@ export default function ChatConversationPage() {
           className="border-t border-white/10 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] space-y-2"
         >
           <ErrorMessage message={mediaError} />
+          {isRecordingAudio && (
+            <div className="rounded-xl border border-rose-400/35 bg-rose-500/10 px-3 py-2 flex items-center justify-between">
+              <p className="inline-flex items-center gap-2 text-sm text-white">
+                <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+                Идет запись голосового сообщения
+              </p>
+              <span className="text-xs font-semibold text-rose-200">{durationLabel(recordingSeconds)}</span>
+            </div>
+          )}
           {composerAttachments.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {composerAttachments.map((item, idx) => {
-                const previewUrls = composerAttachments.map((x) => x.previewUrl);
+            <div className="space-y-2">
+              {composerAttachments.map((item) => {
+                const isAudio = isAudioComposerItem(item);
+                if (isAudio) {
+                  const composerAudioSrc = item.previewUrl || item.uploaded?.url || "";
+                  return (
+                    <div key={item.id} className="relative space-y-1 pr-9">
+                      <button
+                        type="button"
+                        onClick={() => removeComposerAttachment(item.id)}
+                        className="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded-full border border-white/20 bg-black/70 text-white/90 hover:bg-black"
+                        aria-label="Удалить вложение"
+                      >
+                        <X className="w-3.5 h-3.5 mx-auto" />
+                      </button>
+                      <ChatAudioPreview
+                        src={composerAudioSrc}
+                        variant="composer"
+                        durationSec={item.uploaded?.duration_sec || item.durationSec}
+                        title={item.file.name || "Голосовое сообщение"}
+                      />
+                      <div className="flex min-h-[16px] items-center justify-end gap-2 pr-1">
+                        {item.status === "uploading" ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Загрузка...
+                          </span>
+                        ) : null}
+                        {item.status === "error" ? (
+                          <span className="text-[11px] text-rose-300 shrink-0">Ошибка</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const imagePreviewItems = composerAttachments.filter((x) => !isAudioComposerItem(x));
+                const imagePreviewUrls = imagePreviewItems.map((x) => x.previewUrl);
+                const imageIndex = imagePreviewItems.findIndex((x) => x.id === item.id);
+
                 return (
                   <div
                     key={item.id}
@@ -1795,9 +2465,13 @@ export default function ChatConversationPage() {
                   >
                     <button
                       type="button"
-                      onClick={() => setViewer({ urls: previewUrls, initialIndex: idx })}
+                      onClick={() => {
+                        if (imageIndex >= 0) {
+                          setViewer({ urls: imagePreviewUrls, initialIndex: imageIndex });
+                        }
+                      }}
                       className="h-full w-full"
-                      aria-label={`Открыть выбранное изображение ${idx + 1}`}
+                      aria-label="Открыть выбранное изображение"
                     >
                       <img
                         src={item.previewUrl}
@@ -1851,7 +2525,7 @@ export default function ChatConversationPage() {
               onClick={() => fileInputRef.current?.click()}
               className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
               aria-label="attach"
-              disabled={composerAttachments.length >= MAX_CHAT_ATTACHMENTS || sending}
+              disabled={composerAttachments.length >= MAX_CHAT_ATTACHMENTS || sending || isRecordingAudio}
             >
               <Paperclip className="w-5 h-5" />
             </button>
@@ -1869,6 +2543,7 @@ export default function ChatConversationPage() {
             <textarea
               ref={composerInputRef}
               value={body}
+              disabled={isRecordingAudio}
               onChange={(e) => {
                 const nextValue = e.target.value;
                 setBody(nextValue);
@@ -1889,28 +2564,50 @@ export default function ChatConversationPage() {
                 }, 260);
               }}
               onKeyDown={(e) => {
+                if (isRecordingAudio) return;
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void sendMessage();
                 }
               }}
-              placeholder="Напишите сообщение..."
+              placeholder={isRecordingAudio ? "Запись..." : "Напишите сообщение..."}
               rows={1}
-              className="flex-1 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30"
+              className="flex-1 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30 disabled:opacity-70"
             />
-            <button
-              type="submit"
-              disabled={!canSend}
-              className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
-              aria-label="send"
-            >
-              {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <SendHorizontal className="w-5 h-5" />}
-            </button>
+            {isRecordingAudio ? (
+              <button
+                type="button"
+                onClick={stopAudioRecording}
+                className="nav-icon shrink-0 self-center bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 hover:text-white"
+                aria-label="stop-recording"
+              >
+                <Square className="w-5 h-5" />
+              </button>
+            ) : showRecordButton ? (
+              <button
+                type="button"
+                onClick={() => void startAudioRecording()}
+                className="nav-icon shrink-0 self-center bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
+                aria-label="record-audio"
+                title="Записать голосовое сообщение"
+              >
+                <Mic className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!canSend}
+                className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                aria-label="send"
+              >
+                {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <SendHorizontal className="w-5 h-5" />}
+              </button>
+            )}
           </div>
           {(hasUploadingComposer || hasFailedComposer) && (
             <p className="text-[11px] text-white/55">
               {hasUploadingComposer
-                ? "Загрузка вложений..."
+                ? "Вложения догружаются в фоне, сообщение можно отправлять сразу."
                 : "Есть вложения с ошибкой. Удалите их перед отправкой."}
             </p>
           )}

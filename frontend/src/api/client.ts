@@ -53,7 +53,8 @@ export type ChatMessageAttachment = {
   url: string;
   width: number;
   height: number;
-  type: "image";
+  duration_sec?: number;
+  type: "image" | "audio";
 };
 
 type ApiErrorShape =
