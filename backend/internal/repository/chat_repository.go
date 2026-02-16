@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -23,6 +24,11 @@ type ChatAttachmentInput struct {
 	Width  int
 	Height int
 	Type   string
+}
+
+type ChatReadUpdateRow struct {
+	MessageID string    `gorm:"column:message_id"`
+	ReadAt    time.Time `gorm:"column:read_at"`
 }
 
 func (r *ChatRepository) GetTheme(ctx context.Context, chatID string) (string, error) {
@@ -114,6 +120,19 @@ func (r *ChatRepository) ParticipantIDs(ctx context.Context, chatID string) ([]s
 	return ids, nil
 }
 
+func (r *ChatRepository) ParticipantChatIDs(ctx context.Context, userID string) ([]string, error) {
+	var chatIDs []string
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT chat_id FROM chat_participants WHERE user_id = ?`, userID).
+		Scan(&chatIDs).Error; err != nil {
+		return nil, err
+	}
+	if chatIDs == nil {
+		chatIDs = []string{}
+	}
+	return chatIDs, nil
+}
+
 func (r *ChatRepository) UnreadCount(ctx context.Context, userID string) (int64, error) {
 	var count int64
 	q := `
@@ -134,6 +153,7 @@ type DirectChatRow struct {
 	PeerFullName        string
 	PeerIsVerified      bool
 	PeerAvatarURL       sql.NullString
+	PeerLastSeenAt      sql.NullTime
 	LastMessageID       sql.NullString
 	LastMessageSenderID sql.NullString
 	LastMessageBody     sql.NullString
@@ -154,18 +174,19 @@ func (r *ChatRepository) ListDirectChats(ctx context.Context, userID string, lim
 
 	var rows []DirectChatRow
 	q := `
-SELECT
-    c.id AS chat_id,
-    peer.id AS peer_id,
-    peer.username AS peer_username,
-    peer.full_name AS peer_full_name,
-    peer.is_verified AS peer_is_verified,
-    peer.avatar_url AS peer_avatar_url,
-    lm.id AS last_message_id,
-    lm.sender_id AS last_message_sender_id,
-    lm.body AS last_message_body,
-    lm.created_at AS last_message_at,
-    COALESCE(uc.unread_count, 0) AS unread_count
+	SELECT
+	    c.id AS chat_id,
+	    peer.id AS peer_id,
+	    peer.username AS peer_username,
+	    peer.full_name AS peer_full_name,
+	    peer.is_verified AS peer_is_verified,
+	    peer.avatar_url AS peer_avatar_url,
+	    peer.last_seen_at AS peer_last_seen_at,
+	    lm.id AS last_message_id,
+	    lm.sender_id AS last_message_sender_id,
+	    lm.body AS last_message_body,
+	    lm.created_at AS last_message_at,
+	    COALESCE(uc.unread_count, 0) AS unread_count
 FROM chats c
 JOIN chat_participants me ON me.chat_id = c.id AND me.user_id = ?
 JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id <> me.user_id
@@ -208,18 +229,19 @@ LIMIT ? OFFSET ?`
 func (r *ChatRepository) GetDirectChat(ctx context.Context, userID, chatID string) (*DirectChatRow, error) {
 	var row DirectChatRow
 	q := `
-SELECT
-    c.id AS chat_id,
-    peer.id AS peer_id,
-    peer.username AS peer_username,
-    peer.full_name AS peer_full_name,
-    peer.is_verified AS peer_is_verified,
-    peer.avatar_url AS peer_avatar_url,
-    lm.id AS last_message_id,
-    lm.sender_id AS last_message_sender_id,
-    lm.body AS last_message_body,
-    lm.created_at AS last_message_at,
-    COALESCE(uc.unread_count, 0) AS unread_count
+	SELECT
+	    c.id AS chat_id,
+	    peer.id AS peer_id,
+	    peer.username AS peer_username,
+	    peer.full_name AS peer_full_name,
+	    peer.is_verified AS peer_is_verified,
+	    peer.avatar_url AS peer_avatar_url,
+	    peer.last_seen_at AS peer_last_seen_at,
+	    lm.id AS last_message_id,
+	    lm.sender_id AS last_message_sender_id,
+	    lm.body AS last_message_body,
+	    lm.created_at AS last_message_at,
+	    COALESCE(uc.unread_count, 0) AS unread_count
 FROM chats c
 JOIN chat_participants me ON me.chat_id = c.id AND me.user_id = ?
 JOIN chat_participants cp ON cp.chat_id = c.id AND cp.user_id <> me.user_id
@@ -383,11 +405,22 @@ ORDER BY sort_order ASC, created_at ASC, id ASC`
 	return out, nil
 }
 
-func (r *ChatRepository) MarkRead(ctx context.Context, chatID, userID string) (int64, error) {
-	res := r.db.WithContext(ctx).Exec(`
-		UPDATE messages
-		SET read_at = now()
-		WHERE chat_id = ? AND sender_id <> ? AND read_at IS NULL
-	`, chatID, userID)
-	return res.RowsAffected, res.Error
+func (r *ChatRepository) MarkRead(ctx context.Context, chatID, userID string) ([]ChatReadUpdateRow, error) {
+	var rows []ChatReadUpdateRow
+	q := `
+WITH updated AS (
+	UPDATE messages
+	SET read_at = now()
+	WHERE chat_id = ? AND sender_id <> ? AND read_at IS NULL
+	RETURNING id AS message_id, read_at
+)
+SELECT message_id, read_at
+FROM updated`
+	if err := r.db.WithContext(ctx).Raw(q, chatID, userID).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []ChatReadUpdateRow{}
+	}
+	return rows, nil
 }

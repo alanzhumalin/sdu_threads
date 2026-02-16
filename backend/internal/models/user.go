@@ -16,6 +16,7 @@ type User struct {
 	BackgroundURL   string
 	SocialLinks     SocialLinks `gorm:"type:jsonb"`
 	AcceptedRulesAt *time.Time
+	LastSeenAt      *time.Time
 	CreatedAt       time.Time `gorm:"not null;default:now()"`
 	UpdatedAt       time.Time `gorm:"not null;default:now()"`
 }

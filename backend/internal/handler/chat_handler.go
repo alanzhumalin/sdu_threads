@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -61,6 +62,7 @@ func (h *ChatHandler) handleDirect(w http.ResponseWriter, r *http.Request) {
 		h.writeChatError(w, err)
 		return
 	}
+	h.applyPreviewPresence(chat)
 	writeJSON(w, http.StatusOK, chat)
 }
 
@@ -82,6 +84,7 @@ func (h *ChatHandler) handleChats(w http.ResponseWriter, r *http.Request) {
 		h.writeChatError(w, err)
 		return
 	}
+	h.applyListPresence(items)
 	setNextOffset(w, offset, limit, len(items))
 	writeJSON(w, http.StatusOK, items)
 }
@@ -135,6 +138,7 @@ func (h *ChatHandler) handleChatByID(w http.ResponseWriter, r *http.Request, cha
 		h.writeChatError(w, err)
 		return
 	}
+	h.applyPreviewPresence(item)
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -217,8 +221,34 @@ func (h *ChatHandler) handleWS(w http.ResponseWriter, r *http.Request, chatID st
 			return
 		}
 
+		wasOnline := h.isUserOnline(userID)
 		client := h.ws.register(chatID, userID, conn)
-		defer h.ws.unregister(client)
+		nowOnline := h.isUserOnline(userID)
+		_ = h.service.TouchPresence(context.Background(), userID)
+
+		if !wasOnline && nowOnline {
+			h.broadcastPresenceToUserChats(userID, true, nil)
+		}
+		go h.ws.broadcast(chatID, map[string]any{
+			"type":      "chat_presence_updated",
+			"chat_id":   chatID,
+			"user_id":   userID,
+			"is_online": true,
+		})
+		defer func() {
+			go h.ws.broadcast(chatID, map[string]any{
+				"type":      "chat_typing",
+				"chat_id":   chatID,
+				"user_id":   userID,
+				"is_typing": false,
+			})
+			h.ws.unregister(client)
+			now := time.Now().UTC()
+			if !h.isUserOnline(userID) {
+				_ = h.service.TouchPresence(context.Background(), userID)
+				h.broadcastPresenceToUserChats(userID, false, &now)
+			}
+		}()
 
 		_ = client.send(map[string]any{
 			"type":    "ready",
@@ -229,6 +259,28 @@ func (h *ChatHandler) handleWS(w http.ResponseWriter, r *http.Request, chatID st
 			var raw string
 			if err := websocket.Message.Receive(conn, &raw); err != nil {
 				return
+			}
+
+			var frame struct {
+				Type     string `json:"type"`
+				ChatID   string `json:"chat_id"`
+				IsTyping bool   `json:"is_typing"`
+			}
+			if err := json.Unmarshal([]byte(raw), &frame); err != nil {
+				continue
+			}
+
+			switch strings.ToLower(strings.TrimSpace(frame.Type)) {
+			case "typing", "chat_typing":
+				if frame.ChatID != "" && strings.TrimSpace(frame.ChatID) != chatID {
+					continue
+				}
+				go h.ws.broadcast(chatID, map[string]any{
+					"type":      "chat_typing",
+					"chat_id":   chatID,
+					"user_id":   userID,
+					"is_typing": frame.IsTyping,
+				})
 			}
 		}
 	}).ServeHTTP(w, r)
@@ -248,8 +300,23 @@ func (h *ChatHandler) handleListWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		wasOnline := h.isUserOnline(userID)
 		client := h.userWS.register(userID, conn)
-		defer h.userWS.unregister(client)
+		nowOnline := h.isUserOnline(userID)
+		_ = h.service.TouchPresence(context.Background(), userID)
+
+		if !wasOnline && nowOnline {
+			h.broadcastPresenceToUserChats(userID, true, nil)
+		}
+
+		defer func() {
+			h.userWS.unregister(client)
+			now := time.Now().UTC()
+			if !h.isUserOnline(userID) {
+				_ = h.service.TouchPresence(context.Background(), userID)
+				h.broadcastPresenceToUserChats(userID, false, &now)
+			}
+		}()
 
 		_ = client.send(map[string]any{
 			"type": "ready",
@@ -303,16 +370,42 @@ func (h *ChatHandler) handleRead(w http.ResponseWriter, r *http.Request, chatID 
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	updated, err := h.service.MarkRead(r.Context(), userID, chatID)
+	updates, err := h.service.MarkRead(r.Context(), userID, chatID)
 	if err != nil {
 		h.writeChatError(w, err)
 		return
+	}
+	if len(updates) > 0 {
+		messageIDs := make([]string, 0, len(updates))
+		readAt := ""
+		for _, item := range updates {
+			id := strings.TrimSpace(item.MessageID)
+			if id == "" {
+				continue
+			}
+			messageIDs = append(messageIDs, id)
+			if readAt == "" {
+				readAt = strings.TrimSpace(item.ReadAt)
+			}
+		}
+		if len(messageIDs) > 0 {
+			payload := map[string]any{
+				"type":        "messages_read",
+				"chat_id":     chatID,
+				"user_id":     userID,
+				"message_ids": messageIDs,
+			}
+			if readAt != "" {
+				payload["read_at"] = readAt
+			}
+			go h.ws.broadcast(chatID, payload)
+		}
 	}
 	go h.userWS.broadcastUser(userID, map[string]any{
 		"type":    "chat_list_updated",
 		"chat_id": chatID,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"status": "read", "updated": updated})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "read", "updated": len(updates)})
 }
 
 func (h *ChatHandler) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
@@ -367,6 +460,45 @@ func (h *ChatHandler) handleTheme(w http.ResponseWriter, r *http.Request, chatID
 		writeJSON(w, http.StatusOK, dto.ChatThemeResponse{ThemeKey: themeKey})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *ChatHandler) isUserOnline(userID string) bool {
+	if strings.TrimSpace(userID) == "" {
+		return false
+	}
+	return h.userWS.isOnline(userID) || h.ws.isUserOnline(userID)
+}
+
+func (h *ChatHandler) applyPreviewPresence(item *service.ChatPreview) {
+	if item == nil {
+		return
+	}
+	item.Participant.IsOnline = item.Participant.IsOnline || h.isUserOnline(item.Participant.ID)
+}
+
+func (h *ChatHandler) applyListPresence(items []service.ChatPreview) {
+	for i := range items {
+		items[i].Participant.IsOnline = items[i].Participant.IsOnline || h.isUserOnline(items[i].Participant.ID)
+	}
+}
+
+func (h *ChatHandler) broadcastPresenceToUserChats(userID string, isOnline bool, lastSeenAt *time.Time) {
+	chatIDs, err := h.service.ParticipantChatIDs(context.Background(), userID)
+	if err != nil || len(chatIDs) == 0 {
+		return
+	}
+	for _, chatID := range chatIDs {
+		payload := map[string]any{
+			"type":      "chat_presence_updated",
+			"chat_id":   chatID,
+			"user_id":   userID,
+			"is_online": isOnline,
+		}
+		if lastSeenAt != nil {
+			payload["last_seen_at"] = lastSeenAt.UTC().Format(time.RFC3339)
+		}
+		go h.ws.broadcast(chatID, payload)
 	}
 }
 

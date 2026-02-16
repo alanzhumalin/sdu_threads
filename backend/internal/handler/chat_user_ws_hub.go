@@ -110,3 +110,10 @@ func (h *chatUserWSHub) broadcastUser(userID string, payload any) {
 		}
 	}
 }
+
+func (h *chatUserWSHub) isOnline(userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set := h.users[userID]
+	return len(set) > 0
+}

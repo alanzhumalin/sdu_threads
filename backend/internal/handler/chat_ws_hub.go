@@ -98,3 +98,16 @@ func (h *chatWSHub) broadcast(chatID string, payload any) {
 		}
 	}
 }
+
+func (h *chatWSHub) isUserOnline(userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, set := range h.chats {
+		for client := range set {
+			if client.userID == userID {
+				return true
+			}
+		}
+	}
+	return false
+}

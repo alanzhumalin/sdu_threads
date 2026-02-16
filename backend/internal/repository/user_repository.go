@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"sduthreads/internal/models"
@@ -137,6 +138,16 @@ func (r *UserRepository) SetRootAdmin(ctx context.Context, id string, isRoot boo
 		Model(&models.User{}).
 		Where("id = ?", id).
 		Update("is_root_admin", isRoot).Error
+}
+
+func (r *UserRepository) TouchLastSeen(ctx context.Context, id string, ts time.Time) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Update("last_seen_at", ts.UTC()).Error
 }
 
 // ExistingUsernames returns a set of usernames that exist in DB (case-insensitive exact match).

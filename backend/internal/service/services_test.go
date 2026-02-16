@@ -36,6 +36,7 @@ CREATE TABLE users (
     background_url text,
     social_links text,
     accepted_rules_at datetime,
+    last_seen_at datetime,
     created_at datetime,
     updated_at datetime
 );`

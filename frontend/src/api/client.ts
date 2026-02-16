@@ -13,8 +13,10 @@ export type ChatParticipant = {
   id: string;
   username: string;
   full_name: string;
-      is_verified?: boolean;
+  is_verified?: boolean;
   avatar_url?: string;
+  last_seen_at?: string;
+  is_online?: boolean;
 };
 
 export type ChatLastMessage = {

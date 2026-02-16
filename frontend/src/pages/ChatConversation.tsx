@@ -3,6 +3,8 @@ import type { CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Check,
+  CheckCheck,
   Droplets,
   Heart,
   Leaf,
@@ -49,7 +51,10 @@ type ChatSocketEvent =
   | { type: "ready"; chat_id: string }
   | { type: "message_created"; chat_id: string; message: ChatMessage }
   | { type: "message.created"; chat_id: string; message: ChatMessage }
+  | { type: "messages_read"; chat_id: string; user_id: string; message_ids: string[]; read_at?: string }
+  | { type: "chat_typing"; chat_id: string; user_id: string; is_typing: boolean }
   | { type: "chat_theme_updated"; chat_id: string; theme_key: string }
+  | { type: "chat_presence_updated"; chat_id: string; user_id: string; is_online: boolean; last_seen_at?: string }
   | { type: "error"; message: string };
 
 type ChatThemeKey = "default" | "love" | "nature" | "sunset" | "ocean" | "midnight";
@@ -243,10 +248,40 @@ const trimReplyPreview = (value: string, max = 120) => {
   return `${flat.slice(0, max).trimEnd()}...`;
 };
 
+const formatPresenceStatus = (participant?: ChatPreview["participant"] | null, nowMs = Date.now()) => {
+  if (!participant) return "был(а) недавно";
+  if (participant.is_online) return "в сети";
+
+  const raw = String(participant.last_seen_at || "").trim();
+  if (!raw) return "был(а) недавно";
+
+  const ts = new Date(raw).getTime();
+  if (!Number.isFinite(ts)) return "был(а) недавно";
+
+  const diffMs = Math.max(0, nowMs - ts);
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "был(а) только что";
+  if (mins < 60) return `был(а) ${mins} мин назад`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `был(а) ${hours} ч назад`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `был(а) ${days} дн назад`;
+
+  return `был(а) ${new Date(ts).toLocaleString([], {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+};
+
 const POLL_INTERVAL_MS = 5000;
 const DEBUG_CHAT = true;
 const MAX_CHAT_ATTACHMENTS = 5;
 const MAX_CHAT_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const TYPING_IDLE_TIMEOUT_MS = 1400;
+const TYPING_KEEPALIVE_MS = 1800;
+const PEER_TYPING_TTL_MS = 2600;
 
 const HEIC_MIME_SET = new Set([
   "image/heic",
@@ -319,6 +354,8 @@ export default function ChatConversationPage() {
   const [mediaError, setMediaError] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
   const [viewer, setViewer] = useState<{ urls: string[]; initialIndex: number } | null>(null);
+  const [presenceTick, setPresenceTick] = useState(() => Date.now());
+  const [peerTyping, setPeerTyping] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
@@ -331,13 +368,62 @@ export default function ChatConversationPage() {
   const peerIDRef = useRef("");
   const markReadInFlightRef = useRef(false);
   const lastMarkReadAtRef = useRef(0);
+  const markReadRetryTimerRef = useRef<number | null>(null);
   const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
   const mediaErrorTimerRef = useRef<number | null>(null);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const typingStateRef = useRef(false);
+  const typingLastSentAtRef = useRef(0);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const peerTypingTimerRef = useRef<number | null>(null);
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
   const activeTheme = CHAT_THEMES[themeKey];
+  const typingBubbleClass = useMemo(() => {
+    switch (themeKey) {
+      case "love":
+        return "bg-rose-500/16";
+      case "nature":
+        return "bg-emerald-500/16";
+      case "sunset":
+        return "bg-orange-500/16";
+      case "ocean":
+        return "bg-cyan-500/16";
+      case "midnight":
+        return "bg-indigo-500/16";
+      default:
+        return "bg-white/10";
+    }
+  }, [themeKey]);
+  const typingDotClass = useMemo(() => {
+    switch (themeKey) {
+      case "love":
+        return "bg-rose-300";
+      case "nature":
+        return "bg-emerald-300";
+      case "sunset":
+        return "bg-amber-300";
+      case "ocean":
+        return "bg-cyan-300";
+      case "midnight":
+        return "bg-indigo-300";
+      default:
+        return "bg-white/90";
+    }
+  }, [themeKey]);
+  const peerPresenceLabel = useMemo(
+    () => formatPresenceStatus(chat?.participant, presenceTick),
+    [chat?.participant, presenceTick]
+  );
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setPresenceTick(Date.now());
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 870px)");
@@ -566,16 +652,116 @@ export default function ChatConversationPage() {
     }
   };
 
-  const markReadSafe = () => {
+  const clearTypingStopTimer = () => {
+    if (typingStopTimerRef.current !== null) {
+      window.clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+    }
+  };
+
+  const clearMarkReadRetryTimer = () => {
+    if (markReadRetryTimerRef.current !== null) {
+      window.clearTimeout(markReadRetryTimerRef.current);
+      markReadRetryTimerRef.current = null;
+    }
+  };
+
+  const clearPeerTypingTimer = () => {
+    if (peerTypingTimerRef.current !== null) {
+      window.clearTimeout(peerTypingTimerRef.current);
+      peerTypingTimerRef.current = null;
+    }
+  };
+
+  const sendTypingFrame = (isTyping: boolean, force = false) => {
+    if (!chatId) return;
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    if (!force) {
+      if (isTyping) {
+        if (typingStateRef.current && now-typingLastSentAtRef.current < TYPING_KEEPALIVE_MS) {
+          return;
+        }
+      } else if (!typingStateRef.current) {
+        return;
+      }
+    }
+
+    typingStateRef.current = isTyping;
+    typingLastSentAtRef.current = now;
+    try {
+      socket.send(
+        JSON.stringify({
+          type: "typing",
+          chat_id: chatId,
+          is_typing: isTyping,
+        })
+      );
+      debugChat(chatId, "typing_emit", { isTyping });
+    } catch {
+      // ignore WS send errors; reconnect logic handles connection state.
+    }
+  };
+
+  const stopTyping = (force = false) => {
+    clearTypingStopTimer();
+    sendTypingFrame(false, force);
+  };
+
+  const scheduleTypingStop = () => {
+    clearTypingStopTimer();
+    typingStopTimerRef.current = window.setTimeout(() => {
+      sendTypingFrame(false, true);
+      typingStopTimerRef.current = null;
+    }, TYPING_IDLE_TIMEOUT_MS);
+  };
+
+  const handleTypingByBody = (value: string) => {
+    if (!value.trim()) {
+      stopTyping(true);
+      return;
+    }
+    sendTypingFrame(true);
+    scheduleTypingStop();
+  };
+
+  useEffect(() => {
+    return () => {
+      clearMarkReadRetryTimer();
+      clearTypingStopTimer();
+      clearPeerTypingTimer();
+    };
+  }, []);
+
+  const scheduleMarkReadRetry = (delayMs: number) => {
+    if (markReadRetryTimerRef.current !== null) return;
+    markReadRetryTimerRef.current = window.setTimeout(() => {
+      markReadRetryTimerRef.current = null;
+      markReadSafe(true);
+    }, Math.max(80, delayMs));
+  };
+
+  const markReadSafe = (force = false) => {
     if (!token || !chatId) return;
     const now = Date.now();
-    if (markReadInFlightRef.current) return;
-    if (now - lastMarkReadAtRef.current < 1200) return;
+    if (markReadInFlightRef.current) {
+      scheduleMarkReadRetry(180);
+      return;
+    }
+    const cooldownLeft = 1200 - (now - lastMarkReadAtRef.current);
+    if (!force && cooldownLeft > 0) {
+      scheduleMarkReadRetry(cooldownLeft + 40);
+      return;
+    }
+    clearMarkReadRetryTimer();
     markReadInFlightRef.current = true;
     lastMarkReadAtRef.current = now;
     api
       .markChatRead(chatId, token)
-      .catch(() => {})
+      .catch(() => {
+        scheduleMarkReadRetry(900);
+      })
       .finally(() => {
         markReadInFlightRef.current = false;
       });
@@ -600,7 +786,7 @@ export default function ChatConversationPage() {
       requestAnimationFrame(() => {
         scrollToBottom("auto");
       });
-      markReadSafe();
+      markReadSafe(true);
     } catch (e: any) {
       setError(e.message || "Не удалось загрузить чат");
     } finally {
@@ -655,6 +841,14 @@ export default function ChatConversationPage() {
   }, [chatId, token]);
 
   useEffect(() => {
+    stopTyping(true);
+    clearMarkReadRetryTimer();
+    markReadInFlightRef.current = false;
+    lastMarkReadAtRef.current = 0;
+    typingStateRef.current = false;
+    typingLastSentAtRef.current = 0;
+    setPeerTyping(false);
+    clearPeerTypingTimer();
     setReplyTo(null);
     initialAutoScrolledChatRef.current = "";
     setViewer(null);
@@ -721,6 +915,18 @@ export default function ChatConversationPage() {
   }, [messages]);
 
   useEffect(() => {
+    if (!peerTyping) return;
+    const el = listRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+    if (distanceToBottom <= 140) {
+      requestAnimationFrame(() => {
+        scrollToBottom("smooth");
+      });
+    }
+  }, [peerTyping]);
+
+  useEffect(() => {
     if (!chatId) return;
     debugChat(chatId, "mount", { queryKey: ["chatMessages", chatId, "latest"] });
     return () => {
@@ -764,6 +970,7 @@ export default function ChatConversationPage() {
       if (stopped) return;
       debugChat(chatId, "ws_connect_start");
       socket = new WebSocket(chatWSURL(chatId));
+      wsRef.current = socket;
 
       socket.onopen = () => {
         debugChat(chatId, "ws_open", { queryKey: ["chatMessages", chatId, "latest"] });
@@ -818,11 +1025,93 @@ export default function ChatConversationPage() {
           return;
         }
 
+        if (parsed.type === "chat_presence_updated" && parsed.chat_id === chatId) {
+          debugChat(chatId, "ws_presence_updated", {
+            userId: parsed.user_id,
+            isOnline: parsed.is_online,
+            lastSeenAt: parsed.last_seen_at || "",
+          });
+          setChat((prev) => {
+            if (!prev) return prev;
+            if (prev.participant.id !== parsed.user_id) return prev;
+            return {
+              ...prev,
+              participant: {
+                ...prev.participant,
+                is_online: parsed.is_online,
+                last_seen_at: parsed.last_seen_at || prev.participant.last_seen_at,
+              },
+            };
+          });
+          return;
+        }
+
+        if (parsed.type === "chat_typing" && parsed.chat_id === chatId) {
+          const isPeer = parsed.user_id === peerIDRef.current;
+          if (!isPeer) return;
+          debugChat(chatId, "ws_typing", {
+            userId: parsed.user_id,
+            isTyping: parsed.is_typing,
+          });
+          if (parsed.is_typing) {
+            setPeerTyping(true);
+            clearPeerTypingTimer();
+            peerTypingTimerRef.current = window.setTimeout(() => {
+              setPeerTyping(false);
+              peerTypingTimerRef.current = null;
+            }, PEER_TYPING_TTL_MS);
+          } else {
+            setPeerTyping(false);
+            clearPeerTypingTimer();
+          }
+          return;
+        }
+
+        if (parsed.type === "messages_read" && parsed.chat_id === chatId) {
+          const ids = Array.isArray(parsed.message_ids) ? parsed.message_ids : [];
+          if (ids.length === 0) return;
+          const idsSet = new Set(ids);
+          const readAt = String(parsed.read_at || new Date().toISOString()).trim();
+          debugChat(chatId, "ws_messages_read", {
+            userId: parsed.user_id,
+            count: idsSet.size,
+            readAt,
+          });
+          let applied = false;
+          setMessages((prev) => {
+            let changed = false;
+            const next = prev.map((msg) => {
+              if (!idsSet.has(msg.id)) return msg;
+              if ((msg.read_at || "") === readAt) return msg;
+              changed = true;
+              return {
+                ...msg,
+                read_at: readAt,
+              };
+            });
+            applied = changed;
+            return changed ? next : prev;
+          });
+          if (!applied && token) {
+            void api
+              .chatMessages(chatId, 30, 0, token)
+              .then((res) => {
+                setMessages((prev) => mergeMessages(prev, toAsc(res.items)));
+              })
+              .catch(() => {});
+          }
+          return;
+        }
+
         if (isIncomingMessageEvent(parsed) && parsed.chat_id === chatId) {
           debugChat(chatId, "ws_message_received", {
             messageId: parsed.message.id,
             senderId: parsed.message.sender_id,
           });
+          if (peerIDRef.current && parsed.message.sender_id === peerIDRef.current) {
+            setPeerTyping(false);
+            clearPeerTypingTimer();
+          }
           setMessages((prev) => {
             const merged = mergeIncomingMessage(prev, parsed.message);
             const prevLastID = prev.at(-1)?.id;
@@ -854,7 +1143,7 @@ export default function ChatConversationPage() {
               : prev
           );
           if (peerIDRef.current && parsed.message.sender_id === peerIDRef.current) {
-            markReadSafe();
+            markReadSafe(true);
           }
         }
       };
@@ -867,6 +1156,10 @@ export default function ChatConversationPage() {
       socket.onclose = () => {
         debugChat(chatId, "ws_close");
         wsConnectedRef.current = false;
+        if (wsRef.current === socket) {
+          wsRef.current = null;
+        }
+        typingStateRef.current = false;
         if (stopped) return;
         reconnect();
       };
@@ -879,8 +1172,27 @@ export default function ChatConversationPage() {
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
       }
+      clearPeerTypingTimer();
+      setPeerTyping(false);
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(
+            JSON.stringify({
+              type: "typing",
+              chat_id: chatId,
+              is_typing: false,
+            })
+          );
+        } catch {
+          // ignore
+        }
+      }
       debugChat(chatId, "ws_cleanup");
       wsConnectedRef.current = false;
+      typingStateRef.current = false;
+      if (wsRef.current === socket) {
+        wsRef.current = null;
+      }
       socket?.close();
     };
   }, [token, chatId]);
@@ -975,6 +1287,7 @@ export default function ChatConversationPage() {
       pending: true,
     };
 
+    stopTyping(true);
     setError("");
     setBody("");
     setReplyTo(null);
@@ -1075,7 +1388,13 @@ export default function ChatConversationPage() {
                 <span>{chat.participant.full_name}</span>
                 {chat.participant.is_verified ? <VerifiedBadge /> : null}
               </p>
-              <p className="text-white/60 text-sm truncate">@{chat.participant.username}</p>
+              <p
+                className={`text-sm truncate ${
+                  chat.participant.is_online ? "text-emerald-300" : "text-white/60"
+                }`}
+              >
+                {peerPresenceLabel}
+              </p>
             </div>
           </div>
         ) : (
@@ -1342,18 +1661,61 @@ export default function ChatConversationPage() {
                     {hasBody && <p className="text-sm leading-relaxed">{m.body}</p>}
                     <div
                       className={`mt-1 text-[11px] ${
-                        mine ? "text-right text-white/70" : "text-left text-white/50"
+                        mine
+                          ? "text-right text-white/70 inline-flex w-full items-center justify-end gap-1"
+                          : "text-left text-white/50"
                       }`}
                     >
-                      {timeLabel(m.created_at)}
-                      {m.pending && " · отправка..."}
-                      {m.failed && " · ошибка"}
+                      <span>{timeLabel(m.created_at)}</span>
+                      {mine && !m.pending && !m.failed ? (
+                        m.read_at ? (
+                          <CheckCheck
+                            className="w-4 h-4 text-cyan-300 drop-shadow-[0_0_6px_rgba(34,211,238,0.65)]"
+                            aria-label="Прочитано"
+                            title="Прочитано"
+                          />
+                        ) : (
+                          <Check
+                            className="w-4 h-4 text-white/70"
+                            aria-label="Отправлено"
+                            title="Отправлено"
+                          />
+                        )
+                      ) : null}
+                      {m.pending ? <span>· отправка...</span> : null}
+                      {m.failed ? <span>· ошибка</span> : null}
                     </div>
                   </div>
                 </div>
               </div>
             );
           })}
+
+          {peerTyping && !loading && (
+            <div className="flex justify-start" aria-live="polite">
+              <div className="flex items-end gap-2">
+                <AvatarCircle
+                  src={chat?.participant.avatar_url}
+                  fallback={chat?.participant.full_name || chat?.participant.username || "U"}
+                  className="w-7 h-7 text-[11px] font-semibold ring-1 ring-white/20"
+                  alt={chat?.participant.username || "user"}
+                />
+                <div className={`max-w-[84%] rounded-2xl px-3.5 py-2 ${typingBubbleClass}`}>
+                  <div className="flex items-center gap-1.5" aria-label="Собеседник печатает">
+                    <span className={`h-1.5 w-1.5 rounded-full animate-bounce [animation-duration:900ms] ${typingDotClass}`} />
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full animate-bounce [animation-duration:900ms] ${typingDotClass}`}
+                      style={{ animationDelay: "120ms" }}
+                    />
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full animate-bounce [animation-duration:900ms] ${typingDotClass}`}
+                      style={{ animationDelay: "240ms" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <form onSubmit={onSubmit} className="border-t border-white/10 p-3 space-y-2">
@@ -1442,7 +1804,12 @@ export default function ChatConversationPage() {
             />
             <textarea
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => {
+                const nextValue = e.target.value;
+                setBody(nextValue);
+                handleTypingByBody(nextValue);
+              }}
+              onBlur={() => stopTyping(true)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1451,7 +1818,7 @@ export default function ChatConversationPage() {
               }}
               placeholder="Напишите сообщение..."
               rows={1}
-              className="flex-1 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30"
+              className="flex-1 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30"
             />
             <button
               type="submit"

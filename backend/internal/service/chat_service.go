@@ -27,6 +27,7 @@ var (
 )
 
 const DefaultChatTheme = "default"
+const ChatOnlineWindow = 2 * time.Minute
 
 var allowedChatThemes = map[string]struct{}{
 	DefaultChatTheme: {},
@@ -47,11 +48,13 @@ func NewChatService(chats *repository.ChatRepository, users *repository.UserRepo
 }
 
 type ChatParticipant struct {
-	ID         string `json:"id"`
-	Username   string `json:"username"`
-	FullName   string `json:"full_name"`
-	IsVerified bool   `json:"is_verified"`
-	AvatarURL  string `json:"avatar_url,omitempty"`
+	ID         string  `json:"id"`
+	Username   string  `json:"username"`
+	FullName   string  `json:"full_name"`
+	IsVerified bool    `json:"is_verified"`
+	AvatarURL  string  `json:"avatar_url,omitempty"`
+	LastSeenAt *string `json:"last_seen_at,omitempty"`
+	IsOnline   bool    `json:"is_online"`
 }
 
 type ChatLastMessage struct {
@@ -87,6 +90,11 @@ type ChatMessageAttachment struct {
 	Type   string `json:"type"`
 }
 
+type ChatReadUpdate struct {
+	MessageID string `json:"message_id"`
+	ReadAt    string `json:"read_at"`
+}
+
 type ChatAttachmentInput struct {
 	URL    string
 	Width  int
@@ -116,6 +124,13 @@ func mapChatPreview(row repository.DirectChatRow) ChatPreview {
 	}
 	if row.PeerAvatarURL.Valid {
 		out.Participant.AvatarURL = strings.TrimSpace(row.PeerAvatarURL.String)
+	}
+	if row.PeerLastSeenAt.Valid {
+		lastSeen := row.PeerLastSeenAt.Time.UTC().Format(time.RFC3339)
+		out.Participant.LastSeenAt = &lastSeen
+		if time.Since(row.PeerLastSeenAt.Time) <= ChatOnlineWindow {
+			out.Participant.IsOnline = true
+		}
 	}
 	if row.LastMessageID.Valid {
 		createdAt := ""
@@ -252,6 +267,14 @@ func (s *ChatService) ParticipantIDs(ctx context.Context, userID, chatID string)
 	return s.chats.ParticipantIDs(ctx, chatID)
 }
 
+func (s *ChatService) ParticipantChatIDs(ctx context.Context, userID string) ([]string, error) {
+	return s.chats.ParticipantChatIDs(ctx, userID)
+}
+
+func (s *ChatService) TouchPresence(ctx context.Context, userID string) error {
+	return s.users.TouchLastSeen(ctx, userID, time.Now().UTC())
+}
+
 func (s *ChatService) UnreadCount(ctx context.Context, userID string) (int64, error) {
 	return s.chats.UnreadCount(ctx, userID)
 }
@@ -348,11 +371,22 @@ func (s *ChatService) Send(
 	return &out, nil
 }
 
-func (s *ChatService) MarkRead(ctx context.Context, userID, chatID string) (int64, error) {
+func (s *ChatService) MarkRead(ctx context.Context, userID, chatID string) ([]ChatReadUpdate, error) {
 	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return s.chats.MarkRead(ctx, chatID, userID)
+	rows, err := s.chats.MarkRead(ctx, chatID, userID)
+	if err != nil {
+		return nil, err
+	}
+	updates := make([]ChatReadUpdate, 0, len(rows))
+	for _, row := range rows {
+		updates = append(updates, ChatReadUpdate{
+			MessageID: strings.TrimSpace(row.MessageID),
+			ReadAt:    row.ReadAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return updates, nil
 }
 
 func (s *ChatService) GetTheme(ctx context.Context, userID, chatID string) (string, error) {
