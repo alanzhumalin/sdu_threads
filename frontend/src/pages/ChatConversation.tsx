@@ -39,7 +39,6 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { MediaViewerModal } from "../components/MediaViewerModal";
 import { VerifiedBadge } from "../components/VerifiedBadge";
-import { insertTextAtSelection } from "../utils/textarea";
 
 type UiMessage = ChatMessage & {
   pending?: boolean;
@@ -687,13 +686,11 @@ export default function ChatConversationPage() {
   const [peerTyping, setPeerTyping] = useState(false);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [emojiOpen, setEmojiOpen] = useState(false);
   const [messageReactionPickerMessageId, setMessageReactionPickerMessageId] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
   const messageReactionAnchorRef = useRef<HTMLButtonElement | null>(null);
   const sendButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1357,29 +1354,6 @@ export default function ChatConversationPage() {
     scheduleTypingStop();
   };
 
-  const insertEmojiIntoComposer = (emoji: string) => {
-    if (isRecordingAudio) return;
-    const input = composerInputRef.current;
-    const live = getComposerCurrentValue();
-    const fallbackStart = Math.min(composerSelectionRef.current.start, live.length);
-    const fallbackEnd = Math.min(composerSelectionRef.current.end, live.length);
-    const start = input?.selectionStart ?? fallbackStart;
-    const end = input?.selectionEnd ?? fallbackEnd;
-    const { nextValue, caret } = insertTextAtSelection(live, emoji, start, end);
-
-    setBody(nextValue);
-    handleTypingByBody(nextValue);
-    setEmojiOpen(false);
-
-    requestAnimationFrame(() => {
-      const node = composerInputRef.current;
-      if (!node) return;
-      node.focus();
-      node.setSelectionRange(caret, caret);
-      composerSelectionRef.current = { start: caret, end: caret };
-    });
-  };
-
   const setMessageReactions = (messageID: string, reactions: ReactionItem[]) => {
     const normalized = normalizeMessageReactions(reactions);
     setMessages((prev) =>
@@ -1548,7 +1522,6 @@ export default function ChatConversationPage() {
     setThemeError("");
     setThemeSaving(false);
     setThemeMenuOpen(false);
-    setEmojiOpen(false);
     setMessageReactionPickerMessageId(null);
     setMediaError("");
     setComposerAttachments((prev) => {
@@ -2083,7 +2056,6 @@ export default function ChatConversationPage() {
     }
     setError("");
     setBody("");
-    setEmojiOpen(false);
     setReplyTo(null);
     clearComposerAttachments(false);
     setMessages((prev) => toAsc([...prev, optimistic]));
@@ -2472,7 +2444,6 @@ export default function ChatConversationPage() {
                       type="button"
                       disabled={m.pending || m.failed}
                       onClick={(event) => {
-                        setEmojiOpen(false);
                         messageReactionAnchorRef.current = event.currentTarget;
                         setMessageReactionPickerMessageId((prev) =>
                           prev === m.id ? null : m.id
@@ -2781,20 +2752,6 @@ export default function ChatConversationPage() {
                 e.target.value = "";
               }}
             />
-            <button
-              ref={emojiButtonRef}
-              type="button"
-              onClick={() => {
-                setMessageReactionPickerMessageId(null);
-                setEmojiOpen((prev) => !prev);
-              }}
-              className={`nav-icon shrink-0 self-center border border-amber-300/35 text-amber-200 hover:bg-amber-300/20 hover:text-amber-100 ${emojiOpen ? "bg-amber-300/25" : "bg-amber-300/10"} disabled:opacity-60 disabled:cursor-not-allowed`}
-              aria-label="emoji"
-              title="Эмодзи"
-              disabled={sending || isRecordingAudio}
-            >
-              <Smile className="w-5 h-5" />
-            </button>
             <textarea
               ref={composerInputRef}
               value={body}
@@ -2895,12 +2852,6 @@ export default function ChatConversationPage() {
               </button>
             )}
           </div>
-          <EmojiPicker
-            open={emojiOpen}
-            anchorRef={emojiButtonRef}
-            onClose={() => setEmojiOpen(false)}
-            onSelect={insertEmojiIntoComposer}
-          />
           <EmojiPicker
             open={messageReactionPickerMessageId !== null}
             anchorRef={messageReactionAnchorRef}
