@@ -57,6 +57,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	tagRepo := repository.NewHashtagRepository(client.DB)
 	reportRepo := repository.NewReportRepository(client.DB)
 	chatRepo := repository.NewChatRepository(client.DB)
+	telegramRepo := repository.NewTelegramRepository(client.DB)
 	moderationEventRepo := repository.NewModerationEventRepository(client.DB)
 	viewService := service.NewViewService(postRepo, cfg.ViewTTLMin)
 	moderationClient := modsvc.NewClient(modsvc.Config{
@@ -107,11 +108,13 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	notificationService := service.NewNotificationService(client.DB, userRepo)
 	reportService := service.NewReportService(reportRepo, userRepo, postRepo)
 	chatService := service.NewChatService(chatRepo, userRepo)
+	telegramService := service.NewTelegramService(cfg, telegramRepo)
 	searchHandler := handler.NewSearchHandler(userRepo, queryCache)
 	topUsersHandler := handler.NewTopUsersHandler(followService, queryCache)
 	reportHandler := handler.NewReportHandler(reportService, jwtMgr)
 	mediaHandler := handler.NewMediaHandler(uploader, jwtMgr, moderationClient)
-	chatHandler := handler.NewChatHandler(chatService, jwtMgr)
+	chatHandler := handler.NewChatHandler(chatService, telegramService, jwtMgr)
+	telegramHandler := handler.NewTelegramHandler(telegramService, jwtMgr)
 	adminHandler := handler.NewAdminHandler(client.DB, userRepo, postRepo, profileService, postService, jwtMgr)
 	moderationHandler := handler.NewModerationHandler(userRepo, postRepo, postService, reportService, moderationEventRepo, jwtMgr)
 
@@ -133,8 +136,11 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	reportHandler.Register(mux)
 	mediaHandler.Register(mux)
 	chatHandler.Register(mux)
+	telegramHandler.Register(mux)
 	adminHandler.Register(mux)
 	moderationHandler.Register(mux)
+
+	telegramService.StartBackground()
 
 	// path-aware rate limiting: stricter for auth endpoints
 	pathLimiter := middleware.NewPathRateLimiter(cfg.RateLimitRPM, map[string]int{

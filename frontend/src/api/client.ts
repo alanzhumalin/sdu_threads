@@ -57,6 +57,23 @@ export type ChatMessageAttachment = {
   type: "image" | "audio";
 };
 
+export type TelegramStatus = {
+  enabled: boolean;
+  connected: boolean;
+  bot_username?: string;
+  telegram_username?: string;
+  telegram_name?: string;
+  connected_at?: string;
+};
+
+export type TelegramConnectSession = {
+  enabled: boolean;
+  bot_username?: string;
+  start_code?: string;
+  deep_link?: string;
+  expires_at?: string;
+};
+
 type ApiErrorShape =
   | { error: string }
   | { error: { code?: string; message?: string; retry_after_seconds?: number } }
@@ -641,6 +658,12 @@ export const api = {
     ),
   openDirectChat: (payload: { user_id?: string; username?: string }, token: string) =>
     request<ChatPreview>("/chats/direct", "POST", payload, token),
+  telegramStatus: (token: string) =>
+    request<TelegramStatus>("/telegram/status", "GET", undefined, token),
+  telegramConnect: (token: string) =>
+    request<TelegramConnectSession>("/telegram/connect", "POST", undefined, token),
+  telegramDisconnect: (token: string) =>
+    request<{ status: string }>("/telegram/connect", "DELETE", undefined, token),
   chats: (limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<ChatPreview[]>(
       `/chats?limit=${limit}&offset=${offset}`,

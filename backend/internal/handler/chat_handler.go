@@ -17,18 +17,20 @@ import (
 )
 
 type ChatHandler struct {
-	service *service.ChatService
-	jwt     *auth.JWTManager
-	ws      *chatWSHub
-	userWS  *chatUserWSHub
+	service  *service.ChatService
+	telegram *service.TelegramService
+	jwt      *auth.JWTManager
+	ws       *chatWSHub
+	userWS   *chatUserWSHub
 }
 
-func NewChatHandler(s *service.ChatService, jwt *auth.JWTManager) *ChatHandler {
+func NewChatHandler(s *service.ChatService, tg *service.TelegramService, jwt *auth.JWTManager) *ChatHandler {
 	return &ChatHandler{
-		service: s,
-		jwt:     jwt,
-		ws:      newChatWSHub(),
-		userWS:  newChatUserWSHub(),
+		service:  s,
+		telegram: tg,
+		jwt:      jwt,
+		ws:       newChatWSHub(),
+		userWS:   newChatUserWSHub(),
 	}
 }
 
@@ -195,6 +197,7 @@ func (h *ChatHandler) handleMessages(w http.ResponseWriter, r *http.Request, cha
 				"chat_id":    chatID,
 				"message_id": item.ID,
 			})
+			go h.notifyTelegramRecipients(userID, chatID, item, participantIDs)
 		}
 		writeJSON(w, http.StatusCreated, item)
 	default:
@@ -521,4 +524,64 @@ func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")
 	}
+}
+
+func (h *ChatHandler) notifyTelegramRecipients(senderID, chatID string, item *service.ChatMessage, participantIDs []string) {
+	if h.telegram == nil || !h.telegram.Enabled() || item == nil {
+		return
+	}
+	senderName, senderUsername := h.service.UserIdentity(context.Background(), senderID)
+	preview := buildChatNotificationPreview(item)
+
+	for _, rawID := range participantIDs {
+		recipientID := strings.TrimSpace(rawID)
+		if recipientID == "" || recipientID == strings.TrimSpace(senderID) {
+			continue
+		}
+		if h.isUserOnline(recipientID) {
+			continue
+		}
+		_ = h.telegram.NotifyDirectMessage(context.Background(), service.TelegramDirectMessageNotification{
+			RecipientUserID: recipientID,
+			ChatID:          chatID,
+			SenderFullName:  senderName,
+			SenderUsername:  senderUsername,
+			MessagePreview:  preview,
+		})
+	}
+}
+
+func buildChatNotificationPreview(item *service.ChatMessage) string {
+	body := strings.TrimSpace(item.Body)
+	if body != "" {
+		return body
+	}
+	if len(item.Attachments) == 0 {
+		return "Новое сообщение"
+	}
+
+	hasAudio := false
+	hasImage := false
+	for _, att := range item.Attachments {
+		switch strings.ToLower(strings.TrimSpace(att.Type)) {
+		case "audio":
+			hasAudio = true
+		default:
+			hasImage = true
+		}
+	}
+
+	if hasAudio && !hasImage {
+		if len(item.Attachments) == 1 {
+			return "Голосовое сообщение"
+		}
+		return "Голосовые сообщения"
+	}
+	if hasImage && !hasAudio {
+		if len(item.Attachments) == 1 {
+			return "Фото"
+		}
+		return "Вложения"
+	}
+	return "Сообщение с вложениями"
 }

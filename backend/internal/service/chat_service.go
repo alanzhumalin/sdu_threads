@@ -438,3 +438,15 @@ func (s *ChatService) SetTheme(ctx context.Context, userID, chatID, themeKey str
 	}
 	return normalized, nil
 }
+
+func (s *ChatService) UserIdentity(ctx context.Context, userID string) (fullName string, username string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", ""
+	}
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(u.FullName), strings.TrimSpace(u.Username)
+}

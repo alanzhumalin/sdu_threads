@@ -109,6 +109,14 @@ Create `.env` from `.env.example` before running locally. Key values:
     - создание поста/комментария с хэштегами → `hashtags:*`
     - создание поста/комментария/like/unlike → публичный feed-cache
     - регистрация/обновление профиля → `users/search` (и `top-users` для profile update)
+- `TELEGRAM_*` — Telegram-бот для уведомлений о новых сообщениях в личном чате:
+  - `TELEGRAM_NOTIFICATIONS_ENABLED` (`true|false`)
+  - `TELEGRAM_BOT_TOKEN` (токен от BotFather)
+  - `TELEGRAM_BOT_USERNAME` (без `@`, опционально; если пусто — backend попробует получить через `getMe`)
+  - `TELEGRAM_LINK_TTL_MIN` (время жизни кода привязки аккаунта)
+  - `TELEGRAM_BOT_POLL_TIMEOUT_SEC` (long-poll timeout для `getUpdates`)
+  - `TELEGRAM_NOTIFY_PREVIEW_RUNES` (макс. длина превью текста в push)
+  - `APP_PUBLIC_URL` (публичный URL сайта для ссылки “Открыть чат” внутри Telegram)
 
 ## Логирование и rate limit
 - Каждый запрос логируется (method, path, status, длительность, ip, user-agent, user_id если есть токен).
@@ -121,6 +129,10 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Media: `POST /api/media/upload?purpose=post|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
 - Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
 - Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
+- Telegram notifications:
+  - `GET /api/telegram/status` (Bearer)
+  - `POST /api/telegram/connect` (Bearer) → создать одноразовый код привязки для `/start <code>` в боте
+  - `DELETE /api/telegram/connect` (Bearer) → отключить Telegram-уведомления
 - Контент автоматически проходит модерацию (текст + NSFW изображения) при создании постов/комментариев и обновлении avatar/background.
 - Moderation: `GET /api/moderation/logs?scope=&query=&limit=&offset=` (для moderator/admin) — логи блокировок с причиной, score, labels.
 - Hashtags: `GET /api/hashtags/search?q=`, `GET /api/hashtags/{name}/posts`.

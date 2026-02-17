@@ -46,6 +46,15 @@ type Config struct {
 	CacheKeyPrefix     string
 	CacheL1MaxEntries  int
 	CacheL1CleanupSec  int
+
+	// Telegram bot notifications for direct messages.
+	TelegramNotificationsEnabled bool
+	TelegramBotToken             string
+	TelegramBotUsername          string
+	TelegramLinkTTLMin           int
+	TelegramBotPollTimeoutSec    int
+	TelegramNotifyPreviewRunes   int
+	AppPublicURL                 string
 }
 
 func Load() Config {
@@ -86,6 +95,14 @@ func Load() Config {
 		CacheKeyPrefix:     getEnv("CACHE_KEY_PREFIX", "sdu:cache:"),
 		CacheL1MaxEntries:  getEnvInt("CACHE_L1_MAX_ENTRIES", 5000),
 		CacheL1CleanupSec:  getEnvInt("CACHE_L1_CLEANUP_SEC", 60),
+
+		TelegramNotificationsEnabled: getEnvBool("TELEGRAM_NOTIFICATIONS_ENABLED", true),
+		TelegramBotToken:             getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramBotUsername:          getEnv("TELEGRAM_BOT_USERNAME", ""),
+		TelegramLinkTTLMin:           getEnvInt("TELEGRAM_LINK_TTL_MIN", 10),
+		TelegramBotPollTimeoutSec:    getEnvInt("TELEGRAM_BOT_POLL_TIMEOUT_SEC", 45),
+		TelegramNotifyPreviewRunes:   getEnvInt("TELEGRAM_NOTIFY_PREVIEW_RUNES", 180),
+		AppPublicURL:                 getEnv("APP_PUBLIC_URL", ""),
 	}
 }
 

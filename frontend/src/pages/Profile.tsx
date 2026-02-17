@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { api, type TelegramConnectSession, type TelegramStatus } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
@@ -96,6 +96,16 @@ export default function ProfilePage() {
   const [socialDraftType, setSocialDraftType] = useState<SocialType>("instagram");
   const [socialDraftUsername, setSocialDraftUsername] = useState("");
   const [socialDraftError, setSocialDraftError] = useState("");
+  const [telegramStatus, setTelegramStatus] = useState<TelegramStatus | null>(null);
+  const [telegramConnect, setTelegramConnect] = useState<TelegramConnectSession | null>(null);
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [telegramActionLoading, setTelegramActionLoading] = useState(false);
+  const [telegramAwaitingConfirm, setTelegramAwaitingConfirm] = useState(false);
+  const [telegramError, setTelegramError] = useState("");
+  const [telegramCopyDone, setTelegramCopyDone] = useState(false);
+  const telegramCopyTimerRef = useRef<number | null>(null);
+  const telegramConnectPollRef = useRef<number | null>(null);
+  const editOpenRef = useRef(false);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [bgPreview, setBgPreview] = useState<string>("");
   const [pendingAvatar, setPendingAvatar] = useState<{ file: File; previewUrl: string } | null>(null);
@@ -240,6 +250,23 @@ export default function ProfilePage() {
     fetchProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    editOpenRef.current = editOpen;
+  }, [editOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (telegramCopyTimerRef.current !== null) {
+        window.clearTimeout(telegramCopyTimerRef.current);
+        telegramCopyTimerRef.current = null;
+      }
+      if (telegramConnectPollRef.current !== null) {
+        window.clearTimeout(telegramConnectPollRef.current);
+        telegramConnectPollRef.current = null;
+      }
+    };
+  }, []);
 
   const stats = useUserStatsStore((s) => (profile?.id ? s.byUserId[profile.id] : undefined));
   const followersCount = typeof stats?.followers === "number" ? stats.followers : profile?.followers ?? 0;
@@ -405,6 +432,132 @@ export default function ProfilePage() {
     }
   };
 
+  const stopTelegramConnectPolling = (resetAwaiting = true) => {
+    if (telegramConnectPollRef.current !== null) {
+      window.clearTimeout(telegramConnectPollRef.current);
+      telegramConnectPollRef.current = null;
+    }
+    if (resetAwaiting) setTelegramAwaitingConfirm(false);
+  };
+
+  const loadTelegramStatus = async (opts?: { silent?: boolean }) => {
+    if (!token) return;
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setTelegramLoading(true);
+      setTelegramError("");
+    }
+    try {
+      const status = await api.telegramStatus(token);
+      setTelegramStatus(status);
+      if (status.connected) {
+        stopTelegramConnectPolling();
+        setTelegramConnect(null);
+      }
+      return status;
+    } catch (e: any) {
+      if (!silent) setTelegramError(e?.message || "Не удалось получить статус Telegram");
+      return null;
+    } finally {
+      if (!silent) setTelegramLoading(false);
+    }
+  };
+
+  const startTelegramConnectPolling = () => {
+    if (!token) return;
+    stopTelegramConnectPolling(false);
+    setTelegramAwaitingConfirm(true);
+    const deadline = Date.now() + 2 * 60 * 1000;
+
+    const tick = async () => {
+      const status = await loadTelegramStatus({ silent: true });
+      if (status?.connected) {
+        stopTelegramConnectPolling();
+        return;
+      }
+      if (!editOpenRef.current || Date.now() >= deadline) {
+        stopTelegramConnectPolling();
+        return;
+      }
+      telegramConnectPollRef.current = window.setTimeout(() => {
+        void tick();
+      }, 1500);
+    };
+
+    void tick();
+  };
+
+  const handleCreateTelegramCode = async () => {
+    if (!token) return;
+    let botWindow: Window | null = null;
+    if (typeof window !== "undefined") {
+      botWindow = window.open("", "_blank");
+    }
+    setTelegramActionLoading(true);
+    setTelegramError("");
+    try {
+      const session = await api.telegramConnect(token);
+      setTelegramConnect(session);
+      const deepLink = String(session?.deep_link || "").trim();
+      if (deepLink) {
+        if (botWindow && !botWindow.closed) {
+          botWindow.location.href = deepLink;
+          try {
+            botWindow.opener = null;
+          } catch {}
+        } else {
+          window.open(deepLink, "_blank", "noopener,noreferrer");
+        }
+      } else if (botWindow && !botWindow.closed) {
+        botWindow.close();
+      }
+      await loadTelegramStatus({ silent: true });
+      startTelegramConnectPolling();
+    } catch (e: any) {
+      if (botWindow && !botWindow.closed) {
+        botWindow.close();
+      }
+      setTelegramError(e?.message || "Не удалось создать код подключения");
+      stopTelegramConnectPolling();
+    } finally {
+      setTelegramActionLoading(false);
+    }
+  };
+
+  const handleDisconnectTelegram = async () => {
+    if (!token) return;
+    setTelegramActionLoading(true);
+    setTelegramError("");
+    try {
+      await api.telegramDisconnect(token);
+      stopTelegramConnectPolling();
+      setTelegramConnect(null);
+      await loadTelegramStatus();
+    } catch (e: any) {
+      setTelegramError(e?.message || "Не удалось отключить Telegram");
+    } finally {
+      setTelegramActionLoading(false);
+    }
+  };
+
+  const handleCopyTelegramCode = async () => {
+    const code = telegramConnect?.start_code?.trim();
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setTelegramCopyDone(true);
+      if (telegramCopyTimerRef.current !== null) {
+        window.clearTimeout(telegramCopyTimerRef.current);
+      }
+      telegramCopyTimerRef.current = window.setTimeout(() => {
+        setTelegramCopyDone(false);
+        telegramCopyTimerRef.current = null;
+      }, 1300);
+    } catch {
+      setTelegramError("Не удалось скопировать код");
+    }
+  };
+
   const openEdit = () => {
     if (!profile) return;
     closeCrop();
@@ -444,8 +597,14 @@ export default function ProfilePage() {
       new_password: "",
       confirm_password: "",
     });
+    setTelegramStatus(null);
+    setTelegramConnect(null);
+    setTelegramError("");
+    setTelegramCopyDone(false);
+    setTelegramAwaitingConfirm(false);
     setEditSection("profile");
     setEditOpen(true);
+    void loadTelegramStatus();
   };
 
   const closeEditModal = () => {
@@ -465,6 +624,15 @@ export default function ProfilePage() {
       new_password: "",
       confirm_password: "",
     });
+    if (telegramCopyTimerRef.current !== null) {
+      window.clearTimeout(telegramCopyTimerRef.current);
+      telegramCopyTimerRef.current = null;
+    }
+    stopTelegramConnectPolling();
+    setTelegramStatus(null);
+    setTelegramConnect(null);
+    setTelegramError("");
+    setTelegramCopyDone(false);
     setEditSection("profile");
     setEditOpen(false);
   };
@@ -1412,6 +1580,90 @@ export default function ProfilePage() {
                           ))}
                         </div>
                       )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm text-white/60">Telegram уведомления</label>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                        {telegramLoading ? (
+                          <p className="text-sm text-white/60">Загрузка статуса...</p>
+                        ) : telegramStatus?.enabled === false ? (
+                          <p className="text-sm text-white/60">
+                            Бот не настроен на сервере. Укажите `TELEGRAM_BOT_TOKEN` в `.env`.
+                          </p>
+                        ) : telegramStatus?.connected ? (
+                          <>
+                            <p className="text-sm text-emerald-300">
+                              Подключено
+                              {telegramStatus.telegram_username
+                                ? `: @${telegramStatus.telegram_username.replace(/^@+/, "")}`
+                                : ""}
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleDisconnectTelegram()}
+                                disabled={telegramActionLoading}
+                                className="rounded-full border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:border-white/40 transition disabled:opacity-60"
+                              >
+                                {telegramActionLoading ? "Отключение..." : "Отключить"}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm text-white/70">
+                              Подключите Telegram, чтобы получать push о новых сообщениях в чатах.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => void handleCreateTelegramCode()}
+                              disabled={telegramActionLoading || telegramAwaitingConfirm}
+                              className="rounded-full border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:border-white/40 transition disabled:opacity-60"
+                            >
+                              {telegramActionLoading
+                                ? "Открываем Telegram..."
+                                : telegramAwaitingConfirm
+                                  ? "Ожидаем подтверждение..."
+                                  : "Подключить Telegram"}
+                            </button>
+                            {telegramAwaitingConfirm && (
+                              <p className="text-xs text-white/60">
+                                Нажмите Start в Telegram. После возврата статус обновится автоматически.
+                              </p>
+                            )}
+                          </>
+                        )}
+
+                        {telegramConnect?.start_code && telegramStatus?.connected !== true && (
+                          <div className="rounded-lg border border-white/10 bg-black/30 p-2.5 space-y-2">
+                            <p className="text-xs text-white/60">Код для бота (`/start код`):</p>
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 rounded bg-white/10 px-2 py-1 text-xs text-white break-all">
+                                {telegramConnect.start_code}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyTelegramCode()}
+                                className="rounded-full border border-white/20 px-2.5 py-1 text-xs text-white/80 hover:border-white/40 transition"
+                              >
+                                {telegramCopyDone ? "Скопировано" : "Копировать"}
+                              </button>
+                            </div>
+                            {telegramConnect.deep_link && (
+                              <a
+                                href={telegramConnect.deep_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center text-xs text-sky-200/90 hover:text-sky-100 underline underline-offset-2"
+                              >
+                                Открыть бота повторно
+                              </a>
+                            )}
+                          </div>
+                        )}
+                        {telegramError && <p className="text-xs text-red-300">{telegramError}</p>}
+                      </div>
                     </div>
                   </div>
                     </>
