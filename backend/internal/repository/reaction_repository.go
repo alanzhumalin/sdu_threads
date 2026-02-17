@@ -22,6 +22,14 @@ type ReactionAggregate struct {
 	ReactedByMe bool   `gorm:"column:reacted_by_me"`
 }
 
+func viewerUUIDArg(raw string) any {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
 func normalizeIDs(raw []string) []string {
 	if len(raw) == 0 {
 		return nil
@@ -81,7 +89,7 @@ FROM post_reactions
 WHERE post_id IN ?
 GROUP BY post_id, emoji
 ORDER BY count DESC, emoji ASC`
-	if err := r.db.WithContext(ctx).Raw(q, strings.TrimSpace(viewerUserID), targetIDs).Scan(&rows).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(q, viewerUUIDArg(viewerUserID), targetIDs).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	if rows == nil {
@@ -111,7 +119,7 @@ FROM message_reactions
 WHERE message_id IN ?
 GROUP BY message_id, emoji
 ORDER BY count DESC, emoji ASC`
-	if err := r.db.WithContext(ctx).Raw(q, strings.TrimSpace(viewerUserID), targetIDs).Scan(&rows).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(q, viewerUUIDArg(viewerUserID), targetIDs).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	if rows == nil {
