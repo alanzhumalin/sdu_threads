@@ -52,6 +52,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	userRepo := repository.NewUserRepository(client.DB)
 	postRepo := repository.NewPostRepository(client.DB)
 	likeRepo := repository.NewLikeRepository(client.DB)
+	reactionRepo := repository.NewReactionRepository(client.DB)
 	commentRepo := repository.NewCommentRepository(client.DB)
 	followRepo := repository.NewFollowRepository(client.DB)
 	tagRepo := repository.NewHashtagRepository(client.DB)
@@ -99,7 +100,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 
 	// services
 	userService := service.NewUserService(userRepo)
-	postService := service.NewPostService(postRepo, likeRepo, tagRepo, userRepo, followRepo, uploader, moderationClient)
+	postService := service.NewPostService(postRepo, likeRepo, reactionRepo, tagRepo, userRepo, followRepo, uploader, moderationClient)
 	authService := service.NewAuthService(userRepo, jwtMgr)
 	commentService := service.NewCommentService(commentRepo, postRepo, likeRepo, userRepo, tagRepo, moderationClient)
 	followService := service.NewFollowService(followRepo, userRepo)
@@ -107,7 +108,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	hashtagService := service.NewHashtagService(tagRepo, postRepo, userRepo, followRepo)
 	notificationService := service.NewNotificationService(client.DB, userRepo)
 	reportService := service.NewReportService(reportRepo, userRepo, postRepo)
-	chatService := service.NewChatService(chatRepo, userRepo)
+	chatService := service.NewChatService(chatRepo, userRepo, reactionRepo)
 	telegramService := service.NewTelegramService(cfg, telegramRepo)
 	searchHandler := handler.NewSearchHandler(userRepo, queryCache)
 	topUsersHandler := handler.NewTopUsersHandler(followService, queryCache)

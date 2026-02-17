@@ -1,15 +1,18 @@
-import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { usePostCooldownStore } from "../store/postCooldown";
-import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush } from "lucide-react";
+import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush, Smile, Music2 } from "lucide-react";
 import { DrawingModal } from "./DrawingModal";
 import { ErrorMessage } from "./ErrorMessage";
 import FabricImageEditor from "./FabricImageEditor";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { EmojiPicker } from "./EmojiPicker";
+import { MusicClipEditor } from "./MusicClipEditor";
 import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
-import type { MediaItem as UploadedMediaItem } from "../types/media";
+import { insertTextAtSelection } from "../utils/textarea";
+import type { MediaItem as UploadedMediaItem, PostMusic as UploadedPostMusic } from "../types/media";
 
 type Props = {
   onCreated?: () => void;
@@ -51,12 +54,31 @@ type MediaItem = {
   error?: string;
 };
 
+type MusicSelection = {
+  source: "upload";
+  title: string;
+  artist?: string;
+  coverUrl?: string;
+  audioUrl: string;
+  durationSec: number;
+  clipStartSec: number;
+  clipEndSec: number;
+  uploadStatus: "uploading" | "uploaded" | "error";
+  remoteKey?: string;
+  localPreviewUrl?: string;
+  error?: string;
+};
+
 const HEIC_MIME_SET = new Set([
   "image/heic",
   "image/heif",
   "image/heic-sequence",
   "image/heif-sequence",
 ]);
+
+const MAX_MUSIC_BYTES = 15 * 1024 * 1024;
+const MAX_MUSIC_CLIP_SECONDS = 30;
+const DEFAULT_MUSIC_DURATION = 30;
 
 const isHeicOrHeifFile = (file: File) => {
   const type = String(file.type || "").toLowerCase();
@@ -78,6 +100,59 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutRe
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
+};
+
+const readAudioDuration = (src: string) =>
+  new Promise<number>((resolve, reject) => {
+    const audio = new Audio();
+    audio.preload = "metadata";
+    let settled = false;
+
+    const cleanup = () => {
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("durationchange", onMeta);
+      audio.removeEventListener("error", onErr);
+      try {
+        audio.pause();
+      } catch {
+        // ignore
+      }
+      audio.removeAttribute("src");
+      audio.load();
+    };
+
+    const finish = (value: number, ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (ok) resolve(value);
+      else reject(new Error("audio_duration_failed"));
+    };
+
+    const onMeta = () => {
+      const dur = Number(audio.duration);
+      if (!Number.isFinite(dur) || dur <= 0) return;
+      finish(Math.max(1, Math.floor(dur)), true);
+    };
+    const onErr = () => finish(0, false);
+
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("durationchange", onMeta);
+    audio.addEventListener("error", onErr);
+    audio.src = src;
+    audio.load();
+  });
+
+const normalizeClipRange = (durationSec: number, startSec: number, endSec: number) => {
+  const duration = Number.isFinite(durationSec) && durationSec > 0 ? Math.floor(durationSec) : DEFAULT_MUSIC_DURATION;
+  const start = Math.max(0, Math.min(duration - 1, Math.floor(startSec || 0)));
+  const maxEnd = Math.max(start + 1, duration);
+  const requestedEnd = Math.floor(endSec || duration);
+  const end = Math.max(start + 1, Math.min(maxEnd, requestedEnd));
+  if (end-start > MAX_MUSIC_CLIP_SECONDS) {
+    return { duration, start, end: start + MAX_MUSIC_CLIP_SECONDS };
+  }
+  return { duration, start, end };
 };
 
 const highlightInlineHashtags = (
@@ -189,8 +264,15 @@ export default function PostComposer({ onCreated }: Props) {
   const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null);
   const [mentionPos, setMentionPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const mentionListRef = useRef<HTMLUListElement | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [mediaError, setMediaError] = useState("");
+  const [music, setMusic] = useState<MusicSelection | null>(null);
+  const musicRef = useRef<MusicSelection | null>(null);
+  const musicUploadRef = useRef<{ token: string; controller: AbortController } | null>(null);
+  const musicInputRef = useRef<HTMLInputElement | null>(null);
+  const [musicError, setMusicError] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [drawingOpen, setDrawingOpen] = useState(false);
@@ -222,9 +304,20 @@ export default function PostComposer({ onCreated }: Props) {
   }, [media]);
 
   useEffect(() => {
+    musicRef.current = music;
+  }, [music]);
+
+  useEffect(() => {
     return () => {
       uploadRef.current.forEach((v) => v.controller.abort());
       mediaRef.current.forEach((m) => URL.revokeObjectURL(m.previewUrl));
+      if (musicUploadRef.current) {
+        musicUploadRef.current.controller.abort();
+        musicUploadRef.current = null;
+      }
+      if (musicRef.current?.localPreviewUrl) {
+        URL.revokeObjectURL(musicRef.current.localPreviewUrl);
+      }
     };
   }, []);
 
@@ -434,6 +527,32 @@ export default function PostComposer({ onCreated }: Props) {
     });
     const pos = activeMention.start + username.length + 2;
     setCursor(pos);
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const ta = textareaRef.current;
+    const currentValue = ta?.value ?? content;
+    const fallback = Math.min(cursor, currentValue.length);
+    const selectionStart = ta?.selectionStart ?? fallback;
+    const selectionEnd = ta?.selectionEnd ?? fallback;
+    const { nextValue, caret } = insertTextAtSelection(currentValue, emoji, selectionStart, selectionEnd);
+
+    suppressNextDetection.current = true;
+    setSuggestionsOpen(false);
+    setMentionOpen(false);
+    setActiveTag(null);
+    setActiveMention(null);
+    setContent(nextValue);
+    setCursor(caret);
+    setEmojiOpen(false);
+
+    requestAnimationFrame(() => {
+      const input = textareaRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(caret, caret);
+      autoResize();
+    });
   };
 
   const startUpload = async (targets: { id: string; file: File; oldKey?: string }[]) => {
@@ -719,6 +838,140 @@ export default function PostComposer({ onCreated }: Props) {
     setPreviewId((prev) => (prev === id ? null : prev));
   };
 
+  const clearMusicSelection = (opts?: { deleteRemote?: boolean }) => {
+    const prev = musicRef.current;
+    if (musicUploadRef.current) {
+      musicUploadRef.current.controller.abort();
+      musicUploadRef.current = null;
+    }
+    if (!prev) {
+      setMusic(null);
+      return;
+    }
+    if (prev.localPreviewUrl) {
+      URL.revokeObjectURL(prev.localPreviewUrl);
+    }
+    if (opts?.deleteRemote && prev.remoteKey && token) {
+      api.deleteMedia([prev.remoteKey], "post_music", token).catch(() => {});
+    }
+    setMusic(null);
+    setMusicError("");
+  };
+
+  const uploadMusicFile = async (file: File) => {
+    if (!token) {
+      setMusicError("Войдите в аккаунт, чтобы добавить музыку");
+      return;
+    }
+    const mime = String(file.type || "").toLowerCase();
+    if (!mime.startsWith("audio/")) {
+      setMusicError("Поддерживаются только аудио-файлы");
+      return;
+    }
+    if (file.size <= 0 || file.size > MAX_MUSIC_BYTES) {
+      setMusicError("Аудио должно быть до 15MB");
+      return;
+    }
+
+    clearMusicSelection({ deleteRemote: true });
+    const localPreviewUrl = URL.createObjectURL(file);
+
+    let durationSec = DEFAULT_MUSIC_DURATION;
+    try {
+      durationSec = await withTimeout(
+        readAudioDuration(localPreviewUrl),
+        5000,
+        "audio_duration_timeout"
+      );
+    } catch {
+      durationSec = DEFAULT_MUSIC_DURATION;
+    }
+
+    const initialClip = normalizeClipRange(
+      durationSec,
+      0,
+      Math.min(durationSec, MAX_MUSIC_CLIP_SECONDS)
+    );
+
+    setMusic({
+      source: "upload",
+      title: file.name || "Music",
+      audioUrl: "",
+      durationSec: initialClip.duration,
+      clipStartSec: initialClip.start,
+      clipEndSec: initialClip.end,
+      uploadStatus: "uploading",
+      localPreviewUrl,
+    });
+    setMusicError("");
+
+    const uploadToken = crypto.randomUUID();
+    const controller = new AbortController();
+    musicUploadRef.current = { token: uploadToken, controller };
+
+    try {
+      const presigned = await api.presignMedia(
+        [{ content_type: file.type, size_bytes: file.size }],
+        "post_music",
+        token
+      );
+      const target = presigned[0];
+      if (!target) throw new Error("music_presign_failed");
+
+      if (musicUploadRef.current?.token !== uploadToken) return;
+
+      await api.uploadPresignedPut(target, file, controller.signal);
+      if (musicUploadRef.current?.token !== uploadToken) return;
+
+      setMusic((prev) => {
+        if (!prev || prev.localPreviewUrl !== localPreviewUrl) return prev;
+        return {
+          ...prev,
+          title: file.name || prev.title,
+          audioUrl: target.url,
+          remoteKey: target.key,
+          uploadStatus: "uploaded",
+          error: undefined,
+        };
+      });
+      musicUploadRef.current = null;
+    } catch (e: any) {
+      const canceled =
+        e?.name === "AbortError" ||
+        e?.message === "canceled" ||
+        e?.message === "stale";
+      if (canceled) return;
+
+      if (musicUploadRef.current?.token === uploadToken) {
+        musicUploadRef.current = null;
+      }
+      setMusic((prev) => {
+        if (!prev || prev.localPreviewUrl !== localPreviewUrl) return prev;
+        return {
+          ...prev,
+          uploadStatus: "error",
+          error: "Не удалось загрузить аудио",
+        };
+      });
+      setMusicError("Не удалось загрузить аудио");
+    }
+  };
+
+  const handleMusicFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const first = files[0];
+    if (!first) return;
+    void uploadMusicFile(first);
+  };
+
+  const updateMusicClipRange = useCallback((nextStart: number, nextEnd: number) => {
+    setMusic((prev) => {
+      if (!prev) return prev;
+      const clip = normalizeClipRange(prev.durationSec, nextStart, nextEnd);
+      return { ...prev, durationSec: clip.duration, clipStartSec: clip.start, clipEndSec: clip.end };
+    });
+  }, []);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -728,11 +981,18 @@ export default function PostComposer({ onCreated }: Props) {
     try {
       const tags = extractHashtags(content, suppressedHashtags);
       const selected = mediaRef.current;
+      const selectedMusic = musicRef.current;
       if (selected.some((m) => m.status === "preparing" || m.status === "uploading")) {
         throw new Error("uploads_pending");
       }
       if (selected.some((m) => m.status === "error")) {
         throw new Error("uploads_failed");
+      }
+      if (selectedMusic?.uploadStatus === "uploading") {
+        throw new Error("music_upload_pending");
+      }
+      if (selectedMusic?.uploadStatus === "error") {
+        throw new Error("music_upload_failed");
       }
 
       const uploadedMedia: UploadedMediaItem[] = selected
@@ -743,14 +1003,30 @@ export default function PostComposer({ onCreated }: Props) {
           height: m.height as number,
         }));
 
-      const hasMedia = uploadedMedia.length > 0;
-      await api.createPost({ content, hashtags: tags, media: uploadedMedia }, token);
-      setCooldownUntilMs(Date.now() + (hasMedia ? 120 : 60) * 1000);
+      let musicPayload: UploadedPostMusic | undefined;
+      if (selectedMusic && selectedMusic.uploadStatus === "uploaded" && selectedMusic.audioUrl) {
+        musicPayload = {
+          source: selectedMusic.source,
+          title: selectedMusic.title,
+          artist: selectedMusic.artist,
+          cover_url: selectedMusic.coverUrl,
+          audio_url: selectedMusic.audioUrl,
+          duration_sec: selectedMusic.durationSec,
+          clip_start_sec: selectedMusic.clipStartSec,
+          clip_end_sec: selectedMusic.clipEndSec,
+        };
+      }
+
+      const hasAttachments = uploadedMedia.length > 0 || !!musicPayload;
+      await api.createPost({ content, hashtags: tags, media: uploadedMedia, music: musicPayload }, token);
+      setCooldownUntilMs(Date.now() + (hasAttachments ? 120 : 60) * 1000);
       setMedia((prev) => {
         prev.forEach((m) => URL.revokeObjectURL(m.previewUrl));
         return [];
       });
+      clearMusicSelection();
       setContent("");
+      setEmojiOpen(false);
       setSuggestions([]);
       setActiveTag(null);
       setSuppressedHashtags(new Set());
@@ -767,6 +1043,10 @@ export default function PostComposer({ onCreated }: Props) {
             ? "Дождитесь завершения загрузки медиа"
             : err?.message === "uploads_failed"
               ? "Есть медиа с ошибкой. Удалите или повторите загрузку."
+              : err?.message === "music_upload_pending"
+                ? "Дождитесь завершения загрузки музыки"
+                : err?.message === "music_upload_failed"
+                  ? "Исправьте ошибку загрузки музыки или удалите её"
               : err?.message?.includes("Failed to fetch")
                 ? "Не удалось создать пост (нет соединения)"
                 : err.message || "Не удалось создать пост";
@@ -781,6 +1061,9 @@ export default function PostComposer({ onCreated }: Props) {
   const hasPendingUploads = media.some((m) => m.status === "preparing" || m.status === "uploading");
   const hasUploadErrors = media.some((m) => m.status === "error");
   const uploadedCount = media.filter((m) => m.status === "uploaded").length;
+  const hasMusicPending = music?.uploadStatus === "uploading";
+  const hasMusicError = music?.uploadStatus === "error";
+  const musicPreviewSrc = music ? (music.localPreviewUrl || music.audioUrl || "") : "";
 
   return (
     <form
@@ -794,6 +1077,68 @@ export default function PostComposer({ onCreated }: Props) {
         </div>
       </div>
       <ErrorMessage message={mediaError} />
+      <ErrorMessage message={musicError} />
+
+      <input
+        ref={musicInputRef}
+        type="file"
+        accept="audio/*"
+        className="hidden"
+        onChange={(e) => {
+          handleMusicFiles(e.target.files);
+          e.currentTarget.value = "";
+        }}
+      />
+      {music && (
+        <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+          <div className="flex items-start gap-3">
+            {music.coverUrl ? (
+              <img
+                src={music.coverUrl}
+                alt={music.title}
+                className="h-12 w-12 rounded-lg object-cover bg-white/10"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <span className="h-12 w-12 rounded-lg bg-white/10 text-white/70 grid place-items-center shrink-0">
+                <Music2 className="h-5 w-5" />
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white">{music.title}</p>
+              <p className="truncate text-xs text-white/60">{music.artist || "Unknown artist"}</p>
+              <p className="text-[11px] text-white/45">
+                {music.uploadStatus === "uploading"
+                  ? "Загрузка..."
+                  : music.uploadStatus === "error"
+                    ? "Ошибка загрузки"
+                    : "Ваш файл"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => clearMusicSelection({ deleteRemote: true })}
+              className="h-7 w-7 rounded-full border border-white/15 bg-white/10 text-white/80 hover:bg-white/15"
+              aria-label="Удалить музыку"
+            >
+              <X className="h-4 w-4 mx-auto" />
+            </button>
+          </div>
+
+          {musicPreviewSrc ? (
+            <MusicClipEditor
+              src={musicPreviewSrc}
+              durationSec={music.durationSec}
+              clipStartSec={music.clipStartSec}
+              clipEndSec={music.clipEndSec}
+              maxClipSec={MAX_MUSIC_CLIP_SECONDS}
+              onClipChange={updateMusicClipRange}
+            />
+          ) : null}
+        </div>
+      )}
+
       {media.length > 0 && (
         <div className={`grid gap-2 ${media.length <= 2 ? "grid-cols-2" : "grid-cols-3"}`}>
           {media.map((m) => (
@@ -1079,9 +1424,9 @@ export default function PostComposer({ onCreated }: Props) {
         />
       </div>
       <ErrorMessage message={error} />
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2 text-white/50">
-          <label className="nav-icon bg-white/5 border border-white/10 cursor-pointer">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex gap-2 text-white/50 shrink-0">
+          <label className="nav-icon shrink-0 bg-white/5 border border-white/10 cursor-pointer">
             <ImageIcon className="w-5 h-5" strokeWidth={1.7} />
             <input
               type="file"
@@ -1096,7 +1441,7 @@ export default function PostComposer({ onCreated }: Props) {
           </label>
           <button
             type="button"
-            className="nav-icon bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/25"
+            className="nav-icon shrink-0 bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/25"
             title="Рисование"
             onClick={() => {
               if (mediaRef.current.length >= MAX_MEDIA) {
@@ -1109,11 +1454,40 @@ export default function PostComposer({ onCreated }: Props) {
           >
             <Paintbrush className="w-5 h-5" strokeWidth={1.7} />
           </button>
+          <button
+            ref={emojiButtonRef}
+            type="button"
+            className={`nav-icon shrink-0 border border-amber-300/35 text-amber-200 ${emojiOpen ? "bg-amber-300/25" : "bg-amber-300/10"} hover:bg-amber-300/20 hover:border-amber-200/45`}
+            title="Эмодзи"
+            aria-label="Открыть список эмодзи"
+            onClick={() => setEmojiOpen((prev) => !prev)}
+          >
+            <Smile className="w-5 h-5" strokeWidth={1.7} />
+          </button>
+          <button
+            type="button"
+            className="nav-icon shrink-0 border border-cyan-300/35 bg-cyan-300/10 text-cyan-200 hover:bg-cyan-300/20 hover:border-cyan-200/45"
+            title="Добавить музыку"
+            aria-label="Добавить музыку"
+            onClick={() => musicInputRef.current?.click()}
+          >
+            <Music2 className="w-5 h-5" strokeWidth={1.7} />
+          </button>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-end gap-1 ml-auto">
           {hasPendingUploads && (
             <span className="text-xs text-white/50">
               Загрузка медиа: {uploadedCount}/{media.length}
+            </span>
+          )}
+          {hasMusicPending && (
+            <span className="text-xs text-white/50">
+              Загрузка музыки...
+            </span>
+          )}
+          {hasMusicError && (
+            <span className="text-xs text-red-300/90">
+              Исправьте ошибку музыки перед публикацией
             </span>
           )}
           {remainingSec > 0 && (
@@ -1123,13 +1497,19 @@ export default function PostComposer({ onCreated }: Props) {
           )}
           <button
             type="submit"
-            disabled={loading || !content.trim() || remainingSec > 0 || hasPendingUploads || hasUploadErrors}
+            disabled={loading || !content.trim() || remainingSec > 0 || hasPendingUploads || hasUploadErrors || hasMusicPending || hasMusicError}
             className="rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
           >
             {loading ? "Публикуем..." : "Опубликовать"}
           </button>
         </div>
       </div>
+      <EmojiPicker
+        open={emojiOpen}
+        anchorRef={emojiButtonRef}
+        onClose={() => setEmojiOpen(false)}
+        onSelect={insertEmoji}
+      />
 
       {previewItem &&
         createPortal(

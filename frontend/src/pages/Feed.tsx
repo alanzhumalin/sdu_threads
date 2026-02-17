@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, type ReactionItem } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
@@ -12,21 +12,24 @@ import { ReportModal } from "../components/ReportModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { PostMedia } from "../components/PostMedia";
+import { PostMusic } from "../components/PostMusic";
 import { AuthGateOverlay } from "../components/AuthGateOverlay";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { highlightHashtags } from "../utils/text";
 import { MentionPreview } from "../components/MentionPreview";
+import { EmojiPicker } from "../components/EmojiPicker";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useFollowingFeedStore } from "../store/followingFeed";
 import { useUserStatsStore } from "../store/userStats";
 import { useAuthGateStore } from "../store/authGate";
-import type { MediaItem } from "../types/media";
+import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import {
   Heart,
   MessageCircle,
   Share2,
   Flag,
   Eye,
+  Smile,
 } from "lucide-react";
 
 type FeedItem = {
@@ -39,8 +42,10 @@ type FeedItem = {
   avatar_url?: string;
   created_at: string;
   media?: MediaItem[];
+  music?: PostMusicItem;
   like_count: number;
   liked_by_me: boolean;
+  reactions?: ReactionItem[];
   comment_count?: number;
   view_count: number;
   mentions?: string[];
@@ -73,6 +78,46 @@ const timeAgo = (iso: string) => {
   if (day === 1) return "вчера";
   if (day < 7) return `${day} дн назад`;
   return date.toLocaleString();
+};
+
+const normalizeReactions = (input?: ReactionItem[]) => {
+  if (!Array.isArray(input) || input.length === 0) return [] as ReactionItem[];
+  const cleaned = input
+    .filter((item) => item && typeof item.emoji === "string" && item.emoji.trim() !== "")
+    .map((item) => ({
+      emoji: item.emoji,
+      count: Math.max(0, Number(item.count) || 0),
+      reacted_by_me: Boolean(item.reacted_by_me),
+    }))
+    .filter((item) => item.count > 0);
+  cleaned.sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+  return cleaned;
+};
+
+const toggleReactionInList = (input: ReactionItem[], emoji: string, shouldReact: boolean) => {
+  const current = normalizeReactions(input);
+  const next: ReactionItem[] = [];
+  let touched = false;
+  for (const item of current) {
+    if (item.emoji !== emoji) {
+      next.push(item);
+      continue;
+    }
+    touched = true;
+    const count = item.count + (shouldReact ? 1 : item.reacted_by_me ? -1 : 0);
+    if (count > 0) {
+      next.push({
+        emoji: item.emoji,
+        count,
+        reacted_by_me: shouldReact,
+      });
+    }
+  }
+  if (!touched && shouldReact) {
+    next.push({ emoji, count: 1, reacted_by_me: true });
+  }
+  next.sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+  return next;
 };
 
 export default function FeedPage() {
@@ -114,6 +159,8 @@ export default function FeedPage() {
   const [reportPost, setReportPost] = useState<FeedItem | null>(null);
   const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
+  const [postReactionPickerPostId, setPostReactionPickerPostId] = useState<string | null>(null);
+  const postReactionPickerAnchorRef = useRef<HTMLButtonElement | null>(null);
   const toastTimer = useRef<number | null>(null);
   const loadViewed = () => {
     try {
@@ -153,6 +200,15 @@ export default function FeedPage() {
     setFollowingFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     updateCacheItem(id, patch);
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+  };
+
+  const updatePostReactions = (id: string, reactions: ReactionItem[]) => {
+    const normalized = normalizeReactions(reactions);
+    setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, reactions: normalized } : p)));
+    setFollowingFeed((prev) => prev.map((p) => (p.id === id ? { ...p, reactions: normalized } : p)));
+    updateCacheItem(id, { reactions: normalized });
+    setCommentsPost((prev) => (prev?.id === id ? { ...prev, reactions: normalized } : prev));
+    patchPost(id, { reactions: normalized });
   };
 
   const updateAuthor = (userId: string, patch: Partial<FeedItem>) => {
@@ -401,6 +457,34 @@ export default function FeedPage() {
     else setFollowingError(message);
   };
 
+  const togglePostReaction = async (postId: string, emoji: string) => {
+    if (!token) {
+      showAuthGate({
+        title: "Сначала авторизуйся",
+        message: "Чтобы ставить реакции, нужно войти.",
+        ctaLabel: "Войти",
+      });
+      return;
+    }
+    const currentBase = feed.find((p) => p.id === postId) || followingFeed.find((p) => p.id === postId);
+    const currentPatch = postPatches[postId];
+    const current = currentPatch ? { ...currentBase, ...currentPatch } : currentBase;
+    const previousReactions = normalizeReactions(current?.reactions);
+    const hadReaction = previousReactions.some((item) => item.emoji === emoji && item.reacted_by_me);
+    const optimistic = toggleReactionInList(previousReactions, emoji, !hadReaction);
+
+    updatePostReactions(postId, optimistic);
+    try {
+      const result = hadReaction
+        ? await api.unreactPost(postId, emoji, token)
+        : await api.reactPost(postId, emoji, token);
+      updatePostReactions(postId, result.reactions || []);
+    } catch (e: any) {
+      setActiveError(e.message || "Ошибка реакции");
+      updatePostReactions(postId, previousReactions);
+    }
+  };
+
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) {
       showAuthGate({
@@ -579,6 +663,7 @@ export default function FeedPage() {
           {visibleItems.map((item) => {
             const patch = postPatches[item.id];
             const p = patch ? { ...item, ...patch } : item;
+            const postReactions = normalizeReactions(p.reactions);
             const isMe = item.is_me === true;
             const isSub = !isMe && (subs[item.user_id] ?? item.is_subscribed ?? false);
             const postMeta = { ...p, is_subscribed: isSub, is_me: isMe };
@@ -707,6 +792,30 @@ export default function FeedPage() {
             </p>
 
             <PostMedia media={item.media} />
+            <PostMusic music={item.music} />
+            {postReactions.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                {postReactions.map((reaction) => (
+                  <button
+                    key={`${item.id}-${reaction.emoji}`}
+                    type="button"
+                    onClick={() => {
+                      void togglePostReaction(item.id, reaction.emoji);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition ${
+                      reaction.reacted_by_me
+                        ? "border-amber-300/50 bg-amber-300/20 text-amber-100"
+                        : "border-white/15 bg-white/5 text-white/80 hover:border-white/30 hover:text-white"
+                    }`}
+                    aria-label={`Реакция ${reaction.emoji}`}
+                    title={reaction.reacted_by_me ? "Убрать реакцию" : "Поставить реакцию"}
+                  >
+                    <span className="text-sm leading-none">{reaction.emoji}</span>
+                    <span className="font-medium">{reaction.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="mt-4 flex items-center justify-between text-sm text-white/60">
               <div className="flex items-center gap-6">
@@ -740,6 +849,23 @@ export default function FeedPage() {
                 >
                   <MessageCircle className="w-5 h-5" strokeWidth={1.7} />
                   <span>{p.comment_count ?? 0}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    postReactionPickerAnchorRef.current = event.currentTarget;
+                    setPostReactionPickerPostId((prev) => (prev === item.id ? null : item.id));
+                  }}
+                  className={`flex items-center gap-2 rounded-full px-2 py-1 transition ${
+                    postReactionPickerPostId === item.id
+                      ? "text-amber-200 bg-amber-300/15 border border-amber-300/30"
+                      : "text-white/60 hover:text-white"
+                  }`}
+                  aria-label="Добавить реакцию"
+                  title="Добавить реакцию"
+                >
+                  <Smile className="w-5 h-5" strokeWidth={1.7} />
+                  <span className="font-medium">Реакция</span>
                 </button>
               </div>
 
@@ -787,6 +913,17 @@ export default function FeedPage() {
           />
         )}
       </div>
+      <EmojiPicker
+        open={postReactionPickerPostId !== null}
+        anchorRef={postReactionPickerAnchorRef}
+        onClose={() => setPostReactionPickerPostId(null)}
+        onSelect={(emoji) => {
+          const targetPostID = postReactionPickerPostId;
+          setPostReactionPickerPostId(null);
+          if (!targetPostID) return;
+          void togglePostReaction(targetPostID, emoji);
+        }}
+      />
       <TopUsers />
       {reportPost && (
         <ReportModal

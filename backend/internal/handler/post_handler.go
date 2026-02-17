@@ -62,7 +62,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				media = append(media, dto.MediaItem{URL: u})
 			}
 		}
-		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Hashtags); err != nil {
+		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.Hashtags); err != nil {
 			var rl *apperror.RateLimitError
 			if errors.As(err, &rl) {
 				w.Header().Set("Retry-After", strconv.Itoa(rl.RetryAfterSeconds))
@@ -98,7 +98,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) {
-	// Paths: /api/posts/{id}, /api/posts/{id}/like, /api/posts/{id}/view
+	// Paths: /api/posts/{id}, /api/posts/{id}/like, /api/posts/{id}/view, /api/posts/{id}/reactions
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/posts/")
 	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
 
@@ -122,7 +122,7 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if len(parts) != 2 || (parts[1] != "like" && parts[1] != "view") {
+	if len(parts) != 2 || (parts[1] != "like" && parts[1] != "view" && parts[1] != "reactions") {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
@@ -172,6 +172,49 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "viewed"})
+	case "reactions":
+		switch r.Method {
+		case http.MethodPost:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			var req dto.ReactionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+			reactions, err := h.service.React(r.Context(), postID, userID, req.Emoji)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixFeedPublic)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":    "reacted",
+				"reactions": reactions,
+			})
+		case http.MethodDelete:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			emoji := strings.TrimSpace(r.URL.Query().Get("emoji"))
+			reactions, err := h.service.Unreact(r.Context(), postID, userID, emoji)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixFeedPublic)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":    "unreacted",
+				"reactions": reactions,
+			})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 	}
 }
 

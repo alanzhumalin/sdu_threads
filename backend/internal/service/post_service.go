@@ -1,9 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,18 +84,323 @@ func effectiveMediaItems(raw []byte, legacy string) []dto.MediaItem {
 	return []dto.MediaItem{{URL: legacy}}
 }
 
-type PostService struct {
-	posts    *repository.PostRepository
-	likes    *repository.LikeRepository
-	tags     *repository.HashtagRepository
-	users    *repository.UserRepository
-	fols     *repository.FollowRepository
-	uploader *storage.S3Uploader
-	mod      *moderation.Client
+const (
+	maxPostMusicBytes       = 15 * 1024 * 1024
+	maxPostMusicClipSeconds = 30
+	maxPostMusicDurationSec = 30 * 60
+)
+
+func clampPostMusicText(raw string, max int) string {
+	raw = strings.TrimSpace(raw)
+	if max <= 0 {
+		return raw
+	}
+	runes := []rune(raw)
+	if len(runes) <= max {
+		return raw
+	}
+	return string(runes[:max])
 }
 
-func NewPostService(posts *repository.PostRepository, likes *repository.LikeRepository, tags *repository.HashtagRepository, users *repository.UserRepository, fols *repository.FollowRepository, uploader *storage.S3Uploader, mod *moderation.Client) *PostService {
-	return &PostService{posts: posts, likes: likes, tags: tags, users: users, fols: fols, uploader: uploader, mod: mod}
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	if u == nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return strings.TrimSpace(u.Host) != ""
+}
+
+type PostService struct {
+	posts     *repository.PostRepository
+	likes     *repository.LikeRepository
+	reactions *repository.ReactionRepository
+	tags      *repository.HashtagRepository
+	users     *repository.UserRepository
+	fols      *repository.FollowRepository
+	uploader  *storage.S3Uploader
+	mod       *moderation.Client
+}
+
+func NewPostService(
+	posts *repository.PostRepository,
+	likes *repository.LikeRepository,
+	reactions *repository.ReactionRepository,
+	tags *repository.HashtagRepository,
+	users *repository.UserRepository,
+	fols *repository.FollowRepository,
+	uploader *storage.S3Uploader,
+	mod *moderation.Client,
+) *PostService {
+	return &PostService{
+		posts:     posts,
+		likes:     likes,
+		reactions: reactions,
+		tags:      tags,
+		users:     users,
+		fols:      fols,
+		uploader:  uploader,
+		mod:       mod,
+	}
+}
+
+func toPostMusicDTO(m models.PostMusic) *dto.PostMusic {
+	audioURL := strings.TrimSpace(m.AudioURL)
+	if audioURL == "" {
+		return nil
+	}
+	return &dto.PostMusic{
+		Source:       strings.TrimSpace(m.Source),
+		TrackID:      strings.TrimSpace(m.TrackID),
+		Title:        strings.TrimSpace(m.Title),
+		Artist:       strings.TrimSpace(m.Artist),
+		CoverURL:     strings.TrimSpace(m.CoverURL),
+		AudioURL:     audioURL,
+		DurationSec:  m.DurationSec,
+		ClipStartSec: m.ClipStartSec,
+		ClipEndSec:   m.ClipEndSec,
+	}
+}
+
+func (s *PostService) enrichMusic(ctx context.Context, items []repository.FeedItem) (map[string]*dto.PostMusic, error) {
+	result := make(map[string]*dto.PostMusic, len(items))
+	if len(items) == 0 {
+		return result, nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		ids = append(ids, it.ID)
+	}
+	rows, err := s.posts.MusicByPostIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		row, ok := rows[it.ID]
+		if !ok {
+			result[it.ID] = nil
+			continue
+		}
+		result[it.ID] = toPostMusicDTO(row)
+	}
+	return result, nil
+}
+
+func normalizeMusicClip(durationSec, startSec, endSec int) (int, int, int, error) {
+	if durationSec < 0 {
+		durationSec = 0
+	}
+	if durationSec > maxPostMusicDurationSec {
+		return 0, 0, 0, errors.New("music duration is too long")
+	}
+	if startSec < 0 {
+		startSec = 0
+	}
+
+	if endSec <= 0 {
+		if durationSec > 0 {
+			endSec = durationSec
+		} else {
+			endSec = startSec + maxPostMusicClipSeconds
+		}
+	}
+	if durationSec > 0 && endSec > durationSec {
+		endSec = durationSec
+	}
+	if endSec <= startSec {
+		return 0, 0, 0, errors.New("invalid music clip range")
+	}
+	if endSec-startSec > maxPostMusicClipSeconds {
+		return 0, 0, 0, errors.New("music clip is too long (max 30 sec)")
+	}
+	return durationSec, startSec, endSec, nil
+}
+
+func (s *PostService) verifyUploadedPostMusic(ctx context.Context, userID, audioURL string) (string, string, error) {
+	if s.uploader == nil {
+		return "", "", errors.New("media storage is not configured")
+	}
+	key, ok := s.uploader.KeyFromPublicURL(audioURL)
+	if !ok {
+		return "", "", errors.New("invalid music url")
+	}
+	prefix := s.uploader.KeyPrefix("post_music", userID) + "/"
+	if !strings.HasPrefix(key, prefix) {
+		return "", "", errors.New("invalid music url")
+	}
+	st, err := s.uploader.Stat(ctx, key)
+	if err != nil {
+		return "", "", errors.New("music file not found")
+	}
+	if st.Size <= 0 || st.Size > maxPostMusicBytes {
+		_ = s.uploader.Remove(ctx, key)
+		return "", "", errors.New("music file too large (max 15MB)")
+	}
+	return s.uploader.PublicURL(key), key, nil
+}
+
+func runFFmpegCut(ctx context.Context, inputPath, outputPath string, clipStartSec, clipDurationSec int) error {
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-nostdin",
+		"-y",
+		"-i", inputPath,
+		"-ss", strconv.Itoa(clipStartSec),
+		"-t", strconv.Itoa(clipDurationSec),
+		"-vn",
+		"-ac", "2",
+		"-ar", "44100",
+		"-c:a", "libmp3lame",
+		"-b:a", "160k",
+		outputPath,
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return errors.New("music processing is unavailable")
+	}
+	if len(out) > 0 {
+		return errors.New("failed to process music clip")
+	}
+	return errors.New("failed to process music clip")
+}
+
+func (s *PostService) trimUploadedPostMusic(ctx context.Context, userID, sourceKey string, clipStartSec, clipEndSec int) (string, int, error) {
+	if s.uploader == nil {
+		return "", 0, errors.New("media storage is not configured")
+	}
+	clipDurationSec := clipEndSec - clipStartSec
+	if clipDurationSec <= 0 {
+		return "", 0, errors.New("invalid music clip range")
+	}
+
+	srcReader, srcStat, err := s.uploader.Get(ctx, sourceKey)
+	if err != nil {
+		return "", 0, errors.New("music file not found")
+	}
+	defer func() { _ = srcReader.Close() }()
+
+	if srcStat.Size <= 0 || srcStat.Size > maxPostMusicBytes {
+		return "", 0, errors.New("music file too large (max 15MB)")
+	}
+
+	tmpIn, err := os.CreateTemp("", "post-music-src-*.bin")
+	if err != nil {
+		return "", 0, errors.New("failed to prepare music processing")
+	}
+	tmpInPath := tmpIn.Name()
+	defer func() {
+		_ = tmpIn.Close()
+		_ = os.Remove(tmpInPath)
+	}()
+
+	n, err := io.Copy(tmpIn, io.LimitReader(srcReader, maxPostMusicBytes+1))
+	if err != nil {
+		return "", 0, errors.New("failed to prepare music processing")
+	}
+	if n <= 0 || n > maxPostMusicBytes {
+		return "", 0, errors.New("music file too large (max 15MB)")
+	}
+
+	tmpOut, err := os.CreateTemp("", "post-music-cut-*.mp3")
+	if err != nil {
+		return "", 0, errors.New("failed to prepare music processing")
+	}
+	tmpOutPath := tmpOut.Name()
+	_ = tmpOut.Close()
+	defer func() { _ = os.Remove(tmpOutPath) }()
+
+	if err := runFFmpegCut(ctx, tmpInPath, tmpOutPath, clipStartSec, clipDurationSec); err != nil {
+		return "", 0, err
+	}
+
+	outBytes, err := os.ReadFile(tmpOutPath)
+	if err != nil {
+		return "", 0, errors.New("failed to process music clip")
+	}
+	if len(outBytes) == 0 {
+		return "", 0, errors.New("failed to process music clip")
+	}
+	if len(outBytes) > maxPostMusicBytes {
+		return "", 0, errors.New("music file too large (max 15MB)")
+	}
+
+	targetKey := s.uploader.BuildKey("post_music", userID, "mp3")
+	audioURL, err := s.uploader.Put(ctx, targetKey, bytes.NewReader(outBytes), int64(len(outBytes)), "audio/mpeg")
+	if err != nil {
+		return "", 0, errors.New("failed to save processed music")
+	}
+	if sourceKey != "" && sourceKey != targetKey {
+		_ = s.uploader.Remove(ctx, sourceKey)
+	}
+
+	return audioURL, clipDurationSec, nil
+}
+
+func (s *PostService) preparePostMusic(ctx context.Context, userID string, input *dto.PostMusic) (*models.PostMusic, error) {
+	if input == nil {
+		return nil, nil
+	}
+	audioURL := strings.TrimSpace(input.AudioURL)
+	if audioURL == "" {
+		return nil, errors.New("music audio_url is required")
+	}
+
+	source := strings.ToLower(strings.TrimSpace(input.Source))
+	if source == "" {
+		source = "upload"
+	}
+	if source != "upload" {
+		return nil, errors.New("only uploaded music is supported")
+	}
+
+	duration, clipStart, clipEnd, err := normalizeMusicClip(input.DurationSec, input.ClipStartSec, input.ClipEndSec)
+	if err != nil {
+		return nil, err
+	}
+
+	audioURL, sourceKey, err := s.verifyUploadedPostMusic(ctx, userID, audioURL)
+	if err != nil {
+		return nil, err
+	}
+	audioURL, clipDuration, err := s.trimUploadedPostMusic(ctx, userID, sourceKey, clipStart, clipEnd)
+	if err != nil {
+		return nil, err
+	}
+	duration = clipDuration
+	clipStart = 0
+	clipEnd = clipDuration
+
+	title := clampPostMusicText(input.Title, 160)
+	if title == "" {
+		title = "Music"
+	}
+	artist := clampPostMusicText(input.Artist, 120)
+	coverURL := strings.TrimSpace(input.CoverURL)
+	if coverURL != "" && !isHTTPURL(coverURL) {
+		coverURL = ""
+	}
+
+	return &models.PostMusic{
+		Source:       source,
+		TrackID:      clampPostMusicText(input.TrackID, 100),
+		Title:        title,
+		Artist:       artist,
+		CoverURL:     coverURL,
+		AudioURL:     audioURL,
+		DurationSec:  duration,
+		ClipStartSec: clipStart,
+		ClipEndSec:   clipEnd,
+	}, nil
 }
 
 func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media []dto.MediaItem) ([]dto.MediaItem, error) {
@@ -182,7 +493,41 @@ func (s *PostService) enrichHashtags(ctx context.Context, items []repository.Fee
 	return result, nil
 }
 
-func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem) (*models.Post, error) {
+func (s *PostService) enrichReactions(
+	ctx context.Context,
+	items []repository.FeedItem,
+	viewerID *string,
+) (map[string][]dto.ReactionItem, error) {
+	result := make(map[string][]dto.ReactionItem, len(items))
+	if len(items) == 0 {
+		return result, nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		ids = append(ids, it.ID)
+	}
+	if s.reactions == nil {
+		for _, id := range ids {
+			result[id] = []dto.ReactionItem{}
+		}
+		return result, nil
+	}
+
+	viewer := ""
+	if viewerID != nil {
+		viewer = strings.TrimSpace(*viewerID)
+	}
+	byPostID, err := s.reactions.ListPostReactions(ctx, ids, viewer)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = mapReactionItems(byPostID[id])
+	}
+	return result, nil
+}
+
+func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic) (*models.Post, error) {
 	if userID == "" {
 		return nil, errors.New("user_id is required")
 	}
@@ -255,6 +600,11 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 	if len(clean) > 5 {
 		return nil, errors.New("too many media files (max 5)")
 	}
+
+	preparedMusic, err := s.preparePostMusic(ctx, userID, music)
+	if err != nil {
+		return nil, err
+	}
 	mediaURL := ""
 	if len(clean) > 0 {
 		mediaURL = clean[0].URL
@@ -280,7 +630,7 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 		HourMaxPosts:  10,
 		MediaCooldown: 120 * time.Second,
 	}
-	if err := s.posts.CreateWithRateLimit(ctx, &post, rows, limits); err != nil {
+	if err := s.posts.CreateWithRateLimit(ctx, &post, rows, preparedMusic, limits); err != nil {
 		return nil, err
 	}
 	return &post, nil
@@ -296,6 +646,14 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 		return nil, err
 	}
 	hashtagMap, err := s.enrichHashtags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -331,10 +689,12 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -363,6 +723,14 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 	if err != nil {
 		return nil, err
 	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, &viewerID)
+	if err != nil {
+		return nil, err
+	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
 		media := effectiveMediaItems(it.Media, it.MediaURL)
@@ -378,10 +746,12 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -410,6 +780,14 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 	if err != nil {
 		return nil, err
 	}
+	musicMap, err := s.enrichMusic(ctx, []repository.FeedItem{*item})
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, []repository.FeedItem{*item}, viewerID)
+	if err != nil {
+		return nil, err
+	}
 	isMe := viewerID != nil && *viewerID == item.UserID
 	isSub := false
 	if !isMe && viewerID != nil && s.fols != nil {
@@ -426,10 +804,12 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 		AvatarURL:    item.AvatarURL,
 		Content:      item.Content,
 		Media:        media,
+		Music:        musicMap[item.ID],
 		CreatedAt:    item.CreatedAt,
 		UpdatedAt:    item.UpdatedAt,
 		LikeCount:    item.LikeCount,
 		LikedByMe:    item.LikedByMe,
+		Reactions:    reactionMap[item.ID],
 		ViewCount:    item.ViewCount,
 		CommentCount: item.CommentCount,
 		Mentions:     mentionMap[item.ID],
@@ -450,6 +830,14 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 		return nil, err
 	}
 	hashtagMap, err := s.enrichHashtags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -476,10 +864,12 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -507,6 +897,14 @@ func (s *PostService) ByUserQuery(ctx context.Context, userID, query string, lim
 	if err != nil {
 		return nil, err
 	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
+	if err != nil {
+		return nil, err
+	}
 	followMap := map[string]bool{}
 	if viewerID != nil && s.fols != nil && userID != *viewerID {
 		if m, err := s.fols.FollowingMap(ctx, *viewerID, []string{userID}); err == nil {
@@ -530,10 +928,12 @@ func (s *PostService) ByUserQuery(ctx context.Context, userID, query string, lim
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -555,6 +955,14 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 		return nil, err
 	}
 	hashtagMap, err := s.enrichHashtags(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -595,10 +1003,12 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -623,6 +1033,14 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 	if err != nil {
 		return nil, err
 	}
+	musicMap, err := s.enrichMusic(ctx, items)
+	if err != nil {
+		return nil, err
+	}
+	reactionMap, err := s.enrichReactions(ctx, items, nil)
+	if err != nil {
+		return nil, err
+	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
 		media := effectiveMediaItems(it.Media, it.MediaURL)
@@ -635,10 +1053,12 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 			AvatarURL:    it.AvatarURL,
 			Content:      it.Content,
 			Media:        media,
+			Music:        musicMap[it.ID],
 			CreatedAt:    it.CreatedAt,
 			UpdatedAt:    it.UpdatedAt,
 			LikeCount:    it.LikeCount,
 			LikedByMe:    it.LikedByMe,
+			Reactions:    reactionMap[it.ID],
 			ViewCount:    it.ViewCount,
 			CommentCount: it.CommentCount,
 			Mentions:     mentionMap[it.ID],
@@ -671,9 +1091,59 @@ func (s *PostService) Unlike(ctx context.Context, postID, userID string) error {
 	return s.likes.Remove(ctx, postID, userID)
 }
 
+func (s *PostService) React(ctx context.Context, postID, userID, emoji string) ([]dto.ReactionItem, error) {
+	if userID == "" || postID == "" {
+		return nil, errors.New("post_id and user_id are required")
+	}
+	if s.reactions == nil {
+		return nil, errors.New("reactions repository is not configured")
+	}
+	exists, err := s.posts.Exists(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New("post not found")
+	}
+
+	emoji, err = normalizeReactionEmoji(emoji)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reactions.AddPostReaction(ctx, postID, userID, emoji); err != nil {
+		return nil, err
+	}
+	reactionsByPost, err := s.reactions.ListPostReactions(ctx, []string{postID}, userID)
+	if err != nil {
+		return nil, err
+	}
+	return mapReactionItems(reactionsByPost[postID]), nil
+}
+
+func (s *PostService) Unreact(ctx context.Context, postID, userID, emoji string) ([]dto.ReactionItem, error) {
+	if userID == "" || postID == "" {
+		return nil, errors.New("post_id and user_id are required")
+	}
+	if s.reactions == nil {
+		return nil, errors.New("reactions repository is not configured")
+	}
+	emoji, err := normalizeReactionEmoji(emoji)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reactions.RemovePostReaction(ctx, postID, userID, emoji); err != nil {
+		return nil, err
+	}
+	reactionsByPost, err := s.reactions.ListPostReactions(ctx, []string{postID}, userID)
+	if err != nil {
+		return nil, err
+	}
+	return mapReactionItems(reactionsByPost[postID]), nil
+}
+
 // CreateWithTags creates post and attaches hashtags.
-func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, tags []string) error {
-	post, err := s.Create(ctx, userID, content, media)
+func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, tags []string) error {
+	post, err := s.Create(ctx, userID, content, media, music)
 	if err != nil {
 		return err
 	}

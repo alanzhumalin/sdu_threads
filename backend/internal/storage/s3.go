@@ -167,6 +167,26 @@ func (u *S3Uploader) Stat(ctx context.Context, objectKey string) (ObjectStat, er
 	return ObjectStat{Size: info.Size, ContentType: info.ContentType}, nil
 }
 
+func (u *S3Uploader) Get(ctx context.Context, objectKey string) (io.ReadCloser, ObjectStat, error) {
+	if u == nil {
+		return nil, ObjectStat{}, ErrDisabled
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return nil, ObjectStat{}, errors.New("object key is required")
+	}
+	obj, err := u.c.GetObject(ctx, u.bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, ObjectStat{}, err
+	}
+	info, err := obj.Stat()
+	if err != nil {
+		_ = obj.Close()
+		return nil, ObjectStat{}, err
+	}
+	return obj, ObjectStat{Size: info.Size, ContentType: info.ContentType}, nil
+}
+
 func (u *S3Uploader) Remove(ctx context.Context, objectKey string) error {
 	if u == nil {
 		return ErrDisabled

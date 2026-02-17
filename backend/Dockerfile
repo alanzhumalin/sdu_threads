@@ -24,8 +24,8 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o /bin/app ./cmd
 FROM alpine:3.19
 WORKDIR /app
 
-# Runtime deps: certs/tz + libwebp shared library
-RUN apk add --no-cache ca-certificates tzdata libwebp && \
+# Runtime deps: certs/tz + libwebp shared library + ffmpeg for post music clipping
+RUN apk add --no-cache ca-certificates tzdata libwebp ffmpeg && \
     adduser -D -g '' appuser
 
 COPY --from=builder /bin/app /usr/local/bin/app

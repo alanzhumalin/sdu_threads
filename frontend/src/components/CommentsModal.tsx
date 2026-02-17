@@ -12,7 +12,8 @@ import { usePostCacheStore } from "../store/postCache";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { MentionPreview } from "./MentionPreview";
 import { PostMedia } from "./PostMedia";
-import type { MediaItem } from "../types/media";
+import { PostMusic } from "./PostMusic";
+import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import { AvatarCircle } from "./Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
 
@@ -48,6 +49,7 @@ export type PostMeta = {
   content: string;
   created_at: string;
   media?: MediaItem[];
+  music?: PostMusicItem;
   like_count: number;
   liked_by_me: boolean;
   view_count: number;
@@ -1041,6 +1043,7 @@ useLayoutEffect(() => {
               {highlightHashtags(post.content, toSet(post.mentions), toSet(post.hashtags))}
             </p>
             <PostMedia media={post.media} />
+            <PostMusic music={post.music} />
             <div className="mt-3 flex items-center gap-4 text-sm text-white/70">
               <button
                 className={`flex items-center gap-2 rounded-full px-2 py-1 transition ${postMeta.liked_by_me ? "text-red-300" : "hover:text-white"}`}

@@ -30,7 +30,24 @@ var (
 	errInvalidMediaType = errors.New("invalid_media_type")
 )
 
-const maxMediaBytes = 5 * 1024 * 1024
+const (
+	maxDefaultMediaBytes = 5 * 1024 * 1024
+	maxPostMusicBytes    = 15 * 1024 * 1024
+)
+
+func maxBytesForPurpose(purpose string) int {
+	if purpose == "post_music" {
+		return maxPostMusicBytes
+	}
+	return maxDefaultMediaBytes
+}
+
+func maxBytesLabelForPurpose(purpose string) string {
+	if purpose == "post_music" {
+		return "15MB"
+	}
+	return "5MB"
+}
 
 func normalizeContentType(raw string) string {
 	ct := strings.ToLower(strings.TrimSpace(raw))
@@ -61,6 +78,12 @@ func normalizeMediaContentType(raw, purpose string) (ct string, mediaType string
 		if c, yes := normalizeImageContentType(raw); yes {
 			return c, "image", true
 		}
+		if c, yes := normalizeChatAudioContentType(raw); yes {
+			return c, "audio", true
+		}
+		return "", "", false
+	}
+	if purpose == "post_music" {
 		if c, yes := normalizeChatAudioContentType(raw); yes {
 			return c, "audio", true
 		}
@@ -263,7 +286,7 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background", "chat":
+	case "post", "avatar", "background", "chat", "post_music":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",
@@ -310,12 +333,15 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]*storage.PresignedPut, 0, len(req.Files))
+	maxBytes := int64(maxBytesForPurpose(purpose))
 	for _, f := range req.Files {
 		ct, _, ok := normalizeMediaContentType(f.ContentType, purpose)
 		if !ok {
 			msg := "Можно загрузить только изображения (без SVG)"
 			if purpose == "chat" {
 				msg = "Для чата разрешены изображения или аудио до 5MB"
+			} else if purpose == "post_music" {
+				msg = "Для музыки поста разрешены только аудио-файлы до 15MB"
 			}
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "INVALID_MEDIA_TYPE",
@@ -323,10 +349,10 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if f.SizeBytes <= 0 || f.SizeBytes > maxMediaBytes {
+		if f.SizeBytes <= 0 || f.SizeBytes > maxBytes {
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "FILE_TOO_LARGE",
-				Message: "Размер файла не должен превышать 5MB",
+				Message: "Размер файла не должен превышать " + maxBytesLabelForPurpose(purpose),
 			})
 			return
 		}
@@ -373,7 +399,7 @@ func (h *MediaHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background", "chat":
+	case "post", "avatar", "background", "chat", "post_music":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",
@@ -450,8 +476,8 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 
-	// 30MB request cap to allow up to 5 files x 5MB plus multipart overhead.
-	const maxBodyBytes = 30 << 20
+	// Request cap: up to 5 files of purpose-specific size plus multipart overhead.
+	maxBodyBytes := int64(maxBytesForPurpose(purpose)*5 + 5<<20)
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := r.ParseMultipartForm(maxBodyBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
@@ -542,12 +568,12 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errInvalidMediaType
 				return
 			}
-			if len(data) == 0 || len(data) > maxMediaBytes {
+			if len(data) == 0 || len(data) > maxBytesForPurpose(purpose) {
 				errs <- errFileTooLarge
 				return
 			}
-			// Для личных чатов не применяем ML-модерацию медиа.
-			if purpose != "chat" && h.mod != nil {
+			// Для аудио и личных чатов ML-модерацию изображений не применяем.
+			if mediaType == "image" && purpose != "chat" && h.mod != nil {
 				if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
 					ActorUserID: userID,
 					Action:      "upload_media",
@@ -605,7 +631,7 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, errFileTooLarge) {
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "FILE_TOO_LARGE",
-					Message: "Файл не должен превышать 5MB",
+					Message: "Файл не должен превышать " + maxBytesLabelForPurpose(purpose),
 				})
 				return
 			}
@@ -613,6 +639,8 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				msg := "Можно загрузить только изображения (без SVG)"
 				if purpose == "chat" {
 					msg = "Для чата разрешены изображения или аудио до 5MB"
+				} else if purpose == "post_music" {
+					msg = "Для музыки поста разрешены только аудио-файлы до 15MB"
 				}
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "INVALID_MEDIA_TYPE",

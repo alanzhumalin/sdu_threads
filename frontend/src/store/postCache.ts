@@ -6,6 +6,11 @@ export type PostPatch = {
   comment_count?: number;
   view_count?: number;
   is_subscribed?: boolean;
+  reactions?: {
+    emoji: string;
+    count: number;
+    reacted_by_me: boolean;
+  }[];
 };
 
 type State = {
@@ -25,4 +30,3 @@ export const usePostCacheStore = create<State>((set) => ({
     })),
   clear: () => set({ byId: {} }),
 }));
-

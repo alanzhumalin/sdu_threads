@@ -12,6 +12,7 @@ import { DrawingModal } from "../components/DrawingModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { PostMedia } from "../components/PostMedia";
+import { PostMusic } from "../components/PostMusic";
 import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2 } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { CommentsModal } from "../components/CommentsModal";
@@ -1273,6 +1274,7 @@ export default function ProfilePage() {
                 </p>
 
                 <PostMedia media={item.media} />
+                <PostMusic music={item.music} />
 
                 <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                   <div className="flex items-center gap-6">

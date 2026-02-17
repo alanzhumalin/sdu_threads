@@ -17,6 +17,7 @@ import {
   Play,
   Reply,
   SendHorizontal,
+  Smile,
   Sparkles,
   Square,
   Sun,
@@ -25,12 +26,20 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useAudioPlayer } from "react-use-audio-player";
 
-import { api, type ChatMessage, type ChatMessageAttachment, type ChatPreview } from "../api/client";
+import {
+  api,
+  type ChatMessage,
+  type ChatMessageAttachment,
+  type ChatPreview,
+  type ReactionItem,
+} from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { AvatarCircle } from "../components/Avatar";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { EmojiPicker } from "../components/EmojiPicker";
 import { MediaViewerModal } from "../components/MediaViewerModal";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { insertTextAtSelection } from "../utils/textarea";
 
 type UiMessage = ChatMessage & {
   pending?: boolean;
@@ -57,6 +66,12 @@ type ChatSocketEvent =
   | { type: "ready"; chat_id: string }
   | { type: "message_created"; chat_id: string; message: ChatMessage }
   | { type: "message.created"; chat_id: string; message: ChatMessage }
+  | {
+      type: "message_reaction_updated";
+      chat_id: string;
+      message_id: string;
+      reactions: ReactionItem[];
+    }
   | { type: "messages_read"; chat_id: string; user_id: string; message_ids: string[]; read_at?: string }
   | { type: "chat_typing"; chat_id: string; user_id: string; is_typing: boolean }
   | { type: "chat_theme_updated"; chat_id: string; theme_key: string }
@@ -263,6 +278,46 @@ const toFiniteSeconds = (value: unknown) => {
 };
 
 const toRoundedSeconds = (value: unknown) => Math.max(0, Math.round(toFiniteSeconds(value)));
+
+const normalizeMessageReactions = (input?: ReactionItem[]) => {
+  if (!Array.isArray(input) || input.length === 0) return [] as ReactionItem[];
+  const cleaned = input
+    .filter((item) => item && typeof item.emoji === "string" && item.emoji.trim() !== "")
+    .map((item) => ({
+      emoji: item.emoji,
+      count: Math.max(0, Number(item.count) || 0),
+      reacted_by_me: Boolean(item.reacted_by_me),
+    }))
+    .filter((item) => item.count > 0);
+  cleaned.sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+  return cleaned;
+};
+
+const toggleMessageReactionInList = (input: ReactionItem[], emoji: string, shouldReact: boolean) => {
+  const current = normalizeMessageReactions(input);
+  const next: ReactionItem[] = [];
+  let touched = false;
+  for (const item of current) {
+    if (item.emoji !== emoji) {
+      next.push(item);
+      continue;
+    }
+    touched = true;
+    const count = item.count + (shouldReact ? 1 : item.reacted_by_me ? -1 : 0);
+    if (count > 0) {
+      next.push({
+        emoji: item.emoji,
+        count,
+        reacted_by_me: shouldReact,
+      });
+    }
+  }
+  if (!touched && shouldReact) {
+    next.push({ emoji, count: 1, reacted_by_me: true });
+  }
+  next.sort((a, b) => b.count - a.count || a.emoji.localeCompare(b.emoji));
+  return next;
+};
 
 type ChatAudioPreviewVariant = "composer" | "mine" | "peer";
 
@@ -632,10 +687,15 @@ export default function ChatConversationPage() {
   const [peerTyping, setPeerTyping] = useState(false);
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [messageReactionPickerMessageId, setMessageReactionPickerMessageId] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
+  const messageReactionAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const pollInFlightRef = useRef(false);
@@ -666,6 +726,9 @@ export default function ChatConversationPage() {
   const recordingTickTimerRef = useRef<number | null>(null);
   const composerUploadPromisesRef = useRef<Map<string, Promise<ChatMessageAttachment>>>(new Map());
   const optimisticBlobUrlsRef = useRef<Map<string, string[]>>(new Map());
+  const sendInFlightRef = useRef(false);
+  const sendTapIntentUntilRef = useRef(0);
+  const composerSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
 
   const peerID = chat?.participant?.id || "";
   const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
@@ -758,6 +821,18 @@ export default function ChatConversationPage() {
       window.clearInterval(recordingTickTimerRef.current);
       recordingTickTimerRef.current = null;
     }
+  };
+
+  const getComposerCurrentValue = () => {
+    return String(composerInputRef.current?.value ?? body ?? "");
+  };
+
+  const rememberComposerSelection = (input: HTMLTextAreaElement | null) => {
+    if (!input) return;
+    const max = input.value.length;
+    const start = Math.max(0, Math.min(input.selectionStart ?? max, max));
+    const end = Math.max(start, Math.min(input.selectionEnd ?? start, max));
+    composerSelectionRef.current = { start, end };
   };
 
   const stopAudioStream = () => {
@@ -1282,6 +1357,61 @@ export default function ChatConversationPage() {
     scheduleTypingStop();
   };
 
+  const insertEmojiIntoComposer = (emoji: string) => {
+    if (isRecordingAudio) return;
+    const input = composerInputRef.current;
+    const live = getComposerCurrentValue();
+    const fallbackStart = Math.min(composerSelectionRef.current.start, live.length);
+    const fallbackEnd = Math.min(composerSelectionRef.current.end, live.length);
+    const start = input?.selectionStart ?? fallbackStart;
+    const end = input?.selectionEnd ?? fallbackEnd;
+    const { nextValue, caret } = insertTextAtSelection(live, emoji, start, end);
+
+    setBody(nextValue);
+    handleTypingByBody(nextValue);
+    setEmojiOpen(false);
+
+    requestAnimationFrame(() => {
+      const node = composerInputRef.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(caret, caret);
+      composerSelectionRef.current = { start: caret, end: caret };
+    });
+  };
+
+  const setMessageReactions = (messageID: string, reactions: ReactionItem[]) => {
+    const normalized = normalizeMessageReactions(reactions);
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageID ? { ...msg, reactions: normalized } : msg))
+    );
+  };
+
+  const toggleMessageReaction = async (messageID: string, emoji: string) => {
+    if (!token || !chatId) return;
+    const message = messages.find((item) => item.id === messageID);
+    if (!message || message.pending || message.failed) {
+      return;
+    }
+
+    const previousReactions = normalizeMessageReactions(message.reactions);
+    const hadReaction = previousReactions.some(
+      (reaction) => reaction.emoji === emoji && reaction.reacted_by_me
+    );
+    const optimistic = toggleMessageReactionInList(previousReactions, emoji, !hadReaction);
+    setMessageReactions(messageID, optimistic);
+
+    try {
+      const result = hadReaction
+        ? await api.unreactChatMessage(chatId, messageID, emoji, token)
+        : await api.reactChatMessage(chatId, messageID, emoji, token);
+      setMessageReactions(messageID, result.reactions || []);
+    } catch (e: any) {
+      setMessageReactions(messageID, previousReactions);
+      setError(e.message || "Не удалось изменить реакцию");
+    }
+  };
+
   useEffect(() => {
     return () => {
       clearMarkReadRetryTimer();
@@ -1418,6 +1548,8 @@ export default function ChatConversationPage() {
     setThemeError("");
     setThemeSaving(false);
     setThemeMenuOpen(false);
+    setEmojiOpen(false);
+    setMessageReactionPickerMessageId(null);
     setMediaError("");
     setComposerAttachments((prev) => {
       prev.forEach((item) => URL.revokeObjectURL(item.previewUrl));
@@ -1658,6 +1790,17 @@ export default function ChatConversationPage() {
           return;
         }
 
+        if (parsed.type === "message_reaction_updated" && parsed.chat_id === chatId) {
+          const messageID = String(parsed.message_id || "").trim();
+          if (!messageID) return;
+          debugChat(chatId, "ws_message_reaction_updated", {
+            messageId: messageID,
+            reactions: parsed.reactions,
+          });
+          setMessageReactions(messageID, parsed.reactions || []);
+          return;
+        }
+
         if (parsed.type === "messages_read" && parsed.chat_id === chatId) {
           const ids = Array.isArray(parsed.message_ids) ? parsed.message_ids : [];
           if (ids.length === 0) return;
@@ -1879,12 +2022,13 @@ export default function ChatConversationPage() {
   };
 
   const sendMessage = async () => {
-    if (!token || !chatId || sending) return;
+    if (!token || !chatId || sending || sendInFlightRef.current) return;
     if (isRecordingAudio) {
       showMediaError("Остановите запись перед отправкой сообщения.");
       return;
     }
-    const text = body.trim();
+    const liveBody = getComposerCurrentValue();
+    const text = liveBody.trim();
     const activeComposerAttachments = [...composerAttachmentsRef.current];
     const isMobileChat = window.innerWidth < 871;
     const hasFailedAttachments = activeComposerAttachments.some((a) => a.status === "error");
@@ -1895,6 +2039,11 @@ export default function ChatConversationPage() {
     const optimisticAttachments = activeComposerAttachments.map(buildOptimisticAttachment);
 
     if (!text && optimisticAttachments.length === 0) return;
+    if (liveBody !== body) {
+      setBody(liveBody);
+    }
+    sendTapIntentUntilRef.current = 0;
+    sendInFlightRef.current = true;
     const activeReply = replyTo;
 
     const tempID = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1920,8 +2069,11 @@ export default function ChatConversationPage() {
       }
     });
 
-    if (isMobileChat && document.activeElement === composerInputRef.current) {
-      composerInputRef.current?.blur();
+    if (isMobileChat) {
+      if (document.activeElement === composerInputRef.current) {
+        composerInputRef.current?.blur();
+      }
+      window.dispatchEvent(new Event("chat-force-keyboard-dismiss-sync"));
     }
     stopTyping(true);
     if (isMobileChat) {
@@ -1931,6 +2083,7 @@ export default function ChatConversationPage() {
     }
     setError("");
     setBody("");
+    setEmojiOpen(false);
     setReplyTo(null);
     clearComposerAttachments(false);
     setMessages((prev) => toAsc([...prev, optimistic]));
@@ -1978,6 +2131,8 @@ export default function ChatConversationPage() {
       }
     } finally {
       setSending(false);
+      sendTapIntentUntilRef.current = 0;
+      sendInFlightRef.current = false;
       if (isMobileChat && document.activeElement !== composerInputRef.current) {
         clearReleaseBottomPinTimer();
         releaseBottomPinTimerRef.current = window.setTimeout(() => {
@@ -1993,11 +2148,45 @@ export default function ChatConversationPage() {
     void sendMessage();
   };
 
+  const trySendFromGesture = (e: { preventDefault?: () => void; stopPropagation?: () => void }) => {
+    const liveText = getComposerCurrentValue().trim();
+    const hasLiveContent = liveText.length > 0 || composerAttachmentsRef.current.length > 0;
+    if (!hasLiveContent || sending || sendInFlightRef.current) return;
+    sendTapIntentUntilRef.current = Date.now() + 900;
+    e.preventDefault?.();
+    e.stopPropagation?.();
+    void sendMessage();
+  };
+
+  useEffect(() => {
+    const btn = sendButtonRef.current;
+    if (!btn || isRecordingAudio) return;
+
+    const forwardGesture = (evt: Event) => {
+      if (window.innerWidth >= 871) return;
+      trySendFromGesture({
+        preventDefault: () => evt.preventDefault(),
+        stopPropagation: () => evt.stopPropagation(),
+      });
+    };
+
+    const opts: AddEventListenerOptions = { capture: true, passive: false };
+    btn.addEventListener("touchstart", forwardGesture, opts);
+    btn.addEventListener("pointerdown", forwardGesture, opts);
+    btn.addEventListener("mousedown", forwardGesture, opts);
+
+    return () => {
+      btn.removeEventListener("touchstart", forwardGesture, opts);
+      btn.removeEventListener("pointerdown", forwardGesture, opts);
+      btn.removeEventListener("mousedown", forwardGesture, opts);
+    };
+  }, [isRecordingAudio, trySendFromGesture]);
+
   const hasUploadingComposer = composerAttachments.some((item) => item.status === "uploading");
   const hasFailedComposer = composerAttachments.some((item) => item.status === "error");
   const hasUploadedComposer = composerAttachments.some((item) => item.status === "uploaded" && !!item.uploaded);
   const hasComposerAttachments = composerAttachments.length > 0;
-  const bodyIsEmpty = body.trim().length === 0;
+  const bodyIsEmpty = getComposerCurrentValue().trim().length === 0;
   const canSend =
     !sending &&
     !isRecordingAudio &&
@@ -2254,29 +2443,52 @@ export default function ChatConversationPage() {
             const hasBody = (m.body || "").trim().length > 0;
             const imageAttachmentUrls = imageAttachments.map((att) => att.url);
             const isMultiImageAttachment = imageAttachments.length > 1;
+            const messageReactions = normalizeMessageReactions(m.reactions);
             return (
               <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className={`group flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
-                  <button
-                    type="button"
-                    disabled={m.pending}
-                    onClick={() =>
-                      setReplyTo({
-                        id: m.id,
-                        sender_id: m.sender_id,
-                        body: m.body,
-                      })
-                    }
-                    className={`h-8 w-8 shrink-0 rounded-full border transition ${
-                      mine
-                        ? activeTheme.mineReplyButtonClass
-                        : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                    aria-label="Ответить"
-                    title="Ответить"
-                  >
-                    <Reply className="w-3.5 h-3.5 mx-auto" />
-                  </button>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      disabled={m.pending}
+                      onClick={() =>
+                        setReplyTo({
+                          id: m.id,
+                          sender_id: m.sender_id,
+                          body: m.body,
+                        })
+                      }
+                      className={`h-8 w-8 rounded-full border transition ${
+                        mine
+                          ? activeTheme.mineReplyButtonClass
+                          : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      aria-label="Ответить"
+                      title="Ответить"
+                    >
+                      <Reply className="w-3.5 h-3.5 mx-auto" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={m.pending || m.failed}
+                      onClick={(event) => {
+                        setEmojiOpen(false);
+                        messageReactionAnchorRef.current = event.currentTarget;
+                        setMessageReactionPickerMessageId((prev) =>
+                          prev === m.id ? null : m.id
+                        );
+                      }}
+                      className={`h-8 w-8 rounded-full border transition ${
+                        mine
+                          ? "border-amber-300/45 bg-amber-400/20 text-amber-100 hover:bg-amber-400/30"
+                          : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      aria-label="Реакция"
+                      title="Реакция"
+                    >
+                      <Smile className="w-3.5 h-3.5 mx-auto" />
+                    </button>
+                  </div>
                   <div
                     className={`${
                       messageAttachments.length > 0
@@ -2344,6 +2556,35 @@ export default function ChatConversationPage() {
                       </div>
                     )}
                     {hasBody && <p className="text-sm leading-relaxed">{m.body}</p>}
+                    {messageReactions.length > 0 && (
+                      <div
+                        className="mt-2 flex flex-wrap justify-start gap-1.5"
+                        style={{ direction: "ltr" }}
+                      >
+                        {messageReactions.map((reaction) => (
+                          <button
+                            key={`${m.id}-reaction-${reaction.emoji}`}
+                            type="button"
+                            disabled={m.pending || m.failed}
+                            onClick={() => {
+                              void toggleMessageReaction(m.id, reaction.emoji);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition ${
+                              reaction.reacted_by_me
+                                ? "border-amber-300/45 bg-amber-300/25 text-amber-100"
+                                : mine
+                                ? "border-white/25 bg-white/15 text-white/90 hover:border-white/40"
+                                : "border-white/20 bg-black/30 text-white/85 hover:border-white/35"
+                            } disabled:opacity-60 disabled:cursor-not-allowed`}
+                            aria-label={`Реакция ${reaction.emoji}`}
+                            title={reaction.reacted_by_me ? "Убрать реакцию" : "Поставить реакцию"}
+                          >
+                            <span className="text-sm leading-none">{reaction.emoji}</span>
+                            <span className="font-medium">{reaction.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div
                       className={`mt-1 text-[11px] ${
                         mine
@@ -2540,16 +2781,35 @@ export default function ChatConversationPage() {
                 e.target.value = "";
               }}
             />
+            <button
+              ref={emojiButtonRef}
+              type="button"
+              onClick={() => {
+                setMessageReactionPickerMessageId(null);
+                setEmojiOpen((prev) => !prev);
+              }}
+              className={`nav-icon shrink-0 self-center border border-amber-300/35 text-amber-200 hover:bg-amber-300/20 hover:text-amber-100 ${emojiOpen ? "bg-amber-300/25" : "bg-amber-300/10"} disabled:opacity-60 disabled:cursor-not-allowed`}
+              aria-label="emoji"
+              title="Эмодзи"
+              disabled={sending || isRecordingAudio}
+            >
+              <Smile className="w-5 h-5" />
+            </button>
             <textarea
               ref={composerInputRef}
               value={body}
               disabled={isRecordingAudio}
               onChange={(e) => {
                 const nextValue = e.target.value;
+                rememberComposerSelection(e.target);
                 setBody(nextValue);
                 handleTypingByBody(nextValue);
               }}
+              onSelect={(e) => rememberComposerSelection(e.currentTarget)}
+              onKeyUp={(e) => rememberComposerSelection(e.currentTarget)}
+              onClick={(e) => rememberComposerSelection(e.currentTarget)}
               onFocus={() => {
+                rememberComposerSelection(composerInputRef.current);
                 keepBottomPinnedRef.current = true;
                 clearReleaseBottomPinTimer();
                 pinListToBottom("composer_focus");
@@ -2557,6 +2817,17 @@ export default function ChatConversationPage() {
               onBlur={() => {
                 stopTyping(true);
                 pinListToBottom("composer_blur");
+                if (window.innerWidth < 871) {
+                  window.dispatchEvent(new Event("chat-force-keyboard-dismiss-sync"));
+                }
+                if (
+                  window.innerWidth < 871 &&
+                  Date.now() < sendTapIntentUntilRef.current &&
+                  !sending &&
+                  !sendInFlightRef.current
+                ) {
+                  void sendMessage();
+                }
                 clearReleaseBottomPinTimer();
                 releaseBottomPinTimerRef.current = window.setTimeout(() => {
                   keepBottomPinnedRef.current = false;
@@ -2572,7 +2843,7 @@ export default function ChatConversationPage() {
               }}
               placeholder={isRecordingAudio ? "Запись..." : "Напишите сообщение..."}
               rows={1}
-              className="flex-1 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30 disabled:opacity-70"
+              className="flex-1 min-w-0 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30 disabled:opacity-70"
             />
             {isRecordingAudio ? (
               <button
@@ -2595,15 +2866,52 @@ export default function ChatConversationPage() {
               </button>
             ) : (
               <button
-                type="submit"
+                ref={sendButtonRef}
+                type="button"
+                onTouchStartCapture={(e) => {
+                  if (window.innerWidth < 871) {
+                    trySendFromGesture(e);
+                  }
+                }}
+                onMouseDownCapture={(e) => {
+                  if (window.innerWidth < 871) {
+                    trySendFromGesture(e);
+                  }
+                }}
+                onPointerDown={(e) => {
+                  if (!canSend || sending) return;
+                  if (window.innerWidth < 871 && document.activeElement === composerInputRef.current) {
+                    trySendFromGesture(e);
+                  }
+                }}
+                onClick={(e) => {
+                  trySendFromGesture(e);
+                }}
                 disabled={!canSend}
-                className="nav-icon shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                className="nav-icon touch-manipulation shrink-0 self-center bg-white/10 text-white/60 hover:bg-white/20 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
                 aria-label="send"
               >
                 {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <SendHorizontal className="w-5 h-5" />}
               </button>
             )}
           </div>
+          <EmojiPicker
+            open={emojiOpen}
+            anchorRef={emojiButtonRef}
+            onClose={() => setEmojiOpen(false)}
+            onSelect={insertEmojiIntoComposer}
+          />
+          <EmojiPicker
+            open={messageReactionPickerMessageId !== null}
+            anchorRef={messageReactionAnchorRef}
+            onClose={() => setMessageReactionPickerMessageId(null)}
+            onSelect={(emoji) => {
+              const messageID = messageReactionPickerMessageId;
+              setMessageReactionPickerMessageId(null);
+              if (!messageID) return;
+              void toggleMessageReaction(messageID, emoji);
+            }}
+          />
           {(hasUploadingComposer || hasFailedComposer) && (
             <p className="text-[11px] text-white/55">
               {hasUploadingComposer

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import FeedPage from "./Feed";
@@ -56,7 +56,7 @@ export default function App() {
   const [chatViewportHeight, setChatViewportHeight] = useState<number | null>(null);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isChatConversationPage) {
       setChatViewportHeight(null);
       return;
@@ -66,11 +66,49 @@ export default function App() {
     let rafID: number | null = null;
     let burstRafID: number | null = null;
     let burstUntilMs = 0;
+    let forceLayoutHeightUntilMs = 0;
+    let dismissSyncTimerA: number | null = null;
+    let dismissSyncTimerB: number | null = null;
+    let dismissSyncTimerC: number | null = null;
+
+    const isEditableElement = (el: Element | null): boolean => {
+      if (!(el instanceof HTMLElement)) return false;
+      if (el.isContentEditable) return true;
+      const tagName = el.tagName;
+      if (tagName === "TEXTAREA") return true;
+      if (tagName !== "INPUT") return false;
+      const input = el as HTMLInputElement;
+      const t = String(input.type || "text").toLowerCase();
+      return !["button", "checkbox", "color", "file", "image", "radio", "range", "reset", "submit"].includes(t);
+    };
+
+    const clearDismissTimers = () => {
+      if (dismissSyncTimerA !== null) {
+        window.clearTimeout(dismissSyncTimerA);
+        dismissSyncTimerA = null;
+      }
+      if (dismissSyncTimerB !== null) {
+        window.clearTimeout(dismissSyncTimerB);
+        dismissSyncTimerB = null;
+      }
+      if (dismissSyncTimerC !== null) {
+        window.clearTimeout(dismissSyncTimerC);
+        dismissSyncTimerC = null;
+      }
+    };
 
     const applyHeight = () => {
-      const nextHeight = Math.round(
-        viewport?.height || window.innerHeight || document.documentElement.clientHeight || 0
-      );
+      const viewportHeight = Math.round(viewport?.height || 0);
+      const layoutHeight = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
+      const activeElement = document.activeElement as Element | null;
+      const shouldPreferLayoutHeight =
+        window.innerWidth < 871 &&
+        !isEditableElement(activeElement) &&
+        layoutHeight > 0 &&
+        (Date.now() < forceLayoutHeightUntilMs || layoutHeight - viewportHeight > 120);
+      const nextHeight = shouldPreferLayoutHeight
+        ? layoutHeight
+        : Math.round(viewportHeight || layoutHeight || 0);
       if (!nextHeight) return;
       setChatViewportHeight((prev) => (prev === nextHeight ? prev : nextHeight));
       if (window.innerWidth < 871 && window.scrollY !== 0) {
@@ -111,6 +149,30 @@ export default function App() {
       scheduleApply();
     };
 
+    const syncAfterKeyboardDismiss = () => {
+      forceLayoutHeightUntilMs = Date.now() + 480;
+      clearDismissTimers();
+      syncImmediately();
+      dismissSyncTimerA = window.setTimeout(syncImmediately, 70);
+      dismissSyncTimerB = window.setTimeout(syncImmediately, 170);
+      dismissSyncTimerC = window.setTimeout(syncImmediately, 300);
+    };
+
+    const onFocusOut = (evt: FocusEvent) => {
+      if (window.innerWidth >= 871) return;
+      const target = evt.target as Element | null;
+      if (isEditableElement(target)) {
+        syncAfterKeyboardDismiss();
+        return;
+      }
+      syncImmediately();
+    };
+
+    const onChatForceKeyboardSync = () => {
+      if (window.innerWidth >= 871) return;
+      syncAfterKeyboardDismiss();
+    };
+
     syncImmediately();
     viewport?.addEventListener("resize", syncImmediately);
     viewport?.addEventListener("scroll", syncLight);
@@ -120,7 +182,8 @@ export default function App() {
     window.addEventListener("pageshow", syncImmediately);
     document.addEventListener("visibilitychange", syncLight);
     document.addEventListener("focusin", syncImmediately);
-    document.addEventListener("focusout", syncImmediately);
+    document.addEventListener("focusout", onFocusOut);
+    window.addEventListener("chat-force-keyboard-dismiss-sync", onChatForceKeyboardSync as EventListener);
 
     return () => {
       viewport?.removeEventListener("resize", syncImmediately);
@@ -131,9 +194,11 @@ export default function App() {
       window.removeEventListener("pageshow", syncImmediately);
       document.removeEventListener("visibilitychange", syncLight);
       document.removeEventListener("focusin", syncImmediately);
-      document.removeEventListener("focusout", syncImmediately);
+      document.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("chat-force-keyboard-dismiss-sync", onChatForceKeyboardSync as EventListener);
       if (rafID !== null) window.cancelAnimationFrame(rafID);
       if (burstRafID !== null) window.cancelAnimationFrame(burstRafID);
+      clearDismissTimers();
     };
   }, [isChatConversationPage]);
 

@@ -105,14 +105,30 @@ func (h *ChatHandler) handleChatActions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if parts[1] == "messages" {
+		if len(parts) == 2 {
+			h.handleMessages(w, r, chatID)
+			return
+		}
+		if len(parts) == 4 && parts[3] == "reactions" {
+			messageID := strings.TrimSpace(parts[2])
+			if messageID == "" {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			h.handleMessageReactions(w, r, chatID, messageID)
+			return
+		}
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
 	if len(parts) != 2 {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	switch parts[1] {
-	case "messages":
-		h.handleMessages(w, r, chatID)
 	case "read":
 		h.handleRead(w, r, chatID)
 	case "ws":
@@ -200,6 +216,62 @@ func (h *ChatHandler) handleMessages(w http.ResponseWriter, r *http.Request, cha
 			go h.notifyTelegramRecipients(userID, chatID, item, participantIDs)
 		}
 		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *ChatHandler) handleMessageReactions(
+	w http.ResponseWriter,
+	r *http.Request,
+	chatID string,
+	messageID string,
+) {
+	userID, err := requireUserID(r, h.jwt)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		var req dto.ReactionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		reactions, err := h.service.ReactMessage(r.Context(), userID, chatID, messageID, req.Emoji)
+		if err != nil {
+			h.writeChatError(w, err)
+			return
+		}
+		go h.ws.broadcast(chatID, map[string]any{
+			"type":       "message_reaction_updated",
+			"chat_id":    chatID,
+			"message_id": messageID,
+			"reactions":  reactions,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "reacted",
+			"reactions": reactions,
+		})
+	case http.MethodDelete:
+		emoji := strings.TrimSpace(r.URL.Query().Get("emoji"))
+		reactions, err := h.service.UnreactMessage(r.Context(), userID, chatID, messageID, emoji)
+		if err != nil {
+			h.writeChatError(w, err)
+			return
+		}
+		go h.ws.broadcast(chatID, map[string]any{
+			"type":       "message_reaction_updated",
+			"chat_id":    chatID,
+			"message_id": messageID,
+			"reactions":  reactions,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "unreacted",
+			"reactions": reactions,
+		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -510,7 +582,10 @@ func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrChatForbidden):
 		writeError(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, service.ErrChatNotFound), errors.Is(err, service.ErrChatPeerNotFound), errors.Is(err, gorm.ErrRecordNotFound):
+	case errors.Is(err, service.ErrChatNotFound),
+		errors.Is(err, service.ErrChatPeerNotFound),
+		errors.Is(err, service.ErrChatMessageNotFound),
+		errors.Is(err, gorm.ErrRecordNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrChatTargetMissing),
 		errors.Is(err, service.ErrChatMessageEmpty),
@@ -519,7 +594,10 @@ func (h *ChatHandler) writeChatError(w http.ResponseWriter, err error) {
 		errors.Is(err, service.ErrChatReplyNotFound),
 		errors.Is(err, service.ErrChatAttachInvalid),
 		errors.Is(err, service.ErrChatAttachTooMany),
-		errors.Is(err, service.ErrChatThemeInvalid):
+		errors.Is(err, service.ErrChatThemeInvalid),
+		errors.Is(err, service.ErrReactionEmojiRequired),
+		errors.Is(err, service.ErrReactionEmojiInvalid),
+		errors.Is(err, service.ErrReactionEmojiUnsupported):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "internal server error")
@@ -536,9 +614,6 @@ func (h *ChatHandler) notifyTelegramRecipients(senderID, chatID string, item *se
 	for _, rawID := range participantIDs {
 		recipientID := strings.TrimSpace(rawID)
 		if recipientID == "" || recipientID == strings.TrimSpace(senderID) {
-			continue
-		}
-		if h.isUserOnline(recipientID) {
 			continue
 		}
 		_ = h.telegram.NotifyDirectMessage(context.Background(), service.TelegramDirectMessageNotification{

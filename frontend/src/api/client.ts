@@ -1,7 +1,7 @@
 import { useAuthStore } from "../store/auth";
-import type { MediaItem } from "../types/media";
+import type { MediaItem, PostMusic } from "../types/media";
 
-type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH";
+type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH" | "PUT";
 
 const API_BASE = "/api";
 
@@ -38,6 +38,12 @@ export type ChatThemeResponse = {
   theme_key: string;
 };
 
+export type ReactionItem = {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+};
+
 export type ChatMessage = {
   id: string;
   chat_id: string;
@@ -45,6 +51,7 @@ export type ChatMessage = {
   reply_to_id?: string;
   body: string;
   attachments?: ChatMessageAttachment[];
+  reactions?: ReactionItem[];
   read_at?: string;
   created_at: string;
 };
@@ -307,6 +314,7 @@ const feedPageFn = (
       avatar_url?: string;
       created_at: string;
       media?: MediaItem[];
+      music?: PostMusic;
       like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -333,6 +341,7 @@ const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
       avatar_url?: string;
       created_at: string;
       media?: MediaItem[];
+      music?: PostMusic;
       like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -436,6 +445,7 @@ export const api = {
         avatar_url?: string;
         created_at: string;
         media?: MediaItem[];
+        music?: PostMusic;
         like_count: number;
       liked_by_me: boolean;
       view_count: number;
@@ -504,6 +514,7 @@ export const api = {
         created_at: string;
         updated_at?: string;
         media?: MediaItem[];
+        music?: PostMusic;
         like_count: number;
         liked_by_me: boolean;
         view_count: number;
@@ -518,7 +529,14 @@ export const api = {
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
   createPost: (
-    payload: { content: string; media?: MediaItem[]; media_url?: string; media_urls?: string[]; hashtags?: string[] },
+    payload: {
+      content: string;
+      media?: MediaItem[];
+      music?: PostMusic;
+      media_url?: string;
+      media_urls?: string[];
+      hashtags?: string[];
+    },
     token: string
   ) =>
     request<{ status: string }>("/posts", "POST", payload, token),
@@ -641,6 +659,7 @@ export const api = {
         created_at: string;
         updated_at: string;
         media?: MediaItem[];
+        music?: PostMusic;
         like_count: number;
         liked_by_me: boolean;
         view_count: number;
@@ -706,6 +725,22 @@ export const api = {
       `/chats/${encodeURIComponent(chatId)}/messages`,
       "POST",
       { body, reply_to_id: replyToID, attachments: attachments || [] },
+      token
+    ),
+  reactChatMessage: (chatId: string, messageId: string, emoji: string, token: string) =>
+    request<{ status: string; reactions: ReactionItem[] }>(
+      `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/reactions`,
+      "POST",
+      { emoji },
+      token
+    ),
+  unreactChatMessage: (chatId: string, messageId: string, emoji: string, token: string) =>
+    request<{ status: string; reactions: ReactionItem[] }>(
+      `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(
+        messageId
+      )}/reactions?emoji=${encodeURIComponent(emoji)}`,
+      "DELETE",
+      undefined,
       token
     ),
   markChatRead: (chatId: string, token?: string | null) =>
@@ -777,6 +812,7 @@ export const api = {
       avatar_url?: string;
       content: string;
       media?: MediaItem[];
+      music?: PostMusic;
       created_at: string;
       updated_at: string;
       like_count: number;
@@ -803,6 +839,20 @@ export const api = {
     request<{ status: string }>(`/posts/${postId}/like`, "POST", undefined, token),
   unlikePost: (postId: string, token: string) =>
     request<{ status: string }>(`/posts/${postId}/like`, "DELETE", undefined, token),
+  reactPost: (postId: string, emoji: string, token: string) =>
+    request<{ status: string; reactions: ReactionItem[] }>(
+      `/posts/${encodeURIComponent(postId)}/reactions`,
+      "POST",
+      { emoji },
+      token
+    ),
+  unreactPost: (postId: string, emoji: string, token: string) =>
+    request<{ status: string; reactions: ReactionItem[] }>(
+      `/posts/${encodeURIComponent(postId)}/reactions?emoji=${encodeURIComponent(emoji)}`,
+      "DELETE",
+      undefined,
+      token
+    ),
   viewPost: (postId: string, token: string) =>
     request<{ status: string }>(`/posts/${postId}/view`, "POST", undefined, token),
   listComments: (postId: string, limit = 20, offset = 0, token?: string | null) =>

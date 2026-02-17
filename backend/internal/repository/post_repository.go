@@ -50,6 +50,41 @@ type FeedItem struct {
 	LikedByMe    bool
 }
 
+func (r *PostRepository) MusicByPostIDs(ctx context.Context, postIDs []string) (map[string]models.PostMusic, error) {
+	out := make(map[string]models.PostMusic)
+	if len(postIDs) == 0 {
+		return out, nil
+	}
+
+	uniq := make([]string, 0, len(postIDs))
+	seen := make(map[string]struct{}, len(postIDs))
+	for _, id := range postIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return out, nil
+	}
+
+	var rows []models.PostMusic
+	if err := r.db.WithContext(ctx).
+		Where("post_id IN ?", uniq).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.PostID] = row
+	}
+	return out, nil
+}
+
 func (r *PostRepository) Feed(ctx context.Context, limit, offset int, viewerID *string) ([]FeedItem, error) {
 	if limit <= 0 {
 		limit = 20

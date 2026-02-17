@@ -241,6 +241,7 @@ export default function NotificationsPage() {
         content: p.content,
         created_at: p.created_at,
         media: p.media,
+        music: p.music,
         like_count: p.like_count,
         liked_by_me: p.liked_by_me,
         view_count: p.view_count,

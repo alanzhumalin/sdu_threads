@@ -8,22 +8,24 @@ import (
 
 	"gorm.io/gorm"
 
+	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
 	"sduthreads/internal/repository"
 )
 
 var (
-	ErrChatForbidden     = errors.New("forbidden")
-	ErrChatNotFound      = errors.New("chat not found")
-	ErrChatPeerNotFound  = errors.New("target user not found")
-	ErrChatTargetMissing = errors.New("target user is required")
-	ErrChatMessageEmpty  = errors.New("message body is required")
-	ErrChatMessageLong   = errors.New("message too long (max 4000)")
-	ErrChatMessageSelf   = errors.New("cannot message yourself")
-	ErrChatReplyNotFound = errors.New("reply message not found")
-	ErrChatAttachInvalid = errors.New("invalid message attachment")
-	ErrChatAttachTooMany = errors.New("too many message attachments (max 5)")
-	ErrChatThemeInvalid  = errors.New("invalid chat theme")
+	ErrChatForbidden       = errors.New("forbidden")
+	ErrChatNotFound        = errors.New("chat not found")
+	ErrChatPeerNotFound    = errors.New("target user not found")
+	ErrChatTargetMissing   = errors.New("target user is required")
+	ErrChatMessageEmpty    = errors.New("message body is required")
+	ErrChatMessageLong     = errors.New("message too long (max 4000)")
+	ErrChatMessageSelf     = errors.New("cannot message yourself")
+	ErrChatReplyNotFound   = errors.New("reply message not found")
+	ErrChatMessageNotFound = errors.New("message not found")
+	ErrChatAttachInvalid   = errors.New("invalid message attachment")
+	ErrChatAttachTooMany   = errors.New("too many message attachments (max 5)")
+	ErrChatThemeInvalid    = errors.New("invalid chat theme")
 )
 
 var allowedChatAttachmentTypes = map[string]struct{}{
@@ -44,12 +46,17 @@ var allowedChatThemes = map[string]struct{}{
 }
 
 type ChatService struct {
-	chats *repository.ChatRepository
-	users *repository.UserRepository
+	chats     *repository.ChatRepository
+	users     *repository.UserRepository
+	reactions *repository.ReactionRepository
 }
 
-func NewChatService(chats *repository.ChatRepository, users *repository.UserRepository) *ChatService {
-	return &ChatService{chats: chats, users: users}
+func NewChatService(
+	chats *repository.ChatRepository,
+	users *repository.UserRepository,
+	reactions *repository.ReactionRepository,
+) *ChatService {
+	return &ChatService{chats: chats, users: users, reactions: reactions}
 }
 
 type ChatParticipant struct {
@@ -84,6 +91,7 @@ type ChatMessage struct {
 	ReplyToID   *string                 `json:"reply_to_id,omitempty"`
 	Body        string                  `json:"body"`
 	Attachments []ChatMessageAttachment `json:"attachments,omitempty"`
+	Reactions   []dto.ReactionItem      `json:"reactions"`
 	ReadAt      *string                 `json:"read_at,omitempty"`
 	CreatedAt   string                  `json:"created_at"`
 }
@@ -155,7 +163,10 @@ func mapChatPreview(row repository.DirectChatRow) ChatPreview {
 	return out
 }
 
-func mapChatMessage(m models.Message) ChatMessage {
+func mapChatMessage(m models.Message, reactions []dto.ReactionItem) ChatMessage {
+	if reactions == nil {
+		reactions = []dto.ReactionItem{}
+	}
 	var readAt *string
 	if m.ReadAt != nil {
 		v := m.ReadAt.UTC().Format(time.RFC3339)
@@ -192,9 +203,43 @@ func mapChatMessage(m models.Message) ChatMessage {
 		ReplyToID:   replyToID,
 		Body:        m.Body,
 		Attachments: attachments,
+		Reactions:   reactions,
 		ReadAt:      readAt,
 		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+func (s *ChatService) enrichMessageReactions(
+	ctx context.Context,
+	items []models.Message,
+	viewerUserID string,
+) (map[string][]dto.ReactionItem, error) {
+	result := make(map[string][]dto.ReactionItem, len(items))
+	if len(items) == 0 {
+		return result, nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		id := strings.TrimSpace(it.ID)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if s.reactions == nil {
+		for _, id := range ids {
+			result[id] = []dto.ReactionItem{}
+		}
+		return result, nil
+	}
+	byMessageID, err := s.reactions.ListMessageReactions(ctx, ids, strings.TrimSpace(viewerUserID))
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = mapReactionItems(byMessageID[id])
+	}
+	return result, nil
 }
 
 func (s *ChatService) OpenDirect(ctx context.Context, userID, targetUserID, targetUsername string) (*ChatPreview, error) {
@@ -296,9 +341,13 @@ func (s *ChatService) Messages(ctx context.Context, userID, chatID string, limit
 	if err != nil {
 		return nil, err
 	}
+	reactionMap, err := s.enrichMessageReactions(ctx, items, userID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ChatMessage, 0, len(items))
 	for _, it := range items {
-		out = append(out, mapChatMessage(it))
+		out = append(out, mapChatMessage(it, reactionMap[it.ID]))
 	}
 	return out, nil
 }
@@ -389,8 +438,88 @@ func (s *ChatService) Send(
 	if err != nil {
 		return nil, err
 	}
-	out := mapChatMessage(*msg)
+	out := mapChatMessage(*msg, []dto.ReactionItem{})
 	return &out, nil
+}
+
+func (s *ChatService) ReactMessage(
+	ctx context.Context,
+	userID,
+	chatID,
+	messageID,
+	emoji string,
+) ([]dto.ReactionItem, error) {
+	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
+		return nil, err
+	}
+	if s.reactions == nil {
+		return nil, errors.New("reactions repository is not configured")
+	}
+
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, ErrChatMessageNotFound
+	}
+	exists, err := s.chats.MessageExistsInChat(ctx, chatID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrChatMessageNotFound
+	}
+
+	emoji, err = normalizeReactionEmoji(emoji)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reactions.AddMessageReaction(ctx, messageID, userID, emoji); err != nil {
+		return nil, err
+	}
+	byMessageID, err := s.reactions.ListMessageReactions(ctx, []string{messageID}, userID)
+	if err != nil {
+		return nil, err
+	}
+	return mapReactionItems(byMessageID[messageID]), nil
+}
+
+func (s *ChatService) UnreactMessage(
+	ctx context.Context,
+	userID,
+	chatID,
+	messageID,
+	emoji string,
+) ([]dto.ReactionItem, error) {
+	if err := s.EnsureParticipant(ctx, userID, chatID); err != nil {
+		return nil, err
+	}
+	if s.reactions == nil {
+		return nil, errors.New("reactions repository is not configured")
+	}
+
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, ErrChatMessageNotFound
+	}
+	exists, err := s.chats.MessageExistsInChat(ctx, chatID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrChatMessageNotFound
+	}
+
+	emoji, err = normalizeReactionEmoji(emoji)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reactions.RemoveMessageReaction(ctx, messageID, userID, emoji); err != nil {
+		return nil, err
+	}
+	byMessageID, err := s.reactions.ListMessageReactions(ctx, []string{messageID}, userID)
+	if err != nil {
+		return nil, err
+	}
+	return mapReactionItems(byMessageID[messageID]), nil
 }
 
 func (s *ChatService) MarkRead(ctx context.Context, userID, chatID string) ([]ChatReadUpdate, error) {

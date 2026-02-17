@@ -13,9 +13,10 @@ import { CommentsModal } from "../components/CommentsModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
 import { PostMedia } from "../components/PostMedia";
+import { PostMusic } from "../components/PostMusic";
 import { AvatarCircle } from "../components/Avatar";
 import { VerifiedBadge } from "../components/VerifiedBadge";
-import type { MediaItem } from "../types/media";
+import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 
 type UserResult = {
   id: string;
@@ -41,6 +42,7 @@ type FeedItem = {
   avatar_url?: string;
   content: string;
   media?: MediaItem[];
+  music?: PostMusicItem;
   created_at: string;
   updated_at?: string;
   like_count: number;
@@ -549,6 +551,7 @@ export default function SearchPage() {
                 </p>
 
                 <PostMedia media={item.media} />
+                <PostMusic music={item.music} />
 
                 <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                   <div className="flex items-center gap-6">

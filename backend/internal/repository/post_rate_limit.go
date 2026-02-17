@@ -26,7 +26,7 @@ type PostCreateLimits struct {
 //
 // It uses a per-user transactional advisory lock to avoid race conditions
 // when multiple create requests are sent concurrently.
-func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.Post, media []models.PostMedia, limits PostCreateLimits) error {
+func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.Post, media []models.PostMedia, music *models.PostMusic, limits PostCreateLimits) error {
 	if post == nil {
 		return nil
 	}
@@ -67,15 +67,21 @@ func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.P
 			}
 		}
 
-		// media is already trimmed/cleaned in service, but be defensive.
-		hasMedia := strings.TrimSpace(post.MediaURL) != "" || len(media) > 0
+		// media/music are already trimmed/cleaned in service, but be defensive.
+		hasMedia := strings.TrimSpace(post.MediaURL) != "" || len(media) > 0 ||
+			(music != nil && strings.TrimSpace(music.AudioURL) != "")
 		var lastMedia sql.NullTime
 		if hasMedia {
 			if err := tx.Raw(
-				`SELECT created_at
-				 FROM posts
-				 WHERE user_id = ? AND media_url IS NOT NULL AND media_url <> ''
-				 ORDER BY created_at DESC
+				`SELECT p.created_at
+				 FROM posts p
+				 WHERE p.user_id = ?
+				   AND (
+				     (p.media_url IS NOT NULL AND p.media_url <> '')
+				     OR EXISTS (SELECT 1 FROM post_media pm WHERE pm.post_id = p.id)
+				     OR EXISTS (SELECT 1 FROM post_music psm WHERE psm.post_id = p.id)
+				   )
+				 ORDER BY p.created_at DESC
 				 LIMIT 1`,
 				post.UserID,
 			).Scan(&lastMedia).Error; err != nil {
@@ -120,6 +126,44 @@ func (r *PostRepository) CreateWithRateLimit(ctx context.Context, post *models.P
 			}
 			if len(rows) > 0 {
 				if err := tx.Create(&rows).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		if music != nil {
+			audioURL := strings.TrimSpace(music.AudioURL)
+			if audioURL != "" {
+				source := strings.TrimSpace(music.Source)
+				if source == "" {
+					source = "upload"
+				}
+				title := strings.TrimSpace(music.Title)
+				if title == "" {
+					title = "Music"
+				}
+				row := models.PostMusic{
+					PostID:       post.ID,
+					Source:       source,
+					TrackID:      strings.TrimSpace(music.TrackID),
+					Title:        title,
+					Artist:       strings.TrimSpace(music.Artist),
+					CoverURL:     strings.TrimSpace(music.CoverURL),
+					AudioURL:     audioURL,
+					DurationSec:  music.DurationSec,
+					ClipStartSec: music.ClipStartSec,
+					ClipEndSec:   music.ClipEndSec,
+				}
+				if row.DurationSec < 0 {
+					row.DurationSec = 0
+				}
+				if row.ClipStartSec < 0 {
+					row.ClipStartSec = 0
+				}
+				if row.ClipEndSec < 0 {
+					row.ClipEndSec = 0
+				}
+				if err := tx.Create(&row).Error; err != nil {
 					return err
 				}
 			}

@@ -12,6 +12,7 @@ import { usePostCacheStore } from "../store/postCache";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { SocialLinksOverlay } from "../components/SocialLinks";
 import { PostMedia } from "../components/PostMedia";
+import { PostMusic } from "../components/PostMusic";
 import { useProfileMeStore } from "../store/profileMe";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
@@ -381,6 +382,7 @@ export default function ProfileUserPage() {
               </p>
 
               <PostMedia media={item.media} />
+              <PostMusic music={item.music} />
 
               <div className="mt-4 flex items-center justify-between text-sm text-white/60">
                 <div className="flex items-center gap-6">
