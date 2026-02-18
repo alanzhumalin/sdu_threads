@@ -595,6 +595,9 @@ const AUDIO_RECORD_MIME_CANDIDATES = [
   "audio/ogg",
 ];
 
+const CHAT_ATTACH_ACCEPT =
+  ".jpg,.jpeg,.png,.webp,.gif,image/*,image/gif,audio/*,.mp3,.m4a,.mp4,.aac,.ogg,.oga,.webm,.wav,.flac,.3gp,.amr";
+
 const isAudioMimeType = (raw: string) => String(raw || "").toLowerCase().startsWith("audio/");
 const isAudioFilename = (name: string) =>
   /\.(mp3|m4a|mp4|aac|ogg|oga|webm|wav|flac|3gp|amr)$/i.test(String(name || "").trim());
@@ -1160,16 +1163,18 @@ export default function ChatConversationPage() {
 
     for (const file of incoming) {
       const type = String(file.type || "").toLowerCase();
+      const isAudio = isAudioMimeType(type) || isAudioFilename(file.name);
+      const isImage = type.startsWith("image/") && type !== "image/svg+xml";
       if (existingCount + allowed.length >= MAX_CHAT_ATTACHMENTS) {
         rejected = true;
         break;
       }
-      if (isHeicOrHeifFile(file)) {
+      if (isImage && isHeicOrHeifFile(file)) {
         rejected = true;
         hasHeicError = true;
         continue;
       }
-      if (!type.startsWith("image/") || type === "image/svg+xml") {
+      if (!isImage && !isAudio) {
         rejected = true;
         hasTypeError = true;
         continue;
@@ -1194,7 +1199,7 @@ export default function ChatConversationPage() {
       } else if (hasSizeError) {
         showMediaError("Максимальный размер файла 5MB.");
       } else if (hasTypeError) {
-        showMediaError("Разрешены только изображения и GIF.");
+        showMediaError("Разрешены только изображения/GIF или аудио-файлы.");
       } else {
         showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
       }
@@ -2744,7 +2749,7 @@ export default function ChatConversationPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".jpg,.jpeg,.png,.webp,.gif,image/*,image/gif"
+              accept={CHAT_ATTACH_ACCEPT}
               multiple
               className="hidden"
               onChange={(e) => {

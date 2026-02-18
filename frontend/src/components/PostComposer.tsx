@@ -88,6 +88,25 @@ const isHeicOrHeifFile = (file: File) => {
   return name.endsWith(".heic") || name.endsWith(".heif");
 };
 
+const isAudioMimeType = (raw: string) => String(raw || "").toLowerCase().startsWith("audio/");
+
+const audioContentTypeFromFilename = (name: string) => {
+  const filename = String(name || "").trim().toLowerCase();
+  if (filename.endsWith(".mp3")) return "audio/mpeg";
+  if (filename.endsWith(".m4a") || filename.endsWith(".mp4")) return "audio/mp4";
+  if (filename.endsWith(".aac")) return "audio/aac";
+  if (filename.endsWith(".ogg") || filename.endsWith(".oga")) return "audio/ogg";
+  if (filename.endsWith(".webm")) return "audio/webm";
+  if (filename.endsWith(".wav")) return "audio/wav";
+  if (filename.endsWith(".flac")) return "audio/flac";
+  if (filename.endsWith(".3gp")) return "audio/3gpp";
+  if (filename.endsWith(".amr")) return "audio/amr";
+  return "";
+};
+
+const MUSIC_ACCEPT =
+  "audio/*,.mp3,.m4a,.mp4,.aac,.ogg,.oga,.webm,.wav,.flac,.3gp,.amr";
+
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutReason: string): Promise<T> => {
   let timer: number | null = null;
   try {
@@ -271,7 +290,6 @@ export default function PostComposer({ onCreated }: Props) {
   const [music, setMusic] = useState<MusicSelection | null>(null);
   const musicRef = useRef<MusicSelection | null>(null);
   const musicUploadRef = useRef<{ token: string; controller: AbortController } | null>(null);
-  const musicInputRef = useRef<HTMLInputElement | null>(null);
   const [musicError, setMusicError] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -863,8 +881,10 @@ export default function PostComposer({ onCreated }: Props) {
       setMusicError("Войдите в аккаунт, чтобы добавить музыку");
       return;
     }
-    const mime = String(file.type || "").toLowerCase();
-    if (!mime.startsWith("audio/")) {
+    const rawMime = String(file.type || "").toLowerCase();
+    const inferredMime = audioContentTypeFromFilename(file.name);
+    const uploadContentType = isAudioMimeType(rawMime) ? rawMime : inferredMime;
+    if (!uploadContentType) {
       setMusicError("Поддерживаются только аудио-файлы");
       return;
     }
@@ -911,7 +931,7 @@ export default function PostComposer({ onCreated }: Props) {
 
     try {
       const presigned = await api.presignMedia(
-        [{ content_type: file.type, size_bytes: file.size }],
+        [{ content_type: uploadContentType, size_bytes: file.size }],
         "post_music",
         token
       );
@@ -1078,17 +1098,6 @@ export default function PostComposer({ onCreated }: Props) {
       </div>
       <ErrorMessage message={mediaError} />
       <ErrorMessage message={musicError} />
-
-      <input
-        ref={musicInputRef}
-        type="file"
-        accept="audio/*"
-        className="hidden"
-        onChange={(e) => {
-          handleMusicFiles(e.target.files);
-          e.currentTarget.value = "";
-        }}
-      />
       {music && (
         <div className="rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-start gap-3">
@@ -1464,15 +1473,22 @@ export default function PostComposer({ onCreated }: Props) {
           >
             <Smile className="w-5 h-5" strokeWidth={1.7} />
           </button>
-          <button
-            type="button"
-            className="nav-icon shrink-0 border border-cyan-300/35 bg-cyan-300/10 text-cyan-200 hover:bg-cyan-300/20 hover:border-cyan-200/45"
+          <label
+            className="nav-icon shrink-0 border border-cyan-300/35 bg-cyan-300/10 text-cyan-200 hover:bg-cyan-300/20 hover:border-cyan-200/45 cursor-pointer"
             title="Добавить музыку"
             aria-label="Добавить музыку"
-            onClick={() => musicInputRef.current?.click()}
           >
             <Music2 className="w-5 h-5" strokeWidth={1.7} />
-          </button>
+            <input
+              type="file"
+              accept={MUSIC_ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                handleMusicFiles(e.target.files);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
         </div>
         <div className="flex flex-col items-end gap-1 ml-auto">
           {hasPendingUploads && (
