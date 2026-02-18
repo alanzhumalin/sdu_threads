@@ -17,6 +17,7 @@ type AdminStats = {
 
 type AdminUser = {
   id: string;
+  email?: string;
   username: string;
   full_name: string;
   is_verified?: boolean;
@@ -356,7 +357,15 @@ export default function AdminPage() {
                   }}
                   right={
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                      <div className="hidden sm:flex flex-col items-end">
+                        <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                          {u.role}
+                        </span>
+                        <span className="mt-1 max-w-[200px] truncate text-[11px] text-white/45" title={u.email || ""}>
+                          {u.email || "—"}
+                        </span>
+                      </div>
+                      <span className="sm:hidden text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
                         {u.role}
                       </span>
                       {isAdmin ? (
@@ -395,6 +404,7 @@ export default function AdminPage() {
                 </span>{" "}
                 <span className="text-white/60 text-sm">@{selected.username}</span>
               </div>
+              <div className="text-white/60 text-xs truncate">{selected.email || "email не указан"}</div>
               <div className="text-white/60 text-xs truncate">{selected.id}</div>
             </div>
             <div className="shrink-0 flex items-center gap-2">

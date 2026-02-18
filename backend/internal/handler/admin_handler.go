@@ -175,6 +175,7 @@ func (h *AdminHandler) usersList(w http.ResponseWriter, r *http.Request) {
 	for _, u := range items {
 		out = append(out, map[string]any{
 			"id":          u.ID,
+			"email":       u.Email,
 			"username":    u.Username,
 			"full_name":   u.FullName,
 			"is_verified": u.IsVerified,
@@ -265,7 +266,11 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"profile": p, "role": target.Role})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"profile": p,
+			"role":    target.Role,
+			"email":   target.Email,
+		})
 		return
 	}
 

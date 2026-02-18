@@ -935,9 +935,10 @@ export const api = {
     requestWithHeaders<
       {
         id: string;
+        email?: string;
         username: string;
         full_name: string;
-      is_verified?: boolean;
+        is_verified?: boolean;
         avatar_url?: string;
         role: string;
         created_at: string;
@@ -952,7 +953,7 @@ export const api = {
       nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
     })),
   adminUser: (idOrUsername: string, token?: string | null) =>
-    request<{ profile: any; role: string }>(
+    request<{ profile: any; role: string; email?: string }>(
       `/admin/users/${encodeURIComponent(idOrUsername)}`,
       "GET",
       undefined,
