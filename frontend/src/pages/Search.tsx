@@ -9,11 +9,13 @@ import { useProfileMeStore } from "../store/profileMe";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
 import { highlightHashtags } from "../utils/text";
+import { getPostContainerColorClass } from "../utils/postColors";
 import { CommentsModal } from "../components/CommentsModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
+import { ExpandablePostText } from "../components/ExpandablePostText";
 import { AvatarCircle } from "../components/Avatar";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
@@ -41,6 +43,7 @@ type FeedItem = {
   is_verified?: boolean;
   avatar_url?: string;
   content: string;
+  container_color?: string;
   media?: MediaItem[];
   music?: PostMusicItem;
   created_at: string;
@@ -482,9 +485,13 @@ export default function SearchPage() {
               const isMe = item.is_me === true;
               const isSub = !isMe && (subs[item.user_id] ?? item.is_subscribed ?? false);
               const postMeta = { ...item, is_subscribed: isSub, is_me: isMe };
+              const postColorClass = getPostContainerColorClass(item.container_color);
 
               return (
-              <article key={item.id} className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden">
+              <article
+                key={item.id}
+                className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${postColorClass}`}
+              >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <Link
@@ -542,13 +549,17 @@ export default function SearchPage() {
                   </div>
                 </div>
 
-                <p className="mt-3 text-white leading-relaxed break-words">
-                  {highlightHashtags(
-                    item.content,
-                    item.mentions ? new Set(item.mentions.map((m) => m.toLowerCase())) : undefined,
-                    item.hashtags ? new Set(item.hashtags.map((h) => h.toLowerCase())) : undefined
-                  )}
-                </p>
+                <ExpandablePostText
+                  text={item.content}
+                  className="text-white leading-relaxed break-words whitespace-pre-wrap"
+                  renderText={(text) =>
+                    highlightHashtags(
+                      text,
+                      item.mentions ? new Set(item.mentions.map((m) => m.toLowerCase())) : undefined,
+                      item.hashtags ? new Set(item.hashtags.map((h) => h.toLowerCase())) : undefined
+                    )
+                  }
+                />
 
                 <PostMedia media={item.media} />
                 <PostMusic music={item.music} />

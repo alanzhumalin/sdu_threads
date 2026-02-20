@@ -62,7 +62,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				media = append(media, dto.MediaItem{URL: u})
 			}
 		}
-		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.Hashtags); err != nil {
+		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.ContainerColor, req.Hashtags); err != nil {
 			var rl *apperror.RateLimitError
 			if errors.As(err, &rl) {
 				w.Header().Set("Retry-After", strconv.Itoa(rl.RetryAfterSeconds))

@@ -308,6 +308,7 @@ const feedPageFn = (
       id: string;
       user_id: string;
       content: string;
+      container_color?: string;
       username: string;
       full_name: string;
       is_verified?: boolean;
@@ -335,6 +336,7 @@ const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
       id: string;
       user_id: string;
       content: string;
+      container_color?: string;
       username: string;
       full_name: string;
       is_verified?: boolean;
@@ -439,6 +441,7 @@ export const api = {
         id: string;
         user_id: string;
         content: string;
+        container_color?: string;
         username: string;
         full_name: string;
       is_verified?: boolean;
@@ -507,6 +510,7 @@ export const api = {
         id: string;
         user_id: string;
         content: string;
+        container_color?: string;
         username: string;
         full_name: string;
       is_verified?: boolean;
@@ -531,6 +535,7 @@ export const api = {
   createPost: (
     payload: {
       content: string;
+      container_color?: string;
       media?: MediaItem[];
       music?: PostMusic;
       media_url?: string;
@@ -652,6 +657,7 @@ export const api = {
         id: string;
         user_id: string;
         content: string;
+        container_color?: string;
         username: string;
         full_name: string;
       is_verified?: boolean;
@@ -811,6 +817,7 @@ export const api = {
       is_verified?: boolean;
       avatar_url?: string;
       content: string;
+      container_color?: string;
       media?: MediaItem[];
       music?: PostMusic;
       created_at: string;

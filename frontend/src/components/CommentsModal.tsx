@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/auth";
 import { useProfileMeStore } from "../store/profileMe";
 import { X, Heart, SendHorizontal, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
+import { getPostContainerColorClass } from "../utils/postColors";
 import { ErrorMessage } from "./ErrorMessage";
 import { CommentSkeleton } from "./CommentSkeleton";
 import { usePostCacheStore } from "../store/postCache";
@@ -13,6 +14,7 @@ import { useSubscriptionsStore } from "../store/subscriptions";
 import { MentionPreview } from "./MentionPreview";
 import { PostMedia } from "./PostMedia";
 import { PostMusic } from "./PostMusic";
+import { ExpandablePostText } from "./ExpandablePostText";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import { AvatarCircle } from "./Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
@@ -47,6 +49,7 @@ export type PostMeta = {
   is_verified?: boolean;
   avatar_url?: string;
   content: string;
+  container_color?: string;
   created_at: string;
   media?: MediaItem[];
   music?: PostMusicItem;
@@ -246,6 +249,7 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const [suppressedHashtags, setSuppressedHashtags] = useState<Set<number>>(new Set());
   const [suppressedMentions, setSuppressedMentions] = useState<Set<number>>(new Set());
   const MIN_TA_HEIGHT = 64;
+  const postColorClass = getPostContainerColorClass(postMeta.container_color);
 
   const toSet = (arr?: string[]) => (arr && arr.length > 0 ? new Set(arr.map((m) => m.toLowerCase())) : undefined);
 
@@ -1012,7 +1016,7 @@ useLayoutEffect(() => {
         </div>
 
         <div ref={commentsListRef} className="flex-1 overflow-y-auto">
-          <div className="px-4 pt-4 pb-2 border-b border-white/10">
+          <div className={`px-4 pt-4 pb-2 border-b border-white/10 ${postColorClass}`}>
             <div className="flex items-center gap-3">
               <Link
                 to={`/u/${post.username}`}
@@ -1039,9 +1043,11 @@ useLayoutEffect(() => {
                 <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
               </div>
             </div>
-            <p className="mt-3 text-white leading-relaxed break-words">
-              {highlightHashtags(post.content, toSet(post.mentions), toSet(post.hashtags))}
-            </p>
+            <ExpandablePostText
+              text={postMeta.content}
+              className="text-white leading-relaxed break-words whitespace-pre-wrap"
+              renderText={(text) => highlightHashtags(text, toSet(postMeta.mentions), toSet(postMeta.hashtags))}
+            />
             <PostMedia media={post.media} />
             <PostMusic music={post.music} />
             <div className="mt-3 flex items-center gap-4 text-sm text-white/70">

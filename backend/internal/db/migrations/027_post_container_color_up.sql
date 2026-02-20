@@ -1,0 +1,3 @@
+ALTER TABLE posts
+ADD COLUMN IF NOT EXISTS container_color text NOT NULL DEFAULT '';
+

@@ -90,6 +90,23 @@ const (
 	maxPostMusicDurationSec = 30 * 60
 )
 
+var postContainerColorAllowed = map[string]struct{}{
+	"":        {},
+	"ocean":   {},
+	"rose":    {},
+	"emerald": {},
+	"amber":   {},
+	"violet":  {},
+}
+
+func normalizePostContainerColor(raw string) (string, error) {
+	key := strings.TrimSpace(strings.ToLower(raw))
+	if _, ok := postContainerColorAllowed[key]; !ok {
+		return "", errors.New("invalid post container color")
+	}
+	return key, nil
+}
+
 func clampPostMusicText(raw string, max int) string {
 	raw = strings.TrimSpace(raw)
 	if max <= 0 {
@@ -527,23 +544,35 @@ func (s *PostService) enrichReactions(
 	return result, nil
 }
 
-func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic) (*models.Post, error) {
+func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string) (*models.Post, error) {
 	if userID == "" {
 		return nil, errors.New("user_id is required")
 	}
+	var author *models.User
 	if s.users != nil {
-		if _, err := s.users.GetByID(ctx, userID); err != nil {
+		u, err := s.users.GetByID(ctx, userID)
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errors.New("user not found, please re-login")
 			}
 			return nil, err
 		}
+		author = u
 	}
 	if len(content) == 0 {
 		return nil, errors.New("content is required")
 	}
-	if len(content) > 500 {
-		return nil, errors.New("content too long (max 500)")
+	colorKey, err := normalizePostContainerColor(containerColor)
+	if err != nil {
+		return nil, err
+	}
+	if colorKey != "" {
+		if author == nil {
+			return nil, errors.New("verified user is required for post color")
+		}
+		if !author.IsVerified {
+			return nil, errors.New("only verified users can set post color")
+		}
 	}
 	preview := strings.TrimSpace(content)
 	if len(preview) > 160 {
@@ -611,9 +640,10 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 	}
 
 	post := models.Post{
-		UserID:   userID,
-		Content:  content,
-		MediaURL: mediaURL,
+		UserID:         userID,
+		Content:        content,
+		ContainerColor: colorKey,
+		MediaURL:       mediaURL,
 	}
 	rows := make([]models.PostMedia, 0, len(clean))
 	for i, m := range clean {
@@ -681,26 +711,27 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 			isSub = followMap[it.UserID]
 		}
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: isSub,
-			IsMe:         isMe,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   isSub,
+			IsMe:           isMe,
 		})
 	}
 	return resp, nil
@@ -738,26 +769,27 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 		// By definition for this feed: if author != me, I'm following them.
 		isSub := !isMe
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: isSub,
-			IsMe:         isMe,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   isSub,
+			IsMe:           isMe,
 		})
 	}
 	return resp, nil
@@ -796,26 +828,27 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 		}
 	}
 	resp := dto.FeedResponseItem{
-		ID:           item.ID,
-		UserID:       item.UserID,
-		Username:     item.Username,
-		FullName:     item.FullName,
-		IsVerified:   item.IsVerified,
-		AvatarURL:    item.AvatarURL,
-		Content:      item.Content,
-		Media:        media,
-		Music:        musicMap[item.ID],
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.UpdatedAt,
-		LikeCount:    item.LikeCount,
-		LikedByMe:    item.LikedByMe,
-		Reactions:    reactionMap[item.ID],
-		ViewCount:    item.ViewCount,
-		CommentCount: item.CommentCount,
-		Mentions:     mentionMap[item.ID],
-		Hashtags:     hashtagMap[item.ID],
-		IsSubscribed: isSub,
-		IsMe:         isMe,
+		ID:             item.ID,
+		UserID:         item.UserID,
+		Username:       item.Username,
+		FullName:       item.FullName,
+		IsVerified:     item.IsVerified,
+		AvatarURL:      item.AvatarURL,
+		Content:        item.Content,
+		ContainerColor: item.ContainerColor,
+		Media:          media,
+		Music:          musicMap[item.ID],
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
+		LikeCount:      item.LikeCount,
+		LikedByMe:      item.LikedByMe,
+		Reactions:      reactionMap[item.ID],
+		ViewCount:      item.ViewCount,
+		CommentCount:   item.CommentCount,
+		Mentions:       mentionMap[item.ID],
+		Hashtags:       hashtagMap[item.ID],
+		IsSubscribed:   isSub,
+		IsMe:           isMe,
 	}
 	return &resp, nil
 }
@@ -856,26 +889,27 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 			isSub = followMap[it.UserID]
 		}
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: isSub,
-			IsMe:         isMe,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   isSub,
+			IsMe:           isMe,
 		})
 	}
 	return resp, nil
@@ -920,26 +954,27 @@ func (s *PostService) ByUserQuery(ctx context.Context, userID, query string, lim
 			isSub = followMap[it.UserID]
 		}
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: isSub,
-			IsMe:         isMe,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   isSub,
+			IsMe:           isMe,
 		})
 	}
 	return resp, nil
@@ -995,26 +1030,27 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 			isSub = followMap[it.UserID]
 		}
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: isSub,
-			IsMe:         isMe,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   isSub,
+			IsMe:           isMe,
 		})
 	}
 	return resp, nil
@@ -1045,26 +1081,27 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 	for _, it := range items {
 		media := effectiveMediaItems(it.Media, it.MediaURL)
 		resp = append(resp, dto.FeedResponseItem{
-			ID:           it.ID,
-			UserID:       it.UserID,
-			Username:     it.Username,
-			FullName:     it.FullName,
-			IsVerified:   it.IsVerified,
-			AvatarURL:    it.AvatarURL,
-			Content:      it.Content,
-			Media:        media,
-			Music:        musicMap[it.ID],
-			CreatedAt:    it.CreatedAt,
-			UpdatedAt:    it.UpdatedAt,
-			LikeCount:    it.LikeCount,
-			LikedByMe:    it.LikedByMe,
-			Reactions:    reactionMap[it.ID],
-			ViewCount:    it.ViewCount,
-			CommentCount: it.CommentCount,
-			Mentions:     mentionMap[it.ID],
-			Hashtags:     hashtagMap[it.ID],
-			IsSubscribed: false,
-			IsMe:         false,
+			ID:             it.ID,
+			UserID:         it.UserID,
+			Username:       it.Username,
+			FullName:       it.FullName,
+			IsVerified:     it.IsVerified,
+			AvatarURL:      it.AvatarURL,
+			Content:        it.Content,
+			ContainerColor: it.ContainerColor,
+			Media:          media,
+			Music:          musicMap[it.ID],
+			CreatedAt:      it.CreatedAt,
+			UpdatedAt:      it.UpdatedAt,
+			LikeCount:      it.LikeCount,
+			LikedByMe:      it.LikedByMe,
+			Reactions:      reactionMap[it.ID],
+			ViewCount:      it.ViewCount,
+			CommentCount:   it.CommentCount,
+			Mentions:       mentionMap[it.ID],
+			Hashtags:       hashtagMap[it.ID],
+			IsSubscribed:   false,
+			IsMe:           false,
 		})
 	}
 	return resp, nil
@@ -1142,8 +1179,8 @@ func (s *PostService) Unreact(ctx context.Context, postID, userID, emoji string)
 }
 
 // CreateWithTags creates post and attaches hashtags.
-func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, tags []string) error {
-	post, err := s.Create(ctx, userID, content, media, music)
+func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string, tags []string) error {
+	post, err := s.Create(ctx, userID, content, media, music, containerColor)
 	if err != nil {
 		return err
 	}

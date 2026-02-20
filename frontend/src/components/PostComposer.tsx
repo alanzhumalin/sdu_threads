@@ -2,8 +2,9 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } 
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useProfileMeStore } from "../store/profileMe";
 import { usePostCooldownStore } from "../store/postCooldown";
-import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush, Smile, Music2 } from "lucide-react";
+import { Image as ImageIcon, X, Edit3, Trash2, Paintbrush, Smile, Music2, Palette } from "lucide-react";
 import { DrawingModal } from "./DrawingModal";
 import { ErrorMessage } from "./ErrorMessage";
 import FabricImageEditor from "./FabricImageEditor";
@@ -12,6 +13,10 @@ import { EmojiPicker } from "./EmojiPicker";
 import { MusicClipEditor } from "./MusicClipEditor";
 import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
 import { insertTextAtSelection } from "../utils/textarea";
+import {
+  normalizePostContainerColor,
+  POST_CONTAINER_COLOR_OPTIONS,
+} from "../utils/postColors";
 import type { MediaItem as UploadedMediaItem, PostMusic as UploadedPostMusic } from "../types/media";
 
 type Props = {
@@ -248,10 +253,14 @@ const findActiveMention = (text: string, cursor: number) => {
 
 export default function PostComposer({ onCreated }: Props) {
   const token = useAuthStore((s) => s.token);
+  const myProfile = useProfileMeStore((s) => s.profile);
+  const setMyProfile = useProfileMeStore((s) => s.setProfile);
   const cooldownUntilMs = usePostCooldownStore((s) => s.untilMs);
   const setCooldownUntilMs = usePostCooldownStore((s) => s.setUntilMs);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [content, setContent] = useState("");
+  const [containerColor, setContainerColor] = useState<string>("");
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -285,6 +294,7 @@ export default function PostComposer({ onCreated }: Props) {
   const mentionListRef = useRef<HTMLUListElement | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
+  const colorPickerRef = useRef<HTMLDivElement | null>(null);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [mediaError, setMediaError] = useState("");
   const [music, setMusic] = useState<MusicSelection | null>(null);
@@ -298,6 +308,7 @@ export default function PostComposer({ onCreated }: Props) {
   const mediaRef = useRef<MediaItem[]>([]);
   const MIN_TA_HEIGHT = 72;
   const MAX_MEDIA = 5;
+  const isVerifiedUser = Boolean(myProfile?.is_verified);
 
   const remainingMs = Math.max(0, cooldownUntilMs - nowMs);
   const remainingSec = Math.ceil(remainingMs / 1000);
@@ -316,6 +327,42 @@ export default function PostComposer({ onCreated }: Props) {
     }, 1000);
     return () => window.clearInterval(id);
   }, [cooldownUntilMs]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (typeof myProfile?.is_verified === "boolean") return;
+    let cancelled = false;
+    api
+      .profileMe(token)
+      .then((profile) => {
+        if (cancelled) return;
+        setMyProfile(profile);
+      })
+      .catch(() => {
+        // ignore silently: backend still validates on create
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, myProfile?.is_verified, setMyProfile]);
+
+  useEffect(() => {
+    if (!colorPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (colorPickerRef.current?.contains(target)) return;
+      setColorPickerOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [colorPickerOpen]);
+
+  useEffect(() => {
+    if (!isVerifiedUser && containerColor !== "") {
+      setContainerColor("");
+    }
+  }, [containerColor, isVerifiedUser]);
 
   useEffect(() => {
     mediaRef.current = media;
@@ -1038,7 +1085,17 @@ export default function PostComposer({ onCreated }: Props) {
       }
 
       const hasAttachments = uploadedMedia.length > 0 || !!musicPayload;
-      await api.createPost({ content, hashtags: tags, media: uploadedMedia, music: musicPayload }, token);
+      const normalizedContainerColor = normalizePostContainerColor(containerColor);
+      await api.createPost(
+        {
+          content,
+          hashtags: tags,
+          media: uploadedMedia,
+          music: musicPayload,
+          container_color: normalizedContainerColor || undefined,
+        },
+        token
+      );
       setCooldownUntilMs(Date.now() + (hasAttachments ? 120 : 60) * 1000);
       setMedia((prev) => {
         prev.forEach((m) => URL.revokeObjectURL(m.previewUrl));
@@ -1046,6 +1103,8 @@ export default function PostComposer({ onCreated }: Props) {
       });
       clearMusicSelection();
       setContent("");
+      setContainerColor("");
+      setColorPickerOpen(false);
       setEmojiOpen(false);
       setSuggestions([]);
       setActiveTag(null);
@@ -1489,6 +1548,64 @@ export default function PostComposer({ onCreated }: Props) {
               }}
             />
           </label>
+          {isVerifiedUser ? (
+            <div ref={colorPickerRef} className="relative">
+              <button
+                type="button"
+                className={`nav-icon shrink-0 border ${
+                  containerColor
+                    ? "border-violet-300/45 bg-violet-300/20 text-violet-100"
+                    : "border-violet-300/30 bg-violet-300/10 text-violet-200"
+                } hover:bg-violet-300/20 hover:border-violet-200/45`}
+                title="Цвет контейнера поста"
+                aria-label="Цвет контейнера поста"
+                onClick={() => setColorPickerOpen((prev) => !prev)}
+              >
+                <Palette className="w-5 h-5" strokeWidth={1.7} />
+              </button>
+              {colorPickerOpen ? (
+                <div className="absolute left-0 top-full mt-2 z-40 w-56 rounded-xl border border-white/12 bg-black/95 p-2 shadow-2xl backdrop-blur">
+                  <button
+                    type="button"
+                    className={`w-full rounded-lg px-2 py-2 text-left text-sm transition ${
+                      containerColor === ""
+                        ? "bg-white/12 text-white"
+                        : "text-white/75 hover:bg-white/8 hover:text-white"
+                    }`}
+                    onClick={() => {
+                      setContainerColor("");
+                      setColorPickerOpen(false);
+                    }}
+                  >
+                    Без цвета
+                  </button>
+                  <div className="mt-1 space-y-1">
+                    {POST_CONTAINER_COLOR_OPTIONS.map((option) => {
+                      const selected = containerColor === option.key;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition ${
+                            selected
+                              ? "bg-white/12 text-white"
+                              : "text-white/80 hover:bg-white/8 hover:text-white"
+                          }`}
+                          onClick={() => {
+                            setContainerColor(option.key);
+                            setColorPickerOpen(false);
+                          }}
+                        >
+                          <span className={`h-4 w-4 rounded-full ${option.previewClass}`} />
+                          <span>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-col items-end gap-1 ml-auto">
           {hasPendingUploads && (

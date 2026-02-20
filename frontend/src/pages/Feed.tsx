@@ -13,9 +13,11 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
+import { ExpandablePostText } from "../components/ExpandablePostText";
 import { AuthGateOverlay } from "../components/AuthGateOverlay";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { highlightHashtags } from "../utils/text";
+import { getPostContainerColorClass } from "../utils/postColors";
 import { MentionPreview } from "../components/MentionPreview";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { useSubscriptionsStore } from "../store/subscriptions";
@@ -36,6 +38,7 @@ type FeedItem = {
   id: string;
   user_id: string;
   content: string;
+  container_color?: string;
   username: string;
   full_name: string;
   is_verified?: boolean;
@@ -667,6 +670,7 @@ export default function FeedPage() {
             const isMe = item.is_me === true;
             const isSub = !isMe && (subs[item.user_id] ?? item.is_subscribed ?? false);
             const postMeta = { ...p, is_subscribed: isSub, is_me: isMe };
+            const postColorClass = getPostContainerColorClass(p.container_color);
 
             return (
             <article
@@ -675,7 +679,7 @@ export default function FeedPage() {
               data-post-id={item.id}
               className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${
               tab === "popular" && justAdded.has(item.id) ? "animate-new-post" : ""
-            }`}
+            } ${postColorClass}`}
           >
               <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -783,13 +787,17 @@ export default function FeedPage() {
               )}
             </div>
 
-            <p className="mt-3 text-white leading-relaxed break-words">
-              {highlightHashtags(
-                item.content,
-                item.mentions ? new Set(item.mentions.map((m) => m.toLowerCase())) : undefined,
-                item.hashtags ? new Set(item.hashtags.map((h) => h.toLowerCase())) : undefined
-              )}
-            </p>
+            <ExpandablePostText
+              text={p.content}
+              className="text-white leading-relaxed break-words whitespace-pre-wrap"
+              renderText={(text) =>
+                highlightHashtags(
+                  text,
+                  p.mentions ? new Set(p.mentions.map((m) => m.toLowerCase())) : undefined,
+                  p.hashtags ? new Set(p.hashtags.map((h) => h.toLowerCase())) : undefined
+                )
+              }
+            />
 
             <PostMedia media={item.media} />
             <PostMusic music={item.music} />

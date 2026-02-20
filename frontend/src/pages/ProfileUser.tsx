@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { Heart, MessageCircle, Eye } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
+import { getPostContainerColorClass } from "../utils/postColors";
 import { CommentsModal } from "../components/CommentsModal";
 import { useFeedStore } from "../store/feed";
 import { ErrorMessage } from "../components/ErrorMessage";
@@ -317,13 +318,14 @@ export default function ProfileUserPage() {
           {posts.map((p) => {
             const patch = postPatches[p.id];
             const item = patch ? { ...p, ...patch } : p;
+            const postColorClass = getPostContainerColorClass(item.container_color);
 
             return (
             <article
               key={p.id}
               data-profile-post
               data-post-id={p.id}
-              className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden"
+              className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${postColorClass}`}
             >
               <div className="flex items-center gap-3">
                 {profile?.username ? (

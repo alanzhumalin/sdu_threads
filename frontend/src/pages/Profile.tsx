@@ -15,6 +15,7 @@ import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
 import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2 } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
+import { getPostContainerColorClass } from "../utils/postColors";
 import { CommentsModal } from "../components/CommentsModal";
 import { SocialLinksOverlay, type SocialLinks, type SocialType } from "../components/SocialLinks";
 import { MentionPreview } from "../components/MentionPreview";
@@ -1220,13 +1221,14 @@ export default function ProfilePage() {
             postsToShow.map((p) => {
               const patch = postPatches[p.id];
               const item = patch ? { ...p, ...patch } : p;
+              const postColorClass = getPostContainerColorClass(item.container_color);
 
               return (
               <article
                 key={p.id}
                 ref={setPostRef(p.id)}
                 data-post-id={p.id}
-                className="card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden"
+                className={`card p-4 md:p-4 transition hover:border-white/25 relative overflow-hidden ${postColorClass}`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">

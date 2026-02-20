@@ -55,6 +55,7 @@ export default function PostPermalinkPage() {
           full_name: p.full_name,
           avatar_url: p.avatar_url,
           content: p.content,
+          container_color: p.container_color,
           created_at: p.created_at,
           media: p.media,
           music: p.music,
