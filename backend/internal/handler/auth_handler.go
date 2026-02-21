@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"sduthreads/internal/cache"
 	"sduthreads/internal/dto"
 	"sduthreads/internal/models"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/service"
 )
 
@@ -56,6 +58,18 @@ func (h *AuthHandler) register(w http.ResponseWriter, r *http.Request) {
 		BackgroundURL: req.BackgroundURL,
 	}, req.Password)
 	if err != nil {
+		var viol *moderation.ViolationError
+		if errors.As(err, &viol) {
+			writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+			return
+		}
+		if moderation.IsUnavailable(err) {
+			writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+				Code:    "MODERATION_UNAVAILABLE",
+				Message: "Сервис модерации временно недоступен",
+			})
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

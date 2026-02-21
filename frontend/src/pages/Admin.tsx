@@ -88,6 +88,9 @@ export default function AdminPage() {
   const tempPasswordResultRef = useRef<HTMLDivElement | null>(null);
 
   const [selected, setSelected] = useState<AdminUser | null>(null);
+  const [selectedFullName, setSelectedFullName] = useState("");
+  const [fullNameSaving, setFullNameSaving] = useState(false);
+  const [fullNameError, setFullNameError] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
@@ -261,7 +264,9 @@ export default function AdminPage() {
     if (!token) return;
     setSelected(u);
     setSelectedRole(u.role || "user");
+    setSelectedFullName(u.full_name || "");
     setSelectedVerified(Boolean(u.is_verified));
+    setFullNameError(null);
     setRoleError(null);
     setVerifiedError(null);
     setPostsQuery("");
@@ -318,6 +323,30 @@ export default function AdminPage() {
       }
     } finally {
       setRoleSaving(false);
+    }
+  };
+
+  const saveFullName = async () => {
+    if (!token || !selected) return;
+    const fullName = selectedFullName.trim();
+    if (!fullName) {
+      setFullNameError("Full name не может быть пустым.");
+      return;
+    }
+    setFullNameSaving(true);
+    setFullNameError(null);
+    try {
+      await api.adminSetUserFullName(selected.id, fullName, token);
+      setSelected((prev) => (prev ? { ...prev, full_name: fullName } : prev));
+      setUsers((prev) => prev.map((uu) => (uu.id === selected.id ? { ...uu, full_name: fullName } : uu)));
+    } catch (e: any) {
+      if (e?.code === "FORBIDDEN") {
+        setFullNameError("Только admin может менять full name.");
+      } else {
+        setFullNameError(e?.message || "Не удалось обновить full name");
+      }
+    } finally {
+      setFullNameSaving(false);
     }
   };
 
@@ -584,6 +613,24 @@ export default function AdminPage() {
             <div className="shrink-0 flex items-center gap-2">
               {isAdmin ? (
                 <>
+                  <input
+                    className="w-[13rem] rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-white text-sm placeholder:text-white/45 focus:border-white/30 outline-none"
+                    value={selectedFullName}
+                    onChange={(e) => setSelectedFullName(e.target.value)}
+                    placeholder="Full name"
+                  />
+                  <button
+                    type="button"
+                    className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                    onClick={saveFullName}
+                    disabled={
+                      fullNameSaving ||
+                      selectedFullName.trim() === (selected.full_name || "").trim() ||
+                      !selectedFullName.trim()
+                    }
+                  >
+                    {fullNameSaving ? "Сохраняем..." : "Сохранить имя"}
+                  </button>
                   <select
                     className="rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-white text-sm focus:border-white/30 outline-none"
                     value={selectedRole}
@@ -644,6 +691,7 @@ export default function AdminPage() {
               )}
             </div>
           </div>
+          {isAdmin && fullNameError ? <div className="text-red-300 text-sm">{fullNameError}</div> : null}
           {isAdmin && roleError ? <div className="text-red-300 text-sm">{roleError}</div> : null}
           {isAdmin && verifiedError ? <div className="text-red-300 text-sm">{verifiedError}</div> : null}
           {tempPasswordResult && tempPasswordResult.user_id === selected.id ? (

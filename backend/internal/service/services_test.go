@@ -73,7 +73,7 @@ func TestUserServiceValidation(t *testing.T) {
 func TestAuthServiceRegisterLogin(t *testing.T) {
 	repo := newTestUserRepo(t)
 	jwtMgr := auth.NewJWTManager("secret", 24)
-	authSvc := NewAuthService(repo, jwtMgr)
+	authSvc := NewAuthService(repo, jwtMgr, nil)
 
 	_, err := authSvc.Register(context.Background(), models.User{
 		Email:    "230107200@sdu.edu.kz",
@@ -98,7 +98,7 @@ func TestAuthServiceRegisterLogin(t *testing.T) {
 func TestAuthServiceLoginWithTempPassword(t *testing.T) {
 	repo := newTestUserRepo(t)
 	jwtMgr := auth.NewJWTManager("secret", 24)
-	authSvc := NewAuthService(repo, jwtMgr)
+	authSvc := NewAuthService(repo, jwtMgr, nil)
 
 	mainHash, err := bcrypt.GenerateFromPassword([]byte("password1"), bcrypt.DefaultCost)
 	if err != nil {

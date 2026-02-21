@@ -76,6 +76,32 @@ export type ChatMessageAttachment = {
   type: "image" | "audio";
 };
 
+export type LiveRoomHost = {
+  id: string;
+  username: string;
+  full_name: string;
+  is_verified?: boolean;
+  avatar_url?: string;
+};
+
+export type LiveRoom = {
+  id: string;
+  title: string;
+  created_at: string;
+  participant_count: number;
+  host: LiveRoomHost;
+};
+
+export type LiveRoomParticipant = {
+  id: string;
+  username: string;
+  full_name: string;
+  is_verified?: boolean;
+  avatar_url?: string;
+  audio_enabled: boolean;
+  video_enabled: boolean;
+};
+
 export type TelegramStatus = {
   enabled: boolean;
   connected: boolean;
@@ -807,6 +833,20 @@ export const api = {
     ),
   chatsUnread: (token?: string | null) =>
     request<{ unread_count: number }>(`/chats-unread`, "GET", undefined, token),
+  liveRooms: (limit = 20, offset = 0, token?: string | null) =>
+    requestWithHeaders<LiveRoom[]>(
+      `/rooms?limit=${limit}&offset=${offset}`,
+      "GET",
+      undefined,
+      token
+    ).then(({ data, headers }) => ({
+      items: Array.isArray(data) ? data : [],
+      nextOffset: headers.get("x-next-offset") ? Number(headers.get("x-next-offset")) : null,
+    })),
+  liveRoomById: (roomId: string, token?: string | null) =>
+    request<LiveRoom>(`/rooms/${encodeURIComponent(roomId)}`, "GET", undefined, token),
+  createLiveRoom: (title: string, token: string) =>
+    request<LiveRoom>("/rooms", "POST", { title }, token),
   notificationsUnread: (token?: string | null) =>
     request<{ unread_count: number }>(`/notifications-unread`, "GET", undefined, token),
   notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>
@@ -1037,6 +1077,13 @@ export const api = {
       `/admin/users/${encodeURIComponent(idOrUsername)}/role`,
       "PATCH",
       { role },
+      token
+    ),
+  adminSetUserFullName: (idOrUsername: string, full_name: string, token: string) =>
+    request<{ status: string; full_name: string }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}/full-name`,
+      "PATCH",
+      { full_name },
       token
     ),
   adminSetUserVerified: (idOrUsername: string, is_verified: boolean, token: string) =>

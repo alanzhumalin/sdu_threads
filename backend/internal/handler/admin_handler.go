@@ -405,6 +405,63 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, items)
 		return
 
+	case "full-name":
+		// PATCH /api/admin/users/:id/full-name
+		if r.Method != http.MethodPatch {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		reqUser, err := h.requireAdminUser(r)
+		if err != nil {
+			if err.Error() == "forbidden" {
+				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "FORBIDDEN", Message: "forbidden"})
+				return
+			}
+			writeErrorPayload(w, http.StatusUnauthorized, errorPayload{Code: "UNAUTHORIZED", Message: "unauthorized"})
+			return
+		}
+
+		target, err := h.resolveUser(r.Context(), idOrUsername)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		// Hide root admin from other admins entirely.
+		if target.IsRootAdmin && !reqUser.IsRootAdmin {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		var req struct {
+			FullName string `json:"full_name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		fullName := strings.TrimSpace(req.FullName)
+		if fullName == "" {
+			writeError(w, http.StatusBadRequest, "full_name is required")
+			return
+		}
+		if len(fullName) > 80 {
+			writeError(w, http.StatusBadRequest, "full_name too long (max 80)")
+			return
+		}
+
+		if err := h.users.UpdateProfile(r.Context(), target.ID, map[string]any{
+			"full_name": fullName,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "ok",
+			"full_name": fullName,
+		})
+		return
+
 	case "role":
 		// PATCH /api/admin/users/:id/role
 		if r.Method != http.MethodPatch {

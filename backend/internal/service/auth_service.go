@@ -10,23 +10,52 @@ import (
 	"gorm.io/gorm"
 	"sduthreads/internal/auth"
 	"sduthreads/internal/models"
+	"sduthreads/internal/moderation"
 	"sduthreads/internal/repository"
 )
 
 type AuthService struct {
 	users *repository.UserRepository
 	jwt   *auth.JWTManager
+	mod   *moderation.Client
 }
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
-func NewAuthService(users *repository.UserRepository, jwt *auth.JWTManager) *AuthService {
-	return &AuthService{users: users, jwt: jwt}
+func NewAuthService(users *repository.UserRepository, jwt *auth.JWTManager, mod *moderation.Client) *AuthService {
+	return &AuthService{users: users, jwt: jwt, mod: mod}
 }
 
 func (s *AuthService) Register(ctx context.Context, input models.User, password string) (string, error) {
 	if len(password) < 8 {
 		return "", errors.New("password must be at least 8 characters")
+	}
+
+	if s.mod != nil {
+		username := strings.TrimSpace(strings.ToLower(input.Username))
+		fullName := strings.TrimSpace(input.FullName)
+
+		if err := s.mod.CheckText(ctx, username, "register_username_text", &moderation.AuditMeta{
+			Action:     "register",
+			TargetType: "user",
+			TargetID:   username,
+			Payload: map[string]any{
+				"field": "username",
+			},
+		}); err != nil {
+			return "", err
+		}
+
+		if err := s.mod.CheckText(ctx, fullName, "register_full_name_text", &moderation.AuditMeta{
+			Action:     "register",
+			TargetType: "user",
+			TargetID:   username,
+			Payload: map[string]any{
+				"field": "full_name",
+			},
+		}); err != nil {
+			return "", err
+		}
 	}
 
 	// reuse user creation logic for validation/uniqueness
