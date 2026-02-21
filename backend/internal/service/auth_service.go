@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -55,10 +56,26 @@ func (s *AuthService) Login(ctx context.Context, login, password string) (string
 	}
 	user = u
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if !matchesPassword(user, password) {
 		return "", ErrInvalidCredentials
 	}
 	return s.jwt.Generate(user.ID)
+}
+
+func matchesPassword(user *models.User, password string) bool {
+	if user == nil {
+		return false
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err == nil {
+		return true
+	}
+	if strings.TrimSpace(user.TempPasswordHash) == "" || user.TempPasswordExpiresAt == nil {
+		return false
+	}
+	if !user.TempPasswordExpiresAt.After(time.Now().UTC()) {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(user.TempPasswordHash), []byte(password)) == nil
 }
 
 func inputWithPassword(u models.User, password string) models.User {

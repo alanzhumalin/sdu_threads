@@ -115,6 +115,26 @@ func (r *UserRepository) UpdatePasswordHash(ctx context.Context, id string, hash
 		Update("password_hash", hash).Error
 }
 
+func (r *UserRepository) SetTempPassword(ctx context.Context, id string, hash string, expiresAt time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"temp_password_hash":       hash,
+			"temp_password_expires_at": expiresAt.UTC(),
+		}).Error
+}
+
+func (r *UserRepository) ClearTempPassword(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.User{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"temp_password_hash":       nil,
+			"temp_password_expires_at": nil,
+		}).Error
+}
+
 func (r *UserRepository) UpdateRole(ctx context.Context, id string, role string) error {
 	role = strings.TrimSpace(strings.ToLower(role))
 	if role == "" {

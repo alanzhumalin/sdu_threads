@@ -2,12 +2,16 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"sduthreads/internal/auth"
 	"sduthreads/internal/models"
@@ -415,10 +419,95 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 		return
+	case "temp-password":
+		// POST /api/admin/users/:id/temp-password
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		reqUser, err := h.requireAdminUser(r)
+		if err != nil {
+			if err.Error() == "forbidden" {
+				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "FORBIDDEN", Message: "forbidden"})
+				return
+			}
+			writeErrorPayload(w, http.StatusUnauthorized, errorPayload{Code: "UNAUTHORIZED", Message: "unauthorized"})
+			return
+		}
+
+		target, err := h.resolveUser(r.Context(), idOrUsername)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		// Hide root admin from other admins entirely.
+		if target.IsRootAdmin && !reqUser.IsRootAdmin {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		var req struct {
+			TTLMinutes int `json:"ttl_minutes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		ttlMinutes := req.TTLMinutes
+		if ttlMinutes == 0 {
+			ttlMinutes = 60
+		}
+		if ttlMinutes < 5 || ttlMinutes > 1440 {
+			writeError(w, http.StatusBadRequest, "ttl_minutes must be in range 5..1440")
+			return
+		}
+
+		plain, err := generateTempPassword(12)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to generate temp password")
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to hash temp password")
+			return
+		}
+
+		expiresAt := time.Now().UTC().Add(time.Duration(ttlMinutes) * time.Minute)
+		if err := h.users.SetTempPassword(r.Context(), target.ID, string(hash), expiresAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":        "ok",
+			"temp_password": plain,
+			"expires_at":    expiresAt.Format(time.RFC3339),
+			"ttl_minutes":   ttlMinutes,
+		})
+		return
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+}
+
+const tempPasswordAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+
+func generateTempPassword(length int) (string, error) {
+	if length <= 0 {
+		return "", errors.New("invalid password length")
+	}
+	out := make([]byte, length)
+	max := big.NewInt(int64(len(tempPasswordAlphabet)))
+	for i := range out {
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return "", err
+		}
+		out[i] = tempPasswordAlphabet[n.Int64()]
+	}
+	return string(out), nil
 }
 
 func (h *AdminHandler) postsDynamic(w http.ResponseWriter, r *http.Request) {

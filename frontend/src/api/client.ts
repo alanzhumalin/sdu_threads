@@ -1029,6 +1029,13 @@ export const api = {
       { is_verified },
       token
     ),
+  adminIssueTempPassword: (idOrUsername: string, ttl_minutes: number, token: string) =>
+    request<{ status: string; temp_password: string; expires_at: string; ttl_minutes: number }>(
+      `/admin/users/${encodeURIComponent(idOrUsername)}/temp-password`,
+      "POST",
+      { ttl_minutes },
+      token
+    ),
   adminDeleteUser: (idOrUsername: string, token: string) =>
     request<{ status: string }>(
       `/admin/users/${encodeURIComponent(idOrUsername)}`,

@@ -29,6 +29,8 @@ CREATE TABLE users (
     full_name text NOT NULL,
     is_verified boolean NOT NULL DEFAULT 0,
     password_hash text NOT NULL,
+    temp_password_hash text,
+    temp_password_expires_at datetime,
     role text NOT NULL DEFAULT 'user',
     is_root_admin boolean NOT NULL DEFAULT 0,
     bio text,
@@ -90,5 +92,36 @@ func TestAuthServiceRegisterLogin(t *testing.T) {
 	u, _ := repo.GetByEmail(context.Background(), "230107200@sdu.edu.kz")
 	if u == nil || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("password1")) != nil {
 		t.Fatalf("password not hashed correctly")
+	}
+}
+
+func TestAuthServiceLoginWithTempPassword(t *testing.T) {
+	repo := newTestUserRepo(t)
+	jwtMgr := auth.NewJWTManager("secret", 24)
+	authSvc := NewAuthService(repo, jwtMgr)
+
+	mainHash, err := bcrypt.GenerateFromPassword([]byte("password1"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("main hash: %v", err)
+	}
+	tempHash, err := bcrypt.GenerateFromPassword([]byte("TempPass123"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("temp hash: %v", err)
+	}
+	expiresAt := time.Now().UTC().Add(15 * time.Minute)
+	_, err = NewUserService(repo).Create(context.Background(), models.User{
+		Email:                 "230107201@sdu.edu.kz",
+		Username:              "usertwo",
+		FullName:              "User Two",
+		PasswordHash:          string(mainHash),
+		TempPasswordHash:      string(tempHash),
+		TempPasswordExpiresAt: &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("create user failed: %v", err)
+	}
+
+	if _, err := authSvc.Login(context.Background(), "usertwo", "TempPass123"); err != nil {
+		t.Fatalf("temp password login failed: %v", err)
 	}
 }

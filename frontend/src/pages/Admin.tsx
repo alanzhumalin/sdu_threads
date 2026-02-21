@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Copy, KeyRound, Trash2, X } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { UserRow } from "../components/UserRow";
@@ -57,6 +57,16 @@ export default function AdminPage() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [tempPasswordLoadingUserId, setTempPasswordLoadingUserId] = useState<string | null>(null);
+  const [tempPasswordError, setTempPasswordError] = useState<string | null>(null);
+  const [tempPasswordResult, setTempPasswordResult] = useState<{
+    user_id: string;
+    username: string;
+    temp_password: string;
+    expires_at: string;
+    ttl_minutes: number;
+  } | null>(null);
+  const tempPasswordResultRef = useRef<HTMLDivElement | null>(null);
 
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -148,10 +158,59 @@ export default function AdminPage() {
       await api.adminDeleteUser(u.id, token);
       setUsers((prev) => prev.filter((x) => x.id !== u.id));
       setSelected((prev) => (prev?.id === u.id ? null : prev));
+      setTempPasswordResult((prev) => (prev?.user_id === u.id ? null : prev));
     } catch (e: any) {
       setUsersError(e?.message || "Не удалось удалить пользователя");
     } finally {
       setDeletingUserId(null);
+    }
+  };
+
+  const issueTempPassword = async (u: AdminUser) => {
+    if (!token || !isAdmin) return;
+    if (tempPasswordLoadingUserId) return;
+    const raw = window.prompt("Срок временного пароля в минутах (5-1440):", "60");
+    if (raw === null) return;
+    const ttl = Number(String(raw).trim());
+    if (!Number.isInteger(ttl) || ttl < 5 || ttl > 1440) {
+      alert("Введите целое число от 5 до 1440.");
+      return;
+    }
+
+    setTempPasswordLoadingUserId(u.id);
+    setTempPasswordError(null);
+    try {
+      const res = await api.adminIssueTempPassword(u.id, ttl, token);
+      const payload = {
+        user_id: u.id,
+        username: u.username,
+        temp_password: res.temp_password,
+        expires_at: res.expires_at,
+        ttl_minutes: res.ttl_minutes,
+      };
+      setTempPasswordResult(payload);
+      setTimeout(() => {
+        tempPasswordResultRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 0);
+      alert(
+        `Временный пароль для @${payload.username}: ${payload.temp_password}\nДействует до: ${new Date(
+          payload.expires_at
+        ).toLocaleString()}`
+      );
+    } catch (e: any) {
+      setTempPasswordError(e?.message || "Не удалось выдать временный пароль");
+    } finally {
+      setTempPasswordLoadingUserId(null);
+    }
+  };
+
+  const copyTempPassword = async () => {
+    if (!tempPasswordResult) return;
+    try {
+      await navigator.clipboard.writeText(tempPasswordResult.temp_password);
+      alert("Пароль скопирован.");
+    } catch {
+      alert("Не удалось скопировать пароль.");
     }
   };
 
@@ -323,6 +382,47 @@ export default function AdminPage() {
           </button>
         </div>
         {usersError ? <div className="text-red-300 text-sm">{usersError}</div> : null}
+        {tempPasswordError ? <div className="text-red-300 text-sm">{tempPasswordError}</div> : null}
+        {tempPasswordResult ? (
+          <div
+            ref={tempPasswordResultRef}
+            className="rounded-xl border border-amber-300/35 bg-amber-400/10 p-3 text-amber-50"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">
+                  Временный пароль для @{tempPasswordResult.username}
+                </div>
+                <div className="text-xs text-amber-100/80 mt-1">
+                  Действует до {new Date(tempPasswordResult.expires_at).toLocaleString()}
+                </div>
+                <code className="mt-2 inline-flex rounded-lg border border-amber-200/40 bg-black/30 px-2 py-1 text-sm">
+                  {tempPasswordResult.temp_password}
+                </code>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="w-8 h-8 rounded-full border border-amber-200/40 hover:bg-amber-200/15 grid place-items-center"
+                  onClick={copyTempPassword}
+                  title="Скопировать пароль"
+                  aria-label="Скопировать пароль"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="w-8 h-8 rounded-full border border-amber-200/40 hover:bg-amber-200/15 grid place-items-center"
+                  onClick={() => setTempPasswordResult(null)}
+                  title="Скрыть"
+                  aria-label="Скрыть"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {usersLoading ? (
           <div className="text-white/60 text-sm">Загрузка...</div>
         ) : users.length === 0 ? (
@@ -369,20 +469,36 @@ export default function AdminPage() {
                         {u.role}
                       </span>
                       {isAdmin ? (
-                        <button
-                          type="button"
-                          className="danger w-9 h-9 rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10 grid place-items-center disabled:opacity-60"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            deleteUser(u);
-                          }}
-                          disabled={deletingUserId === u.id}
-                          aria-label={`Удалить пользователя @${u.username}`}
-                          title="Удалить пользователя"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="w-9 h-9 rounded-full border border-sky-400/35 text-sky-200 hover:bg-sky-500/10 grid place-items-center disabled:opacity-60"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              issueTempPassword(u);
+                            }}
+                            disabled={tempPasswordLoadingUserId === u.id || deletingUserId === u.id}
+                            aria-label={`Выдать временный пароль @${u.username}`}
+                            title="Выдать временный пароль"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="danger w-9 h-9 rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10 grid place-items-center disabled:opacity-60"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              deleteUser(u);
+                            }}
+                            disabled={deletingUserId === u.id}
+                            aria-label={`Удалить пользователя @${u.username}`}
+                            title="Удалить пользователя"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       ) : null}
                     </div>
                   }
@@ -444,6 +560,14 @@ export default function AdminPage() {
                   >
                     {verifiedSaving ? "Сохраняем..." : "Применить"}
                   </button>
+                  <button
+                    type="button"
+                    className="sidebar-pill px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                    onClick={() => issueTempPassword(selected)}
+                    disabled={tempPasswordLoadingUserId === selected.id}
+                  >
+                    {tempPasswordLoadingUserId === selected.id ? "Выдаём..." : "Временный пароль"}
+                  </button>
                 </>
               ) : (
                 <>
@@ -459,6 +583,30 @@ export default function AdminPage() {
           </div>
           {isAdmin && roleError ? <div className="text-red-300 text-sm">{roleError}</div> : null}
           {isAdmin && verifiedError ? <div className="text-red-300 text-sm">{verifiedError}</div> : null}
+          {tempPasswordResult && tempPasswordResult.user_id === selected.id ? (
+            <div className="rounded-xl border border-amber-300/35 bg-amber-400/10 p-3 text-amber-50">
+              <div className="text-sm font-medium">
+                Временный пароль для @{tempPasswordResult.username}
+              </div>
+              <div className="text-xs text-amber-100/80 mt-1">
+                Действует до {new Date(tempPasswordResult.expires_at).toLocaleString()}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="inline-flex rounded-lg border border-amber-200/40 bg-black/30 px-2 py-1 text-sm">
+                  {tempPasswordResult.temp_password}
+                </code>
+                <button
+                  type="button"
+                  className="w-8 h-8 rounded-full border border-amber-200/40 hover:bg-amber-200/15 grid place-items-center"
+                  onClick={copyTempPassword}
+                  title="Скопировать пароль"
+                  aria-label="Скопировать пароль"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-between">
             <div className="text-white/80 text-sm">Посты пользователя</div>
