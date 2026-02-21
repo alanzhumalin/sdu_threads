@@ -50,6 +50,14 @@ type TelegramDirectMessageNotification struct {
 	MessagePreview  string
 }
 
+type TelegramNewPostNotification struct {
+	RecipientUserID string
+	PostID          string
+	AuthorFullName  string
+	AuthorUsername  string
+	PostPreview     string
+}
+
 type telegramURLButton struct {
 	Text string
 	URL  string
@@ -277,6 +285,48 @@ func (s *TelegramService) NotifyDirectMessage(ctx context.Context, req TelegramD
 	return nil
 }
 
+func (s *TelegramService) NotifyNewPost(ctx context.Context, req TelegramNewPostNotification) error {
+	if !s.Enabled() {
+		return nil
+	}
+	recipientID := strings.TrimSpace(req.RecipientUserID)
+	if recipientID == "" {
+		return nil
+	}
+	link, err := s.repo.GetLinkByUserID(ctx, recipientID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !link.Enabled || link.TelegramChatID == 0 {
+		return nil
+	}
+
+	author := strings.TrimSpace(req.AuthorFullName)
+	if author == "" {
+		username := strings.TrimSpace(req.AuthorUsername)
+		if username != "" {
+			author = "@" + strings.TrimPrefix(username, "@")
+		} else {
+			author = "Пользователь"
+		}
+	}
+	preview := strings.TrimSpace(req.PostPreview)
+	if preview == "" {
+		preview = "Опубликован новый пост"
+	}
+	preview = truncateRunes(preview, s.notifyTextMaxRunes)
+
+	text := fmt.Sprintf("🆕 Новый пост от %s\n\n%s", author, preview)
+	buttons := s.buildAppPostButtons(req.PostID)
+	if len(buttons) > 0 {
+		return s.sendMessageWithURLButtons(ctx, link.TelegramChatID, text, buttons)
+	}
+	return s.sendMessage(ctx, link.TelegramChatID, text)
+}
+
 func (s *TelegramService) pollLoop(ctx context.Context) {
 	if !s.Enabled() {
 		return
@@ -463,6 +513,14 @@ func (s *TelegramService) buildAppChatButtons(chatID string) []telegramURLButton
 		return nil
 	}
 	return buildAppURLButtons(s.appPublicURL, "/chats/"+url.PathEscape(chatID), "Ответить")
+}
+
+func (s *TelegramService) buildAppPostButtons(postID string) []telegramURLButton {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return buildAppURLButtons(s.appPublicURL, "/", "Открыть ленту")
+	}
+	return buildAppURLButtons(s.appPublicURL, "/p/"+url.PathEscape(postID), "Открыть пост")
 }
 
 func (s *TelegramService) callTelegram(ctx context.Context, method string, req any, out any) error {

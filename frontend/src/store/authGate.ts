@@ -11,16 +11,15 @@ type AuthGateState = {
 
 export const useAuthGateStore = create<AuthGateState>((set) => ({
   open: false,
-  title: "Сначала авторизуйся",
-  message: "Чтобы продолжить, нужно войти в аккаунт.",
-  ctaLabel: "Войти",
+  title: "",
+  message: "",
+  ctaLabel: "",
   show: (opts) =>
     set({
       open: true,
-      title: opts?.title ?? "Сначала авторизуйся",
-      message: opts?.message ?? "Чтобы продолжить, нужно войти в аккаунт.",
-      ctaLabel: opts?.ctaLabel ?? "Войти",
+      title: opts?.title ?? "",
+      message: opts?.message ?? "",
+      ctaLabel: opts?.ctaLabel ?? "",
     }),
   hide: () => set({ open: false }),
 }));
-

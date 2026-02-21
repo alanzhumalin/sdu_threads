@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Flag, X } from "lucide-react";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useI18n } from "../i18n";
 import { ErrorMessage } from "./ErrorMessage";
 
 type TargetType = "post" | "user";
@@ -14,18 +15,14 @@ type Props = {
   onSuccess?: () => void;
 };
 
-const REASONS: { value: string; label: string }[] = [
-  { value: "spam", label: "Спам" },
-  { value: "abuse", label: "Оскорбления" },
-  { value: "violence", label: "Насилие" },
-  { value: "scam", label: "Мошенничество" },
-  { value: "other", label: "Другое" },
-];
+const REASONS: string[] = ["spam", "abuse", "violence", "scam", "other"];
 
 export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const [target, setTarget] = useState<TargetType>("post");
-  const [reason, setReason] = useState<string>(REASONS[0].value);
+  const [reason, setReason] = useState<string>(REASONS[0]);
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -45,8 +42,11 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
   }, [target, reason]);
 
   const title = useMemo(
-    () => (target === "post" ? "Пожаловаться на пост" : "Пожаловаться на пользователя"),
-    [target]
+    () =>
+      target === "post"
+        ? tr("Постқа шағым", "Пожаловаться на пост", "Report post")
+        : tr("Пайдаланушыға шағым", "Пожаловаться на пользователя", "Report user"),
+    [target, tr]
   );
 
   const canSubmit = useMemo(() => {
@@ -73,9 +73,24 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
       onSuccess?.();
       onClose();
     } catch (e: any) {
-      setError(e?.message || "Не удалось отправить жалобу");
+      setError(e?.message || tr("Шағым жіберілмеді", "Не удалось отправить жалобу", "Failed to send report"));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const reasonLabel = (value: string) => {
+    switch (value) {
+      case "spam":
+        return tr("Спам", "Спам", "Spam");
+      case "abuse":
+        return tr("Қорлау", "Оскорбления", "Abuse");
+      case "violence":
+        return tr("Зорлық", "Насилие", "Violence");
+      case "scam":
+        return tr("Алаяқтық", "Мошенничество", "Scam");
+      default:
+        return tr("Басқа", "Другое", "Other");
     }
   };
 
@@ -107,7 +122,7 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
                 target === "post" ? "bg-white text-black" : "text-white/70 hover:text-white"
               }`}
             >
-              На пост
+              {tr("Постқа", "На пост", "Post")}
             </button>
             <button
               type="button"
@@ -116,16 +131,16 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
                 target === "user" ? "bg-white text-black" : "text-white/70 hover:text-white"
               }`}
             >
-              На пользователя
+              {tr("Пайдаланушыға", "На пользователя", "User")}
             </button>
           </div>
 
           <div className="space-y-2">
             {REASONS.map((r) => (
               <label
-                key={r.value}
+                key={r}
                 className={`flex items-start gap-3 rounded-xl border px-3 py-2 cursor-pointer transition ${
-                  reason === r.value
+                  reason === r
                     ? "border-white/30 bg-white/5"
                     : "border-white/10 hover:border-white/20"
                 }`}
@@ -133,12 +148,12 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
                 <input
                   type="radio"
                   name="report-reason"
-                  value={r.value}
-                  checked={reason === r.value}
-                  onChange={() => setReason(r.value)}
+                  value={r}
+                  checked={reason === r}
+                  onChange={() => setReason(r)}
                   className="mt-1 accent-sky-400"
                 />
-                <span className="text-white text-sm">{r.label}</span>
+                <span className="text-white text-sm">{reasonLabel(r)}</span>
               </label>
             ))}
           </div>
@@ -147,7 +162,7 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
             <textarea
               value={details}
               onChange={(e) => setDetails(e.target.value)}
-              placeholder="Опишите причину"
+              placeholder={tr("Себебін жазыңыз", "Опишите причину", "Describe the reason")}
               className="w-full min-h-[96px] resize-none rounded-xl border border-white/10 bg-black px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-white/30"
             />
           )}
@@ -160,7 +175,7 @@ export function ReportModal({ postId, userId, onClose, onSuccess }: Props) {
             onClick={submit}
             className="w-full rounded-full border border-white/10 py-2 text-sm text-white hover:bg-white/5 disabled:opacity-50 disabled:hover:bg-transparent"
           >
-            {submitting ? "Отправляем..." : "Отправить"}
+            {submitting ? tr("Жіберілуде...", "Отправляем...", "Sending...") : tr("Жіберу", "Отправить", "Send")}
           </button>
         </div>
       </div>

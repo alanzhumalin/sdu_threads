@@ -7,6 +7,8 @@ import { useAuthStore } from "../store/auth";
 import { AvatarCircle } from "../components/Avatar";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 
 const CHAT_LIST_REFRESH_MS = 20000;
 
@@ -18,26 +20,6 @@ type ChatListSocketEvent =
 const chatListWSURL = () => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocol}://${window.location.host}/api/chats/ws`;
-};
-
-const timeAgo = (iso?: string) => {
-  if (!iso) return "";
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleDateString();
 };
 
 const sortChats = (items: ChatPreview[]) =>
@@ -55,6 +37,7 @@ const mergeChats = (current: ChatPreview[], incoming: ChatPreview[]) => {
 };
 
 export default function ChatsPage() {
+  const { t, language } = useI18n();
   const token = useAuthStore((s) => s.token);
   const navigate = useNavigate();
 
@@ -79,7 +62,7 @@ export default function ChatsPage() {
       setNextOffset(res.nextOffset);
       setError("");
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить чаты");
+      setError(e.message || t("chats.load_error"));
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -224,8 +207,8 @@ export default function ChatsPage() {
     <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-white/60">Личные сообщения</p>
-          <h1 className="text-2xl font-semibold text-white">Чаты</h1>
+          <p className="text-sm text-white/60">{t("chats.page_label")}</p>
+          <h1 className="text-2xl font-semibold text-white">{t("chats.page_title")}</h1>
         </div>
       </div>
 
@@ -251,14 +234,14 @@ export default function ChatsPage() {
           <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-white/70">
             <MessageCircle className="w-6 h-6" strokeWidth={1.7} />
           </div>
-          <p className="text-white font-medium">Пока нет диалогов</p>
-          <p className="text-sm text-white/60">Откройте профиль пользователя и нажмите “Отправить сообщение”.</p>
+          <p className="text-white font-medium">{t("chats.empty_title")}</p>
+          <p className="text-sm text-white/60">{t("chats.empty_desc")}</p>
         </div>
       )}
 
       <div className="space-y-3">
         {items.map((chat) => {
-          const preview = chat.last_message?.body?.trim() || "Начните диалог";
+          const preview = chat.last_message?.body?.trim() || t("chats.preview_default");
           return (
             <button
               key={chat.id}
@@ -284,7 +267,7 @@ export default function ChatsPage() {
                     </div>
                     <div className="shrink-0 text-right">
                       {chat.last_message_at && (
-                        <p className="text-xs text-white/50">{timeAgo(chat.last_message_at)}</p>
+                        <p className="text-xs text-white/50">{formatTimeAgo(chat.last_message_at, language)}</p>
                       )}
                       {chat.unread_count > 0 && (
                         <span className="mt-1 inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full bg-white text-black text-xs font-semibold">

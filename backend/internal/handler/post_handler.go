@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,14 +19,21 @@ import (
 )
 
 type PostHandler struct {
-	service *service.PostService
-	views   *service.ViewService
-	jwt     *auth.JWTManager
-	cache   *cache.QueryCache
+	service  *service.PostService
+	views    *service.ViewService
+	telegram *service.TelegramService
+	jwt      *auth.JWTManager
+	cache    *cache.QueryCache
 }
 
-func NewPostHandler(s *service.PostService, views *service.ViewService, jwt *auth.JWTManager, c *cache.QueryCache) *PostHandler {
-	return &PostHandler{service: s, views: views, jwt: jwt, cache: c}
+func NewPostHandler(
+	s *service.PostService,
+	views *service.ViewService,
+	tg *service.TelegramService,
+	jwt *auth.JWTManager,
+	c *cache.QueryCache,
+) *PostHandler {
+	return &PostHandler{service: s, views: views, telegram: tg, jwt: jwt, cache: c}
 }
 
 func (h *PostHandler) Register(mux *http.ServeMux) {
@@ -62,7 +70,8 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				media = append(media, dto.MediaItem{URL: u})
 			}
 		}
-		if err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.ContainerColor, req.Hashtags); err != nil {
+		createdPost, err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.ContainerColor, req.Hashtags)
+		if err != nil {
 			var rl *apperror.RateLimitError
 			if errors.As(err, &rl) {
 				w.Header().Set("Retry-After", strconv.Itoa(rl.RetryAfterSeconds))
@@ -88,12 +97,56 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if createdPost != nil {
+			go h.notifyTelegramFollowersAboutPost(userID, createdPost.ID, createdPost.Content)
+		}
 		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 	case http.MethodGet:
 		h.handleFeed(w, r)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *PostHandler) notifyTelegramFollowersAboutPost(authorID, postID, content string) {
+	if h.telegram == nil || !h.telegram.Enabled() {
+		return
+	}
+	authorID = strings.TrimSpace(authorID)
+	postID = strings.TrimSpace(postID)
+	if authorID == "" || postID == "" {
+		return
+	}
+
+	followerIDs, err := h.service.FollowerIDs(context.Background(), authorID)
+	if err != nil {
+		log.Printf("post telegram notify followers failed: author_id=%s err=%v", authorID, err)
+		return
+	}
+	if len(followerIDs) == 0 {
+		return
+	}
+
+	authorFullName, authorUsername := h.service.UserIdentity(context.Background(), authorID)
+	preview := strings.TrimSpace(content)
+	if preview == "" {
+		preview = "Опубликован новый пост"
+	}
+	for _, followerID := range followerIDs {
+		followerID = strings.TrimSpace(followerID)
+		if followerID == "" || followerID == authorID {
+			continue
+		}
+		if err := h.telegram.NotifyNewPost(context.Background(), service.TelegramNewPostNotification{
+			RecipientUserID: followerID,
+			PostID:          postID,
+			AuthorFullName:  authorFullName,
+			AuthorUsername:  authorUsername,
+			PostPreview:     preview,
+		}); err != nil {
+			log.Printf("post telegram notify failed: recipient_id=%s post_id=%s err=%v", followerID, postID, err)
+		}
 	}
 }
 

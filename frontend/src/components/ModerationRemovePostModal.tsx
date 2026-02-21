@@ -2,15 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShieldAlert, X } from "lucide-react";
 import { ErrorMessage } from "./ErrorMessage";
+import { useI18n } from "../i18n";
 
-const REASONS: { value: string; label: string }[] = [
-  { value: "spam", label: "Спам" },
-  { value: "abuse", label: "Оскорбления" },
-  { value: "violence", label: "Насилие" },
-  { value: "scam", label: "Мошенничество" },
-  { value: "adult", label: "18+ контент" },
-  { value: "other", label: "Другое" },
-];
+const REASONS = ["spam", "abuse", "violence", "scam", "adult", "other"] as const;
 
 export function ModerationRemovePostModal({
   postId,
@@ -21,7 +15,9 @@ export function ModerationRemovePostModal({
   onClose: () => void;
   onSuccess: (reason: string) => Promise<void>;
 }) {
-  const [reason, setReason] = useState<string>(REASONS[0]?.value || "spam");
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+  const [reason, setReason] = useState<string>(REASONS[0] || "spam");
   const [details, setDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -54,9 +50,26 @@ export function ModerationRemovePostModal({
       await onSuccess(finalReason);
       onClose();
     } catch (e: any) {
-      setError(e?.message || "Не удалось скрыть пост");
+      setError(e?.message || tr("Постты жасыру мүмкін болмады", "Не удалось скрыть пост", "Failed to hide post"));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const reasonLabel = (value: string) => {
+    switch (value) {
+      case "spam":
+        return tr("Спам", "Спам", "Spam");
+      case "abuse":
+        return tr("Қорлау", "Оскорбления", "Abuse");
+      case "violence":
+        return tr("Зорлық", "Насилие", "Violence");
+      case "scam":
+        return tr("Алаяқтық", "Мошенничество", "Scam");
+      case "adult":
+        return tr("18+ контент", "18+ контент", "18+ content");
+      default:
+        return tr("Басқа", "Другое", "Other");
     }
   };
 
@@ -72,7 +85,7 @@ export function ModerationRemovePostModal({
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-white/70" strokeWidth={1.7} />
-            <span className="text-white font-semibold">Скрыть пост</span>
+            <span className="text-white font-semibold">{tr("Постты жасыру", "Скрыть пост", "Hide post")}</span>
           </div>
           <button onClick={onClose} className="text-white/60 hover:text-white">
             <X className="w-5 h-5" />
@@ -83,9 +96,9 @@ export function ModerationRemovePostModal({
           <div className="space-y-2">
             {REASONS.map((r) => (
               <label
-                key={r.value}
+                key={r}
                 className={`flex items-start gap-3 rounded-xl border px-3 py-2 cursor-pointer transition ${
-                  reason === r.value
+                  reason === r
                     ? "border-white/30 bg-white/5"
                     : "border-white/10 hover:border-white/20"
                 }`}
@@ -93,12 +106,12 @@ export function ModerationRemovePostModal({
                 <input
                   type="radio"
                   name={`moderation-reason-${postId}`}
-                  value={r.value}
-                  checked={reason === r.value}
-                  onChange={() => setReason(r.value)}
+                  value={r}
+                  checked={reason === r}
+                  onChange={() => setReason(r)}
                   className="mt-1 accent-sky-400"
                 />
-                <span className="text-white text-sm">{r.label}</span>
+                <span className="text-white text-sm">{reasonLabel(r)}</span>
               </label>
             ))}
           </div>
@@ -107,7 +120,7 @@ export function ModerationRemovePostModal({
             <textarea
               value={details}
               onChange={(e) => setDetails(e.target.value)}
-              placeholder="Опишите причину"
+              placeholder={tr("Себебін жазыңыз", "Опишите причину", "Describe the reason")}
               className="w-full min-h-[96px] resize-none rounded-xl border border-white/10 bg-black px-3 py-2 text-white text-sm placeholder:text-white/30 focus:outline-none focus:border-white/30"
             />
           ) : null}
@@ -121,7 +134,7 @@ export function ModerationRemovePostModal({
               onClick={onClose}
               disabled={submitting}
             >
-              Отмена
+              {tr("Бас тарту", "Отмена", "Cancel")}
             </button>
             <button
               type="button"
@@ -129,7 +142,7 @@ export function ModerationRemovePostModal({
               onClick={submit}
               className="flex-1 rounded-full border border-white/10 py-2 text-sm text-white hover:bg-white/5 disabled:opacity-50 disabled:hover:bg-transparent"
             >
-              {submitting ? "Скрываем..." : "Скрыть"}
+              {submitting ? tr("Жасырылуда...", "Скрываем...", "Hiding...") : tr("Жасыру", "Скрыть", "Hide")}
             </button>
           </div>
         </div>
@@ -138,4 +151,3 @@ export function ModerationRemovePostModal({
     document.body
   );
 }
-

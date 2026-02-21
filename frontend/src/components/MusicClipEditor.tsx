@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Scissors } from "lucide-react";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin, { Region } from "wavesurfer.js/dist/plugins/regions.esm.js";
+import { useI18n } from "../i18n";
 
 type Props = {
   src: string;
@@ -48,6 +49,8 @@ export function MusicClipEditor({
   maxClipSec = 30,
   onClipChange,
 }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const containerRef = useRef<HTMLDivElement | null>(null);
   const waveRef = useRef<WaveSurfer | null>(null);
   const regionRef = useRef<Region | null>(null);
@@ -197,7 +200,7 @@ export function MusicClipEditor({
     });
     ws.on("play", () => setIsPlaying(true));
     ws.on("pause", () => setIsPlaying(false));
-    ws.on("error", () => setLoadError("Не удалось загрузить превью аудио"));
+    ws.on("error", () => setLoadError(tr("Аудио превью жүктелмеді", "Не удалось загрузить превью аудио", "Failed to load audio preview")));
 
     regions.on("region-update", (region) => syncRegion(region, false));
     regions.on("region-updated", (region) => syncRegion(region, true));
@@ -244,15 +247,15 @@ export function MusicClipEditor({
       <div className="flex items-center justify-between gap-2">
         <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/35 bg-cyan-400/15 px-2.5 py-1 text-[11px] text-cyan-100">
           <Scissors className="h-3.5 w-3.5" />
-          Выбор фрагмента
+          {tr("Үзіндіні таңдау", "Выбор фрагмента", "Clip selection")}
         </div>
         <button
           type="button"
           onClick={() => void togglePlay()}
           disabled={!ready}
           className="h-8 w-8 rounded-full border border-white/20 bg-white/10 text-white hover:bg-white/15 disabled:opacity-40"
-          aria-label={isPlaying ? "Пауза" : "Воспроизвести"}
-          title={isPlaying ? "Пауза" : "Воспроизвести"}
+          aria-label={isPlaying ? tr("Кідірту", "Пауза", "Pause") : tr("Ойнату", "Воспроизвести", "Play")}
+          title={isPlaying ? tr("Кідірту", "Пауза", "Pause") : tr("Ойнату", "Воспроизвести", "Play")}
         >
           {isPlaying ? <Pause className="mx-auto h-4 w-4" /> : <Play className="mx-auto h-4 w-4 translate-x-[1px]" />}
         </button>
@@ -275,7 +278,7 @@ export function MusicClipEditor({
             value={Math.max(clip.start, Math.min(clip.end, currentTime))}
             onChange={(e) => seek(Number(e.target.value))}
             className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-            aria-label="Позиция аудио"
+            aria-label={tr("Аудио орны", "Позиция аудио", "Audio position")}
           />
         </div>
         <span className="w-10 shrink-0 text-right tabular-nums">{fmt(clipDuration)}</span>
@@ -283,15 +286,15 @@ export function MusicClipEditor({
 
       <div className="grid grid-cols-3 gap-2 text-[11px]">
         <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
-          <p className="text-white/50">Начало</p>
+          <p className="text-white/50">{tr("Басы", "Начало", "Start")}</p>
           <p className="font-semibold tabular-nums text-white">{fmt(clip.start)}</p>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
-          <p className="text-white/50">Конец</p>
+          <p className="text-white/50">{tr("Соңы", "Конец", "End")}</p>
           <p className="font-semibold tabular-nums text-white">{fmt(clip.end)}</p>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
-          <p className="text-white/50">Фрагмент</p>
+          <p className="text-white/50">{tr("Үзінді", "Фрагмент", "Clip")}</p>
           <p className="font-semibold tabular-nums text-white">
             {fmt(clipDuration)} / {fmt(Math.max(1, Math.floor(Math.min(maxClipSec, duration))))}
           </p>

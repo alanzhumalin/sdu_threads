@@ -39,6 +39,7 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { MediaViewerModal } from "../components/MediaViewerModal";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { useI18n, type AppLanguage } from "../i18n";
 
 type UiMessage = ChatMessage & {
   pending?: boolean;
@@ -98,8 +99,8 @@ const CHAT_THEME_ORDER: ChatThemeKey[] = ["default", "love", "nature", "sunset",
 
 const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   default: {
-    label: "Классика",
-    description: "Минималистичный стиль со спокойным свечением",
+    label: "Classic",
+    description: "Minimal style with soft glow",
     listClass: "",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_12%_18%,rgba(255,255,255,0.06),transparent_45%),linear-gradient(to_right,rgba(255,255,255,0.03),transparent_60%)]",
@@ -114,7 +115,7 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   },
   love: {
     label: "Love",
-    description: "Романтичные сердечки и мягкие розовые акценты",
+    description: "Romantic hearts and soft pink accents",
     listClass: "bg-gradient-to-b from-rose-500/15 via-pink-500/10 to-transparent",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_18%_22%,rgba(244,63,94,0.24),transparent_48%),linear-gradient(to_right,rgba(236,72,153,0.16),rgba(255,255,255,0.02)_70%)]",
@@ -129,7 +130,7 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   },
   nature: {
     label: "Nature",
-    description: "Листья и свежий зеленый фон в спокойном тоне",
+    description: "Leaves and calm green background",
     listClass: "bg-gradient-to-b from-emerald-500/15 via-green-500/10 to-transparent",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_18%_18%,rgba(16,185,129,0.22),transparent_46%),linear-gradient(to_right,rgba(34,197,94,0.16),rgba(255,255,255,0.02)_70%)]",
@@ -144,7 +145,7 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   },
   sunset: {
     label: "Sunset",
-    description: "Теплые лучи заката и мягкое золотистое свечение",
+    description: "Warm sunset rays and gentle golden glow",
     listClass: "bg-gradient-to-b from-orange-500/18 via-amber-500/10 to-transparent",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_82%_16%,rgba(251,191,36,0.24),transparent_42%),linear-gradient(to_right,rgba(249,115,22,0.2),rgba(255,255,255,0.02)_70%)]",
@@ -159,7 +160,7 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   },
   ocean: {
     label: "Ocean",
-    description: "Водные иконки и прохладный морской оттенок",
+    description: "Water details and cool ocean tint",
     listClass: "bg-gradient-to-b from-cyan-500/16 via-sky-500/10 to-transparent",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_14%_20%,rgba(6,182,212,0.24),transparent_46%),linear-gradient(to_right,rgba(14,165,233,0.17),rgba(255,255,255,0.02)_70%)]",
@@ -174,7 +175,7 @@ const CHAT_THEMES: Record<ChatThemeKey, ChatThemeConfig> = {
   },
   midnight: {
     label: "Midnight",
-    description: "Ночная тема с луной и холодным фиолетовым свечением",
+    description: "Night style with moon and cool violet glow",
     listClass: "bg-gradient-to-b from-indigo-500/16 via-violet-500/10 to-transparent",
     headerOverlayClass:
       "bg-[radial-gradient(circle_at_16%_18%,rgba(99,102,241,0.24),transparent_44%),linear-gradient(to_right,rgba(139,92,246,0.18),rgba(255,255,255,0.02)_70%)]",
@@ -350,7 +351,7 @@ const CHAT_AUDIO_PLAYER_TONE: Record<
 function ChatAudioPreview({
   src,
   variant,
-  title = "Голосовое сообщение",
+  title,
   durationSec = 0,
 }: {
   src: string;
@@ -358,6 +359,9 @@ function ChatAudioPreview({
   title?: string;
   durationSec?: number;
 }) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+  const displayTitle = title || tr("Дауыстық хабарлама", "Голосовое сообщение", "Voice message");
   const { load, togglePlayPause, seek, getPosition, isPlaying, isLoading, duration, player, src: loadedSrc } =
     useAudioPlayer();
   const [positionSeconds, setPositionSeconds] = useState(0);
@@ -484,9 +488,11 @@ function ChatAudioPreview({
         <div className="mb-1.5 flex items-center justify-between gap-2">
           <p className="min-w-0 truncate text-xs font-medium inline-flex items-center gap-1.5">
             <Mic className="w-3.5 h-3.5 text-white/80" />
-            <span className="truncate">{title}</span>
+            <span className="truncate">{displayTitle}</span>
           </p>
-          <span className="shrink-0 text-[11px] text-white/65">{isLoading && !canSeek ? "загрузка..." : displayDurationLabel}</span>
+          <span className="shrink-0 text-[11px] text-white/65">
+            {isLoading && !canSeek ? tr("жүктелуде...", "загрузка...", "loading...") : displayDurationLabel}
+          </span>
         </div>
       )}
       <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
@@ -496,8 +502,8 @@ function ChatAudioPreview({
           className={`${
             compact ? "h-7 w-7" : "h-8 w-8"
           } shrink-0 rounded-full border grid place-items-center transition disabled:opacity-50 disabled:cursor-not-allowed ${tone.buttonClass}`}
-          aria-label={isPlaying ? "Пауза" : "Воспроизвести"}
-          title={isPlaying ? "Пауза" : "Воспроизвести"}
+          aria-label={isPlaying ? tr("Кідірту", "Пауза", "Pause") : tr("Ойнату", "Воспроизвести", "Play")}
+          title={isPlaying ? tr("Кідірту", "Пауза", "Pause") : tr("Ойнату", "Воспроизвести", "Play")}
         >
           {isLoading && isLoadedCurrent ? (
             <Loader2 className={`${compact ? "w-3 h-3" : "w-3.5 h-3.5"} animate-spin`} />
@@ -526,7 +532,7 @@ function ChatAudioPreview({
                 value={safeDuration > 0 ? clampedPosition : 0}
                 onChange={(event) => handleSeek(Number(event.target.value))}
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                aria-label="Позиция аудио"
+                aria-label={tr("Аудио орны", "Позиция аудио", "Audio position")}
               />
             </div>
             <span className={`shrink-0 text-[10px] tabular-nums ${compact ? "w-8" : "w-10"} text-left text-white/70`}>
@@ -545,31 +551,41 @@ const trimReplyPreview = (value: string, max = 120) => {
   return `${flat.slice(0, max).trimEnd()}...`;
 };
 
-const formatPresenceStatus = (participant?: ChatPreview["participant"] | null, nowMs = Date.now()) => {
-  if (!participant) return "был(а) недавно";
-  if (participant.is_online) return "в сети";
+const formatPresenceStatus = (
+  participant: ChatPreview["participant"] | null | undefined,
+  language: AppLanguage,
+  nowMs = Date.now()
+) => {
+  const tr = (kk: string, ru: string, en: string) => {
+    if (language === "ru") return ru;
+    if (language === "en") return en;
+    return kk;
+  };
+  if (!participant) return tr("жуырда желіде болды", "был(а) недавно", "last seen recently");
+  if (participant.is_online) return tr("желіде", "в сети", "online");
 
   const raw = String(participant.last_seen_at || "").trim();
-  if (!raw) return "был(а) недавно";
+  if (!raw) return tr("жуырда желіде болды", "был(а) недавно", "last seen recently");
 
   const ts = new Date(raw).getTime();
-  if (!Number.isFinite(ts)) return "был(а) недавно";
+  if (!Number.isFinite(ts)) return tr("жуырда желіде болды", "был(а) недавно", "last seen recently");
 
   const diffMs = Math.max(0, nowMs - ts);
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "был(а) только что";
-  if (mins < 60) return `был(а) ${mins} мин назад`;
+  if (mins < 1) return tr("жаңа ғана желіде болды", "был(а) только что", "just now");
+  if (mins < 60) return tr(`${mins} мин бұрын`, `был(а) ${mins} мин назад`, `${mins} min ago`);
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `был(а) ${hours} ч назад`;
+  if (hours < 24) return tr(`${hours} сағ бұрын`, `был(а) ${hours} ч назад`, `${hours} h ago`);
   const days = Math.floor(hours / 24);
-  if (days < 7) return `был(а) ${days} дн назад`;
+  if (days < 7) return tr(`${days} күн бұрын`, `был(а) ${days} дн назад`, `${days} d ago`);
 
-  return `был(а) ${new Date(ts).toLocaleString([], {
+  const longDate = new Date(ts).toLocaleString([], {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  })}`;
+  });
+  return tr(`соңғы рет: ${longDate}`, `был(а) ${longDate}`, `last seen ${longDate}`);
 };
 
 const POLL_INTERVAL_MS = 5000;
@@ -665,6 +681,9 @@ const debugChat = (chatId: string, event: string, payload?: unknown) => {
 };
 
 export default function ChatConversationPage() {
+  const { language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+
   const token = useAuthStore((s) => s.token);
   const navigate = useNavigate();
   const { chatId = "" } = useParams();
@@ -731,8 +750,69 @@ export default function ChatConversationPage() {
   const composerSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
 
   const peerID = chat?.participant?.id || "";
-  const peerDisplayName = chat?.participant?.full_name || chat?.participant?.username || "собеседник";
+  const peerDisplayName =
+    chat?.participant?.full_name || chat?.participant?.username || tr("сұхбаттас", "собеседник", "chat partner");
   const activeTheme = CHAT_THEMES[themeKey];
+  const themeLabel = (key: ChatThemeKey) => {
+    switch (key) {
+      case "default":
+        return tr("Классика", "Классика", "Classic");
+      case "love":
+        return tr("Махаббат", "Любовь", "Love");
+      case "nature":
+        return tr("Табиғат", "Природа", "Nature");
+      case "sunset":
+        return tr("Күн батуы", "Закат", "Sunset");
+      case "ocean":
+        return tr("Мұхит", "Океан", "Ocean");
+      case "midnight":
+        return tr("Түн", "Полночь", "Midnight");
+      default:
+        return "Classic";
+    }
+  };
+  const themeDescription = (key: ChatThemeKey) => {
+    switch (key) {
+      case "default":
+        return tr(
+          "Тыныш жарқылы бар минималистік стиль",
+          "Минималистичный стиль со спокойным свечением",
+          "Minimal style with soft glow"
+        );
+      case "love":
+        return tr(
+          "Романтикалық жүректер мен нәзік қызғылт акценттер",
+          "Романтичные сердечки и мягкие розовые акценты",
+          "Romantic hearts and soft pink accents"
+        );
+      case "nature":
+        return tr(
+          "Жапырақтар мен тыныш жасыл фон",
+          "Листья и свежий зеленый фон в спокойном тоне",
+          "Leaves and calm green background"
+        );
+      case "sunset":
+        return tr(
+          "Күн батуының жылы сәулелері",
+          "Теплые лучи заката и мягкое золотистое свечение",
+          "Warm sunset rays and gentle golden glow"
+        );
+      case "ocean":
+        return tr(
+          "Су белгілері мен салқын теңіз реңкі",
+          "Водные иконки и прохладный морской оттенок",
+          "Water details and cool ocean tint"
+        );
+      case "midnight":
+        return tr(
+          "Айлы түн және салқын күлгін жарқыл",
+          "Ночная тема с луной и холодным фиолетовым свечением",
+          "Night style with moon and cool violet glow"
+        );
+      default:
+        return "Minimal style";
+    }
+  };
   const typingBubbleClass = useMemo(() => {
     switch (themeKey) {
       case "love":
@@ -766,8 +846,8 @@ export default function ChatConversationPage() {
     }
   }, [themeKey]);
   const peerPresenceLabel = useMemo(
-    () => formatPresenceStatus(chat?.participant, presenceTick),
-    [chat?.participant, presenceTick]
+    () => formatPresenceStatus(chat?.participant, language, presenceTick),
+    [chat?.participant, language, presenceTick]
   );
 
   useEffect(() => {
@@ -946,15 +1026,15 @@ export default function ChatConversationPage() {
 
   const queueRecordedAudioUpload = async (blob: Blob, mimeType: string, durationSec = 0) => {
     if (blob.size <= 0) {
-      showMediaError("Не удалось записать голосовое сообщение.");
+      showMediaError(tr("Дауыстық хабарлама жазылмады.", "Не удалось записать голосовое сообщение.", "Failed to record voice message."));
       return;
     }
     if (blob.size > MAX_CHAT_ATTACHMENT_BYTES) {
-      showMediaError("Аудио превышает 5MB. Запишите короче.");
+      showMediaError(tr("Аудио 5MB-тан асты. Қысқарақ жазыңыз.", "Аудио превышает 5MB. Запишите короче.", "Audio exceeds 5MB. Record a shorter clip."));
       return;
     }
     if (composerAttachmentsRef.current.length >= MAX_CHAT_ATTACHMENTS) {
-      showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
+      showMediaError(tr("Бір хабарламаға ең көбі 5 тіркеме.", "Можно прикрепить максимум 5 вложений в одном сообщении.", "You can attach up to 5 files per message."));
       return;
     }
 
@@ -1013,11 +1093,11 @@ export default function ChatConversationPage() {
   const startAudioRecording = async () => {
     if (isRecordingAudio) return;
     if (composerAttachmentsRef.current.length >= MAX_CHAT_ATTACHMENTS) {
-      showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
+      showMediaError(tr("Бір хабарламаға ең көбі 5 тіркеме.", "Можно прикрепить максимум 5 вложений в одном сообщении.", "You can attach up to 5 files per message."));
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      showMediaError("Запись аудио не поддерживается в этом браузере.");
+      showMediaError(tr("Бұл браузерде аудио жазу қолдауы жоқ.", "Запись аудио не поддерживается в этом браузере.", "Audio recording is not supported in this browser."));
       return;
     }
 
@@ -1039,7 +1119,7 @@ export default function ChatConversationPage() {
         }
       };
       recorder.onerror = () => {
-        showMediaError("Не удалось записать голосовое сообщение.");
+        showMediaError(tr("Дауыстық хабарлама жазылмады.", "Не удалось записать голосовое сообщение.", "Failed to record voice message."));
         resetAudioRecordingState();
       };
       recorder.onstop = () => {
@@ -1067,7 +1147,13 @@ export default function ChatConversationPage() {
         pinListToBottom("audio_record_start");
       }
     } catch {
-      showMediaError("Нет доступа к микрофону. Разрешите доступ и попробуйте снова.");
+      showMediaError(
+        tr(
+          "Микрофонға рұқсат жоқ. Рұқсат беріп, қайта көріңіз.",
+          "Нет доступа к микрофону. Разрешите доступ и попробуйте снова.",
+          "No microphone access. Allow access and try again."
+        )
+      );
       resetAudioRecordingState();
     }
   };
@@ -1096,11 +1182,11 @@ export default function ChatConversationPage() {
       setComposerAttachments((prev) =>
         prev.map((item) =>
           item.id === id
-            ? { ...item, status: "error", error: "Сначала авторизуйся" }
+            ? { ...item, status: "error", error: tr("Алдымен кіріңіз", "Сначала авторизуйся", "Sign in first") }
             : item
         )
       );
-      throw new Error("Сначала авторизуйся");
+      throw new Error(tr("Алдымен кіріңіз", "Сначала авторизуйся", "Sign in first"));
     }
 
     try {
@@ -1133,7 +1219,7 @@ export default function ChatConversationPage() {
       );
       return nextAttachment;
     } catch (e: any) {
-      const msg = e?.message || "Не удалось загрузить файл";
+      const msg = e?.message || tr("Файл жүктелмеді", "Не удалось загрузить файл", "Failed to upload file");
       setComposerAttachments((prev) =>
         prev.map((item) =>
           item.id === id
@@ -1195,13 +1281,19 @@ export default function ChatConversationPage() {
 
     if (rejected) {
       if (hasHeicError) {
-        showMediaError("Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF.");
+        showMediaError(
+          tr(
+            "HEIC/HEIF форматы қолдаусыз. JPG, PNG, WebP немесе GIF таңдаңыз.",
+            "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF.",
+            "HEIC/HEIF is not supported. Choose JPG, PNG, WebP or GIF."
+          )
+        );
       } else if (hasSizeError) {
-        showMediaError("Максимальный размер файла 5MB.");
+        showMediaError(tr("Файл көлемі 5MB-тан аспауы керек.", "Максимальный размер файла 5MB.", "Maximum file size is 5MB."));
       } else if (hasTypeError) {
-        showMediaError("Разрешены только изображения/GIF или аудио-файлы.");
+        showMediaError(tr("Тек сурет/GIF немесе аудио файлдар рұқсат.", "Разрешены только изображения/GIF или аудио-файлы.", "Only image/GIF or audio files are allowed."));
       } else {
-        showMediaError("Можно прикрепить максимум 5 вложений в одном сообщении.");
+        showMediaError(tr("Бір хабарламаға ең көбі 5 тіркеме.", "Можно прикрепить максимум 5 вложений в одном сообщении.", "You can attach up to 5 files per message."));
       }
     }
 
@@ -1221,7 +1313,7 @@ export default function ChatConversationPage() {
 
   const replyAuthorLabel = (senderID: string) => {
     if (senderID === peerID) return peerDisplayName;
-    return "Вы";
+    return tr("Сіз", "Вы", "You");
   };
 
   const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
@@ -1387,7 +1479,7 @@ export default function ChatConversationPage() {
       setMessageReactions(messageID, result.reactions || []);
     } catch (e: any) {
       setMessageReactions(messageID, previousReactions);
-      setError(e.message || "Не удалось изменить реакцию");
+      setError(e.message || tr("Реакция өзгертілмеді", "Не удалось изменить реакцию", "Failed to update reaction"));
     }
   };
 
@@ -1455,7 +1547,7 @@ export default function ChatConversationPage() {
       });
       markReadSafe(true);
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить чат");
+      setError(e.message || tr("Чат жүктелмеді", "Не удалось загрузить чат", "Failed to load chat"));
     } finally {
       setLoading(false);
     }
@@ -1473,7 +1565,7 @@ export default function ChatConversationPage() {
       setThemeMenuOpen(false);
     } catch (e: any) {
       setThemeKey(prevTheme);
-      setThemeError(e.message || "Не удалось изменить тему чата");
+      setThemeError(e.message || tr("Чат тақырыбы өзгертілмеді", "Не удалось изменить тему чата", "Failed to change chat theme"));
     } finally {
       setThemeSaving(false);
     }
@@ -1497,7 +1589,7 @@ export default function ChatConversationPage() {
         box.scrollTop = prevTop + delta;
       });
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить историю");
+      setError(e.message || tr("Тарих жүктелмеді", "Не удалось загрузить историю", "Failed to load history"));
     } finally {
       setLoadingMore(false);
     }
@@ -1990,7 +2082,13 @@ export default function ChatConversationPage() {
       return item.uploaded;
     }
     if (item.status === "error") {
-      throw new Error("Есть вложения с ошибкой. Удалите их или загрузите заново.");
+      throw new Error(
+        tr(
+          "Қате бар тіркемелер бар. Оларды өшіріп, қайта жүктеңіз.",
+          "Есть вложения с ошибкой. Удалите их или загрузите заново.",
+          "Some attachments have errors. Remove or re-upload them."
+        )
+      );
     }
     const inflight = composerUploadPromisesRef.current.get(item.id);
     if (inflight) {
@@ -2002,7 +2100,13 @@ export default function ChatConversationPage() {
   const sendMessage = async () => {
     if (!token || !chatId || sending || sendInFlightRef.current) return;
     if (isRecordingAudio) {
-      showMediaError("Остановите запись перед отправкой сообщения.");
+      showMediaError(
+        tr(
+          "Хабар жібермей тұрып жазуды тоқтатыңыз.",
+          "Остановите запись перед отправкой сообщения.",
+          "Stop recording before sending the message."
+        )
+      );
       return;
     }
     const liveBody = getComposerCurrentValue();
@@ -2011,7 +2115,13 @@ export default function ChatConversationPage() {
     const isMobileChat = window.innerWidth < 871;
     const hasFailedAttachments = activeComposerAttachments.some((a) => a.status === "error");
     if (hasFailedAttachments) {
-      setError("Есть вложения с ошибкой. Удалите их или загрузите заново.");
+      setError(
+        tr(
+          "Қате бар тіркемелер бар. Оларды өшіріп, қайта жүктеңіз.",
+          "Есть вложения с ошибкой. Удалите их или загрузите заново.",
+          "Some attachments have errors. Remove or re-upload them."
+        )
+      );
       return;
     }
     const optimisticAttachments = activeComposerAttachments.map(buildOptimisticAttachment);
@@ -2102,7 +2212,7 @@ export default function ChatConversationPage() {
             : m
         )
       );
-      setError(e.message || "Не удалось отправить сообщение");
+      setError(e.message || tr("Хабар жіберілмеді", "Не удалось отправить сообщение", "Failed to send message"));
       if (finalAttachments) {
         releaseOptimisticBlobUrls(tempID);
       }
@@ -2174,13 +2284,13 @@ export default function ChatConversationPage() {
   if (!loading && !chat) {
     return (
       <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
-        <ErrorMessage message={error || "Чат не найден"} />
+        <ErrorMessage message={error || tr("Чат табылмады", "Чат не найден", "Chat not found")} />
         <button
           type="button"
           onClick={() => navigate("/chats")}
           className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition"
         >
-          Назад к чатам
+          {tr("Чаттарға оралу", "Назад к чатам", "Back to chats")}
         </button>
       </main>
     );
@@ -2207,7 +2317,7 @@ export default function ChatConversationPage() {
           type="button"
           onClick={() => navigate("/chats")}
           className="relative z-10 w-9 h-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 grid place-items-center"
-          aria-label="Назад"
+          aria-label={tr("Артқа", "Назад", "Back")}
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
@@ -2234,21 +2344,21 @@ export default function ChatConversationPage() {
             </div>
           </div>
         ) : (
-          <div className="text-white/60 text-sm">Загрузка...</div>
+          <div className="text-white/60 text-sm">{tr("Жүктелуде...", "Загрузка...", "Loading...")}</div>
         )}
         <div className="ml-auto relative z-20" ref={themeMenuRef}>
           <button
             type="button"
             onClick={() => setThemeMenuOpen((prev) => !prev)}
             className="w-9 h-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 grid place-items-center"
-            aria-label="Настройки чата"
-            title="Настройки чата"
+            aria-label={tr("Чат баптаулары", "Настройки чата", "Chat settings")}
+            title={tr("Чат баптаулары", "Настройки чата", "Chat settings")}
           >
             <MoreVertical className="w-4 h-4" />
           </button>
 	          {themeMenuOpen && (
 	            <div className="absolute right-0 top-11 z-30 w-72 rounded-xl border border-white/15 bg-[#0b0b0f]/95 backdrop-blur p-2 shadow-2xl">
-	              <p className="px-2 pb-2 text-[11px] text-white/55">Тема чата</p>
+	              <p className="px-2 pb-2 text-[11px] text-white/55">{tr("Чат тақырыбы", "Тема чата", "Chat theme")}</p>
 	              <div className="space-y-1">
 	                {CHAT_THEME_ORDER.map((key) => {
 	                  const cfg = CHAT_THEMES[key];
@@ -2270,10 +2380,10 @@ export default function ChatConversationPage() {
 	                          <cfg.icon className={`w-3.5 h-3.5 ${cfg.iconClass}`} />
 	                        </span>
 	                        <div className="min-w-0 flex-1">
-	                          <p className="truncate text-sm">{cfg.label}</p>
-	                          <p className="truncate text-[11px] text-white/55">{cfg.description}</p>
+	                          <p className="truncate text-sm">{themeLabel(key)}</p>
+	                          <p className="truncate text-[11px] text-white/55">{themeDescription(key)}</p>
 	                        </div>
-	                        {isActive ? <span className="text-[11px] text-white/70">active</span> : null}
+	                        {isActive ? <span className="text-[11px] text-white/70">{tr("белсенді", "active", "active")}</span> : null}
 	                      </div>
 	                    </button>
 	                  );
@@ -2282,7 +2392,7 @@ export default function ChatConversationPage() {
               {themeSaving && (
                 <div className="pt-2 flex items-center gap-2 text-xs text-white/60 px-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Сохраняем...</span>
+                  <span>{tr("Сақталуда...", "Сохраняем...", "Saving...")}</span>
                 </div>
               )}
             </div>
@@ -2405,15 +2515,19 @@ export default function ChatConversationPage() {
 
           {!loading && messages.length === 0 && (
             <div className="h-full min-h-[240px] flex items-center justify-center text-white/60 text-sm">
-              Сообщений пока нет. Начните диалог.
+              {tr("Әзірге хабарлама жоқ. Диалогты бастаңыз.", "Сообщений пока нет. Начните диалог.", "No messages yet. Start the conversation.")}
             </div>
           )}
 
           {messages.map((m) => {
             const mine = peerID ? m.sender_id !== peerID : m.sender_id === "me";
             const repliedMessage = m.reply_to_id ? messageByID.get(m.reply_to_id) : undefined;
-            const replyPreview = repliedMessage ? trimReplyPreview(repliedMessage.body, 90) : "Сообщение";
-            const replyPreviewAuthor = repliedMessage ? replyAuthorLabel(repliedMessage.sender_id) : "Ответ";
+            const replyPreview = repliedMessage
+              ? trimReplyPreview(repliedMessage.body, 90)
+              : tr("Хабарлама", "Сообщение", "Message");
+            const replyPreviewAuthor = repliedMessage
+              ? replyAuthorLabel(repliedMessage.sender_id)
+              : tr("Жауап", "Ответ", "Reply");
             const messageAttachments = (m.attachments || []).filter((att) => String(att.url || "").trim() !== "");
             const imageAttachments = messageAttachments.filter((att) => att.type !== "audio");
             const audioAttachments = messageAttachments.filter((att) => att.type === "audio");
@@ -2440,8 +2554,8 @@ export default function ChatConversationPage() {
                           ? activeTheme.mineReplyButtonClass
                           : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
                       } disabled:opacity-40 disabled:cursor-not-allowed`}
-                      aria-label="Ответить"
-                      title="Ответить"
+                      aria-label={tr("Жауап беру", "Ответить", "Reply")}
+                      title={tr("Жауап беру", "Ответить", "Reply")}
                     >
                       <Reply className="w-3.5 h-3.5 mx-auto" />
                     </button>
@@ -2459,8 +2573,8 @@ export default function ChatConversationPage() {
                           ? "border-amber-300/45 bg-amber-400/20 text-amber-100 hover:bg-amber-400/30"
                           : "border-white/15 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
                       } disabled:opacity-40 disabled:cursor-not-allowed`}
-                      aria-label="Реакция"
-                      title="Реакция"
+                      aria-label={tr("Реакция", "Реакция", "Reaction")}
+                      title={tr("Реакция", "Реакция", "Reaction")}
                     >
                       <Smile className="w-3.5 h-3.5 mx-auto" />
                     </button>
@@ -2502,7 +2616,7 @@ export default function ChatConversationPage() {
                             key={`${m.id}-attachment-${idx}`}
                             onClick={() => setViewer({ urls: imageAttachmentUrls, initialIndex: idx })}
                             className="w-full overflow-hidden rounded-xl focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 bg-black"
-                            aria-label={`Открыть вложение ${idx + 1}`}
+                            aria-label={tr(`Тіркемені ашу ${idx + 1}`, `Открыть вложение ${idx + 1}`, `Open attachment ${idx + 1}`)}
                           >
                             <img
                               src={att.url}
@@ -2526,7 +2640,9 @@ export default function ChatConversationPage() {
                             src={att.url}
                             variant={mine ? "mine" : "peer"}
                             durationSec={att.duration_sec}
-                            title={`Голосовое сообщение${audioAttachments.length > 1 ? ` ${idx + 1}` : ""}`}
+                            title={`${tr("Дауыстық хабарлама", "Голосовое сообщение", "Voice message")}${
+                              audioAttachments.length > 1 ? ` ${idx + 1}` : ""
+                            }`}
                           />
                         ))}
                       </div>
@@ -2552,8 +2668,12 @@ export default function ChatConversationPage() {
                                 ? "border-white/25 bg-white/15 text-white/90 hover:border-white/40"
                                 : "border-white/20 bg-black/30 text-white/85 hover:border-white/35"
                             } disabled:opacity-60 disabled:cursor-not-allowed`}
-                            aria-label={`Реакция ${reaction.emoji}`}
-                            title={reaction.reacted_by_me ? "Убрать реакцию" : "Поставить реакцию"}
+                            aria-label={tr(`Реакция ${reaction.emoji}`, `Реакция ${reaction.emoji}`, `Reaction ${reaction.emoji}`)}
+                            title={
+                              reaction.reacted_by_me
+                                ? tr("Реакцияны алып тастау", "Убрать реакцию", "Remove reaction")
+                                : tr("Реакция қою", "Поставить реакцию", "Add reaction")
+                            }
                           >
                             <span className="text-sm leading-none">{reaction.emoji}</span>
                             <span className="font-medium">{reaction.count}</span>
@@ -2573,19 +2693,19 @@ export default function ChatConversationPage() {
                         m.read_at ? (
                           <CheckCheck
                             className="w-4 h-4 text-cyan-300 drop-shadow-[0_0_6px_rgba(34,211,238,0.65)]"
-                            aria-label="Прочитано"
-                            title="Прочитано"
+                            aria-label={tr("Оқылды", "Прочитано", "Read")}
+                            title={tr("Оқылды", "Прочитано", "Read")}
                           />
                         ) : (
                           <Check
                             className="w-4 h-4 text-white/70"
-                            aria-label="Отправлено"
-                            title="Отправлено"
+                            aria-label={tr("Жіберілді", "Отправлено", "Sent")}
+                            title={tr("Жіберілді", "Отправлено", "Sent")}
                           />
                         )
                       ) : null}
-                      {m.pending ? <span>· отправка...</span> : null}
-                      {m.failed ? <span>· ошибка</span> : null}
+                      {m.pending ? <span>· {tr("жіберілуде...", "отправка...", "sending...")}</span> : null}
+                      {m.failed ? <span>· {tr("қате", "ошибка", "error")}</span> : null}
                     </div>
                   </div>
                 </div>
@@ -2603,7 +2723,7 @@ export default function ChatConversationPage() {
                   alt={chat?.participant.username || "user"}
                 />
                 <div className={`max-w-[84%] rounded-2xl px-3.5 py-2 ${typingBubbleClass}`}>
-                  <div className="flex items-center gap-1.5" aria-label="Собеседник печатает">
+                  <div className="flex items-center gap-1.5" aria-label={tr("Сұхбаттас теріп жатыр", "Собеседник печатает", "Chat partner is typing")}>
                     <span className={`h-1.5 w-1.5 rounded-full animate-bounce [animation-duration:900ms] ${typingDotClass}`} />
                     <span
                       className={`h-1.5 w-1.5 rounded-full animate-bounce [animation-duration:900ms] ${typingDotClass}`}
@@ -2629,7 +2749,7 @@ export default function ChatConversationPage() {
             <div className="rounded-xl border border-rose-400/35 bg-rose-500/10 px-3 py-2 flex items-center justify-between">
               <p className="inline-flex items-center gap-2 text-sm text-white">
                 <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
-                Идет запись голосового сообщения
+                {tr("Дауыстық хабарлама жазылып жатыр", "Идет запись голосового сообщения", "Recording voice message")}
               </p>
               <span className="text-xs font-semibold text-rose-200">{durationLabel(recordingSeconds)}</span>
             </div>
@@ -2646,7 +2766,7 @@ export default function ChatConversationPage() {
                         type="button"
                         onClick={() => removeComposerAttachment(item.id)}
                         className="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded-full border border-white/20 bg-black/70 text-white/90 hover:bg-black"
-                        aria-label="Удалить вложение"
+                        aria-label={tr("Тіркемені жою", "Удалить вложение", "Remove attachment")}
                       >
                         <X className="w-3.5 h-3.5 mx-auto" />
                       </button>
@@ -2654,17 +2774,17 @@ export default function ChatConversationPage() {
                         src={composerAudioSrc}
                         variant="composer"
                         durationSec={item.uploaded?.duration_sec || item.durationSec}
-                        title={item.file.name || "Голосовое сообщение"}
+                        title={item.file.name || tr("Дауыстық хабарлама", "Голосовое сообщение", "Voice message")}
                       />
                       <div className="flex min-h-[16px] items-center justify-end gap-2 pr-1">
                         {item.status === "uploading" ? (
                           <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            Загрузка...
+                            {tr("Жүктелуде...", "Загрузка...", "Loading...")}
                           </span>
                         ) : null}
                         {item.status === "error" ? (
-                          <span className="text-[11px] text-rose-300 shrink-0">Ошибка</span>
+                          <span className="text-[11px] text-rose-300 shrink-0">{tr("Қате", "Ошибка", "Error")}</span>
                         ) : null}
                       </div>
                     </div>
@@ -2688,7 +2808,7 @@ export default function ChatConversationPage() {
                         }
                       }}
                       className="h-full w-full"
-                      aria-label="Открыть выбранное изображение"
+                      aria-label={tr("Таңдалған суретті ашу", "Открыть выбранное изображение", "Open selected image")}
                     >
                       <img
                         src={item.previewUrl}
@@ -2703,14 +2823,14 @@ export default function ChatConversationPage() {
                     )}
                     {item.status === "error" && (
                       <div className="absolute inset-0 bg-red-500/35 grid place-items-center px-1">
-                        <span className="text-[10px] text-white text-center leading-tight">Ошибка</span>
+                        <span className="text-[10px] text-white text-center leading-tight">{tr("Қате", "Ошибка", "Error")}</span>
                       </div>
                     )}
                     <button
                       type="button"
                       onClick={() => removeComposerAttachment(item.id)}
                       className="absolute top-1 right-1 h-5 w-5 rounded-full border border-white/20 bg-black/70 text-white/90 hover:bg-black"
-                      aria-label="Удалить вложение"
+                      aria-label={tr("Тіркемені жою", "Удалить вложение", "Remove attachment")}
                     >
                       <X className="w-3 h-3 mx-auto" />
                     </button>
@@ -2722,15 +2842,17 @@ export default function ChatConversationPage() {
           {replyTo && (
             <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 flex items-start gap-2">
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] text-white/60">Ответ на {replyAuthorLabel(replyTo.sender_id)}</p>
+                <p className="text-[11px] text-white/60">
+                  {tr("Жауап", "Ответ на", "Reply to")} {replyAuthorLabel(replyTo.sender_id)}
+                </p>
                 <p className="text-xs text-white/90 truncate">{trimReplyPreview(replyTo.body, 140)}</p>
               </div>
               <button
                 type="button"
                 onClick={() => setReplyTo(null)}
                 className="h-6 w-6 rounded-full border border-white/15 text-white/70 hover:text-white hover:border-white/30 grid place-items-center"
-                aria-label="Убрать reply"
-                title="Убрать reply"
+                aria-label={tr("Reply алып тастау", "Убрать reply", "Remove reply")}
+                title={tr("Reply алып тастау", "Убрать reply", "Remove reply")}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -2803,7 +2925,7 @@ export default function ChatConversationPage() {
                   void sendMessage();
                 }
               }}
-              placeholder={isRecordingAudio ? "Запись..." : "Напишите сообщение..."}
+              placeholder={isRecordingAudio ? tr("Жазылуда...", "Запись...", "Recording...") : tr("Хабарлама жазыңыз...", "Напишите сообщение...", "Write a message...")}
               rows={1}
               className="flex-1 min-w-0 h-12 resize-none overflow-y-auto rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-white text-base md:text-sm leading-5 placeholder:text-white/35 focus:outline-none focus:border-white/30 disabled:opacity-70"
             />
@@ -2822,7 +2944,7 @@ export default function ChatConversationPage() {
                 onClick={() => void startAudioRecording()}
                 className="nav-icon shrink-0 self-center bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
                 aria-label="record-audio"
-                title="Записать голосовое сообщение"
+                title={tr("Дауыстық хабарлама жазу", "Записать голосовое сообщение", "Record voice message")}
               >
                 <Mic className="w-5 h-5" />
               </button>
@@ -2871,8 +2993,16 @@ export default function ChatConversationPage() {
           {(hasUploadingComposer || hasFailedComposer) && (
             <p className="text-[11px] text-white/55">
               {hasUploadingComposer
-                ? "Вложения догружаются в фоне, сообщение можно отправлять сразу."
-                : "Есть вложения с ошибкой. Удалите их перед отправкой."}
+                ? tr(
+                    "Тіркемелер фондық режимде жүктеліп жатыр, хабарламаны қазір жібере аласыз.",
+                    "Вложения догружаются в фоне, сообщение можно отправлять сразу.",
+                    "Attachments are uploading in background, you can send message now."
+                  )
+                : tr(
+                    "Қате бар тіркемелер бар. Жіберер алдында оларды өшіріңіз.",
+                    "Есть вложения с ошибкой. Удалите их перед отправкой.",
+                    "Some attachments have errors. Remove them before sending."
+                  )}
             </p>
           )}
         </form>

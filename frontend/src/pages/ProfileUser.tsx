@@ -19,27 +19,12 @@ import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
 import { MentionPreview } from "../components/MentionPreview";
 import { VerifiedBadge } from "../components/VerifiedBadge";
-
-function timeAgo(iso: string) {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
-}
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 
 export default function ProfileUserPage() {
+  const { language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const navigate = useNavigate();
   const { username } = useParams();
@@ -80,7 +65,7 @@ export default function ProfileUserPage() {
       setPosts(items.map((it) => ({ ...it, is_subscribed: subs[it.user_id] ?? it.is_subscribed })));
       setError("");
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить профиль");
+      setError(e.message || tr("Профильді жүктеу мүмкін болмады", "Не удалось загрузить профиль", "Failed to load profile"));
     } finally {
       setLoading(false);
     }
@@ -183,7 +168,7 @@ export default function ProfileUserPage() {
       const chat = await api.openDirectChat({ user_id: profile.id }, token);
       navigate(`/chats/${chat.id}`);
     } catch (e: any) {
-      setError(e.message || "Не удалось открыть чат");
+      setError(e.message || tr("Чатты ашу мүмкін болмады", "Не удалось открыть чат", "Failed to open chat"));
     } finally {
       setOpeningChat(false);
     }
@@ -206,14 +191,14 @@ export default function ProfileUserPage() {
   if (!loading && !profile) {
     return (
       <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
-        <ErrorMessage message={error || "Не удалось загрузить профиль"} />
+        <ErrorMessage message={error || tr("Профильді жүктеу мүмкін болмады", "Не удалось загрузить профиль", "Failed to load profile")} />
         <div className="flex justify-center">
           <button
             type="button"
             onClick={fetchData}
             className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition"
           >
-            Повторить
+            {tr("Қайталау", "Повторить", "Retry")}
           </button>
         </div>
       </div>
@@ -252,21 +237,22 @@ export default function ProfileUserPage() {
                   <p className="text-white/60">@{profile.username}</p>
                   {/* убираем вывод username, оставляем только fullname */}
                   <p className="text-white/50 text-sm">
-                    На сайте с {profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "--"}
+                    {tr("Сайтта тіркелген:", "На сайте с", "On site since")}{" "}
+                    {profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "--"}
                   </p>
                   {profile.bio ? (
                     <p className="text-white/70 text-sm">{profile.bio}</p>
                   ) : (
-                    <p className="text-white/40 text-sm">Нет описания</p>
+                    <p className="text-white/40 text-sm">{tr("Сипаттама жоқ", "Нет описания", "No description")}</p>
                   )}
                   <div className="flex items-center gap-5 text-white/80 pt-1 text-sm">
                     <div className="flex items-baseline gap-1">
                       <span className="font-semibold text-white text-base">{followersCount}</span>
-                      <span className="text-white/60">Подписчики</span>
+                      <span className="text-white/60">{tr("Жазылушылар", "Подписчики", "Followers")}</span>
                     </div>
                     <div className="flex items-baseline gap-1">
                       <span className="font-semibold text-white text-base">{followingCount}</span>
-                      <span className="text-white/60">Подписки</span>
+                      <span className="text-white/60">{tr("Жазылымдар", "Подписки", "Following")}</span>
                     </div>
                   </div>
                 </div>
@@ -275,7 +261,7 @@ export default function ProfileUserPage() {
             <div className="md:pt-0 pt-2 flex md:justify-end">
               {profile.is_me ? (
                 <button className="rounded-full border border-white/20 px-4 py-2 text-sm text-white self-start" disabled>
-                  Это вы
+                  {tr("Бұл сіз", "Это вы", "You")}
                 </button>
               ) : (
                 <div className="flex flex-wrap gap-2 justify-end">
@@ -287,14 +273,18 @@ export default function ProfileUserPage() {
                     }`}
                     onClick={toggleFollow}
                   >
-                    {(subs[profile.id] ?? profile.is_subscribed) ? "Отписаться" : "Подписаться"}
+                    {(subs[profile.id] ?? profile.is_subscribed)
+                      ? tr("Жазылымнан шығу", "Отписаться", "Unfollow")
+                      : tr("Жазылу", "Подписаться", "Follow")}
                   </button>
                   <button
                     className="rounded-full px-4 py-2 text-sm font-semibold border border-white/30 bg-white/5 text-white hover:border-white transition self-start disabled:opacity-60"
                     onClick={openDirectChat}
                     disabled={openingChat}
                   >
-                    {openingChat ? "Открываем..." : "Отправить сообщение"}
+                    {openingChat
+                      ? tr("Ашылып жатыр...", "Открываем...", "Opening...")
+                      : tr("Хабарлама жіберу", "Отправить сообщение", "Send message")}
                   </button>
                 </div>
               )}
@@ -309,10 +299,10 @@ export default function ProfileUserPage() {
 
       <div className="rounded-2xl border border-white/10 bg-black/60 backdrop-blur p-4 shadow-xl space-y-4">
         <div className="space-y-3">
-          {loading && <p className="text-white/60">Загрузка...</p>}
+          {loading && <p className="text-white/60">{tr("Жүктелуде...", "Загрузка...", "Loading...")}</p>}
           {!loading && posts.length === 0 && (
             <div className="py-8 flex justify-center">
-              <p className="text-white/60 text-sm">Пока нет постов</p>
+              <p className="text-white/60 text-sm">{tr("Әзірге пост жоқ", "Пока нет постов", "No posts yet")}</p>
             </div>
           )}
           {posts.map((p) => {
@@ -331,7 +321,7 @@ export default function ProfileUserPage() {
                 {profile?.username ? (
                   <Link
                     to={`/u/${profile.username}`}
-                    aria-label={`Профиль ${profile.full_name || profile.username}`}
+                    aria-label={`${tr("Профиль", "Профиль", "Profile")} ${profile.full_name || profile.username}`}
                     className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                   >
                     <span aria-hidden>
@@ -371,7 +361,7 @@ export default function ProfileUserPage() {
                       profile?.full_name
                     )}
                   </p>
-                  <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
+                  <p className="text-sm text-white/60">{formatTimeAgo(p.created_at, language)}</p>
                 </div>
               </div>
 

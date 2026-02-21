@@ -27,6 +27,8 @@ import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { SearchSkeleton } from "../components/SearchSkeleton";
 import { NotificationsSkeleton } from "../components/NotificationsSkeleton";
 import { PostPermalinkSkeleton } from "../components/PostPermalinkSkeleton";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { useI18n } from "../i18n";
 
 function isJwtExpired(token: string, skewSeconds = 10): boolean {
   try {
@@ -45,6 +47,7 @@ function isJwtExpired(token: string, skewSeconds = 10): boolean {
 }
 
 export default function App() {
+  const { t } = useI18n();
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
   const setUnreadCount = useNotificationStore((s) => s.setUnreadCount);
@@ -236,21 +239,34 @@ export default function App() {
 
   // Глобальная инициализация индикатора уведомлений
   useEffect(() => {
-    let cancelled = false;
     if (!token) {
       setUnreadCount(0);
       return;
     }
-    api
-      .notificationsUnread(token)
-      .then((res) => {
+    let cancelled = false;
+    const refreshUnread = async () => {
+      try {
+        const res = await api.notificationsUnread(token);
         if (!cancelled) setUnreadCount(res.unread_count || 0);
-      })
-      .catch(() => {
+      } catch {
         // тихо игнорируем, чтобы не мешать остальному UI
-      });
+      }
+    };
+
+    void refreshUnread();
+    const pollID = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshUnread();
+    }, 15000);
+    const onFocus = () => {
+      void refreshUnread();
+    };
+    window.addEventListener("focus", onFocus);
+
     return () => {
       cancelled = true;
+      window.clearInterval(pollID);
+      window.removeEventListener("focus", onFocus);
     };
   }, [token, setUnreadCount]);
 
@@ -341,15 +357,15 @@ export default function App() {
   }, [token, setChatsUnreadCount]);
 
   const items = [
-    { label: "Лента", path: "/" , icon: "feed"},
-    { label: "Поиск", path: "/search", icon: "search"},
-    { label: "Чаты", path: "/chats", icon: "messages"},
-    { label: "Уведомления", path: "/notifications", icon: "bell"},
-    { label: "Telegram", path: telegramChannelUrl, icon: "telegram" },
-    { label: "Профиль", path: "/profile", icon: "user"},
+    { label: t("nav.feed"), path: "/" , icon: "feed"},
+    { label: t("nav.search"), path: "/search", icon: "search"},
+    { label: t("nav.chats"), path: "/chats", icon: "messages"},
+    { label: t("nav.notifications"), path: "/notifications", icon: "bell"},
+    { label: t("nav.telegram"), path: telegramChannelUrl, icon: "telegram" },
+    { label: t("nav.profile"), path: "/profile", icon: "user"},
     isAuthed
-      ? { label: "Выйти", path: "/logout", icon: "exit" }
-      : { label: "Вход", path: "/login", icon: "login" },
+      ? { label: t("nav.logout"), path: "/logout", icon: "exit" }
+      : { label: t("nav.login"), path: "/login", icon: "login" },
   ].filter(Boolean) as { label: string; path: string; icon: string }[];
 
   const handleTabClick = (path: string) => {
@@ -369,6 +385,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white relative">
+      <div className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[140]">
+        <LanguageSwitcher />
+      </div>
       {!isAuthPage && (
         <Navigation
           items={items}
@@ -401,9 +420,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Поиск доступен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.search_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <SearchSkeleton />
@@ -419,9 +438,9 @@ export default function App() {
               ) : (
                 <AuthGateOverlay
                   mode="page"
-                  title="Сначала авторизуйся"
-                  message="Уведомления доступны только после входа."
-                  ctaLabel="Войти"
+                  title={t("auth.required_title")}
+                  message={t("auth.notifications_message")}
+                  ctaLabel={t("auth.cta_login")}
                   className="min-h-[calc(100vh-9rem)]"
                 >
                   <NotificationsSkeleton />
@@ -437,9 +456,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Чаты доступны только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.chats_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <NotificationsSkeleton />
@@ -455,9 +474,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Чаты доступны только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.chats_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <NotificationsSkeleton />
@@ -473,9 +492,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Профиль доступен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.profile_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -493,9 +512,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Чтобы открыть профиль, нужно войти."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.user_profile_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -513,9 +532,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Чтобы открыть пост по ссылке, нужно войти."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.permalink_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <PostPermalinkSkeleton />
@@ -531,9 +550,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Доступ в админ-панель возможен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.admin_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -551,9 +570,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Доступ к модерации возможен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.moderation_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -571,9 +590,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Доступ к жалобам возможен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.reports_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
@@ -591,9 +610,9 @@ export default function App() {
                 ) : (
                   <AuthGateOverlay
                     mode="page"
-                    title="Сначала авторизуйся"
-                    message="Доступ к логам модерации возможен только после входа."
-                    ctaLabel="Войти"
+                    title={t("auth.required_title")}
+                    message={t("auth.logs_message")}
+                    ctaLabel={t("auth.cta_login")}
                     className="min-h-[calc(100vh-9rem)]"
                   >
                     <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">

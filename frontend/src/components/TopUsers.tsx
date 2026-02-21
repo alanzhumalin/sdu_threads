@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { ErrorMessage } from "./ErrorMessage";
 import { MentionPreview } from "./MentionPreview";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { useI18n } from "../i18n";
 
 type TopUser = {
   id: string;
@@ -16,6 +17,7 @@ type TopUser = {
 };
 
 export function TopUsers() {
+  const { t } = useI18n();
   const [users, setUsers] = useState<TopUser[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -27,9 +29,9 @@ export function TopUsers() {
         setUsers(res);
         setError("");
       })
-      .catch((e) => setError(e?.message || "Не удалось загрузить топ пользователей"))
+      .catch((e) => setError(e?.message || t("top_users.load_error")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   return (
     <aside
@@ -37,7 +39,7 @@ export function TopUsers() {
       style={{ left: "calc(50% + 368px)", top: "8rem" }}
     >
       <div className="card p-4 space-y-3">
-        <p className="text-white font-semibold text-sm">Топ пользователей</p>
+        <p className="text-white font-semibold text-sm">{t("top_users.title")}</p>
 
         <div className="space-y-3">
           {loading && (
@@ -57,7 +59,7 @@ export function TopUsers() {
           {!loading && <ErrorMessage message={error} />}
 
           {!loading && !error && users.length === 0 && (
-            <p className="text-white/60 text-sm">Нет данных</p>
+            <p className="text-white/60 text-sm">{t("top_users.empty")}</p>
           )}
 
           {!loading &&
@@ -84,14 +86,16 @@ export function TopUsers() {
                     <MentionPreview username={u.username} className="">
                       <Link to={`/u/${u.username}`} className="hover:underline">
                         <span className="inline-flex items-center gap-[3px]">
-                          <span>{u.full_name || "Без имени"}</span>
+                          <span>{u.full_name || t("top_users.unnamed")}</span>
                           {u.is_verified ? <VerifiedBadge /> : null}
                         </span>
                       </Link>
                     </MentionPreview>
                   </p>
                   <p className="text-white/60 text-xs truncate">@{u.username}</p>
-                  <p className="text-white/50 text-xs">{u.followers} подписчиков</p>
+                  <p className="text-white/50 text-xs">
+                    {u.followers} {t("top_users.followers")}
+                  </p>
                 </div>
               </div>
             ))}

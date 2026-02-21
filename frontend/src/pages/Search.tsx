@@ -18,6 +18,8 @@ import { PostMusic } from "../components/PostMusic";
 import { ExpandablePostText } from "../components/ExpandablePostText";
 import { AvatarCircle } from "../components/Avatar";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 
 type UserResult = {
@@ -58,26 +60,9 @@ type FeedItem = {
   is_me?: boolean;
 };
 
-const timeAgo = (iso: string) => {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
-};
-
 export default function SearchPage() {
+  const { language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const feedStore = useFeedStore();
   const postPatches = usePostCacheStore((s) => s.byId);
@@ -114,7 +99,7 @@ export default function SearchPage() {
         setPopular(res);
         setPopularError("");
       } catch (e: any) {
-        setPopularError(e.message || "Не удалось загрузить популярные теги");
+        setPopularError(e.message || tr("Танымал тегтерді жүктеу мүмкін болмады", "Не удалось загрузить популярные теги", "Failed to load popular hashtags"));
       } finally {
         setPopularLoading(false);
       }
@@ -137,7 +122,7 @@ export default function SearchPage() {
       setError("");
     } catch (e: any) {
       if (activeQueryRef.current !== currentMark) return;
-      setError(e.message || "Не удалось выполнить поиск");
+      setError(e.message || tr("Іздеу орындалмады", "Не удалось выполнить поиск", "Search failed"));
       setUsers([]);
       setHashtags([]);
     } finally {
@@ -208,7 +193,7 @@ export default function SearchPage() {
       setTagNextOffset(nextOffset);
       setTagError("");
     } catch (e: any) {
-      setTagError(e.message || "Не удалось загрузить посты");
+      setTagError(e.message || tr("Посттарды жүктеу мүмкін болмады", "Не удалось загрузить посты", "Failed to load posts"));
       if (!append) {
         setTagPosts([]);
         setTagNextOffset(null);
@@ -300,8 +285,8 @@ export default function SearchPage() {
     <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-white/60">Поиск</p>
-          <h1 className="text-2xl font-semibold text-white">Найдите людей или хэштеги</h1>
+          <p className="text-sm text-white/60">{tr("Іздеу", "Поиск", "Search")}</p>
+          <h1 className="text-2xl font-semibold text-white">{tr("Адамдарды немесе хэштегтерді табыңыз", "Найдите людей или хэштеги", "Find people or hashtags")}</h1>
         </div>
       </div>
 
@@ -310,7 +295,7 @@ export default function SearchPage() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Имя, ник или #тег"
+          placeholder={tr("Аты, никі немесе #тег", "Имя, ник или #тег", "Name, username or #tag")}
           className="w-full bg-transparent outline-none text-white placeholder:text-white/40"
         />
       </div>
@@ -318,11 +303,11 @@ export default function SearchPage() {
       {showPopular && !showResults && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-white">Популярные хэштеги</h2>
+            <h2 className="text-lg font-semibold text-white">{tr("Танымал хэштегтер", "Популярные хэштеги", "Popular hashtags")}</h2>
           </div>
           <ErrorMessage message={popularError} />
           {!popularLoading && popular.length === 0 && !popularError && (
-            <div className="card p-4 text-white/60 text-sm">Пока нет популярных хэштегов.</div>
+            <div className="card p-4 text-white/60 text-sm">{tr("Әзірге танымал хэштегтер жоқ.", "Пока нет популярных хэштегов.", "No popular hashtags yet.")}</div>
           )}
           <div className="space-y-2">
             {popularLoading &&
@@ -352,7 +337,9 @@ export default function SearchPage() {
                     <div>
                       <p className="text-white font-semibold">#{tag.name}</p>
                       <p className="text-white/50 text-sm">
-                        {tag.post_count ? `${tag.post_count} постов` : "Постов пока нет"}
+                        {tag.post_count
+                          ? tr(`${tag.post_count} пост`, `${tag.post_count} постов`, `${tag.post_count} posts`)
+                          : tr("Посттар әлі жоқ", "Постов пока нет", "No posts yet")}
                       </p>
                     </div>
                   </div>
@@ -367,7 +354,7 @@ export default function SearchPage() {
           <ErrorMessage message={error} />
 
           <div className="space-y-2">
-            <h3 className="text-sm uppercase tracking-wide text-white/50">Пользователи</h3>
+            <h3 className="text-sm uppercase tracking-wide text-white/50">{tr("Қолданушылар", "Пользователи", "Users")}</h3>
             {loading && (
               <div className="space-y-2">
                 {[1, 2, 3].map((n) => (
@@ -382,7 +369,7 @@ export default function SearchPage() {
               </div>
             )}
             {!loading && users.length === 0 && (
-              <div className="card p-6 text-white/60 text-sm text-center">Нет пользователей по запросу</div>
+              <div className="card p-6 text-white/60 text-sm text-center">{tr("Сұраныс бойынша қолданушы табылмады", "Нет пользователей по запросу", "No users found for this query")}</div>
             )}
             {!loading &&
               users.map((user) => (
@@ -401,7 +388,7 @@ export default function SearchPage() {
                       <p className="text-white font-semibold">
                         <MentionPreview username={user.username} className="">
                           <span className="inline-flex items-center gap-[3px]">
-                            <span>{user.full_name || "Без имени"}</span>
+                            <span>{user.full_name || tr("Аты жоқ", "Без имени", "No name")}</span>
                             {user.is_verified ? <VerifiedBadge /> : null}
                           </span>
                         </MentionPreview>
@@ -416,7 +403,7 @@ export default function SearchPage() {
           </div>
 
           <div className="space-y-2">
-            <h3 className="text-sm uppercase tracking-wide text-white/50">Хэштеги</h3>
+            <h3 className="text-sm uppercase tracking-wide text-white/50">{tr("Хэштегтер", "Хэштеги", "Hashtags")}</h3>
             {loading && (
               <div className="space-y-2">
                 {[1, 2, 3].map((n) => (
@@ -428,7 +415,7 @@ export default function SearchPage() {
               </div>
             )}
             {!loading && hashtags.length === 0 && (
-              <div className="card p-6 text-white/60 text-sm text-center">Нет хэштегов по запросу</div>
+              <div className="card p-6 text-white/60 text-sm text-center">{tr("Сұраныс бойынша хэштег табылмады", "Нет хэштегов по запросу", "No hashtags found for this query")}</div>
             )}
             {!loading &&
               hashtags.map((tag) => (
@@ -456,7 +443,7 @@ export default function SearchPage() {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-white/60">Посты с тегом</p>
+              <p className="text-sm text-white/60">{tr("Тег бойынша посттар", "Посты с тегом", "Posts with tag")}</p>
               <h2 className="text-xl font-semibold text-white">#{selectedTag}</h2>
             </div>
             <button
@@ -467,15 +454,15 @@ export default function SearchPage() {
                 setTagError("");
               }}
             >
-              Назад к поиску
+              {tr("Іздеуге оралу", "Назад к поиску", "Back to search")}
             </button>
           </div>
           <ErrorMessage message={tagError} />
           {tagLoading && tagPosts.length === 0 && (
-            <p className="text-white/60 text-sm">Загрузка постов...</p>
+            <p className="text-white/60 text-sm">{tr("Посттар жүктелуде...", "Загрузка постов...", "Loading posts...")}</p>
           )}
           {!tagLoading && tagPosts.length === 0 && !tagError && (
-            <div className="card p-6 text-white/60 text-sm">Постов с этим тегом пока нет.</div>
+            <div className="card p-6 text-white/60 text-sm">{tr("Бұл тегпен посттар әлі жоқ.", "Постов с этим тегом пока нет.", "No posts with this tag yet.")}</div>
           )}
 
           <div className="space-y-3">
@@ -496,7 +483,7 @@ export default function SearchPage() {
                   <div className="flex items-center gap-3">
                     <Link
                       to={`/u/${item.username}`}
-                      aria-label={`Профиль ${item.full_name || item.username}`}
+                      aria-label={`${tr("Профиль", "Профиль", "Profile")} ${item.full_name || item.username}`}
                       className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                     >
                       <span aria-hidden>
@@ -522,17 +509,17 @@ export default function SearchPage() {
                           to={`/u/${item.username}`}
                           className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                         >
-                          <span>{item.full_name || "Без имени"}</span>
+                          <span>{item.full_name || tr("Аты жоқ", "Без имени", "No name")}</span>
                           {item.is_verified ? <VerifiedBadge /> : null}
                         </Link>
                       </MentionPreview>
-                      <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>
+                      <p className="text-sm text-white/60">{formatTimeAgo(item.created_at, language)}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {isMe ? (
                       <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
-                        Это вы
+                        {tr("Бұл сіз", "Это вы", "You")}
                       </span>
                     ) : (
                       <button
@@ -543,7 +530,7 @@ export default function SearchPage() {
                             : "border-white text-black bg-white hover:bg-white/90"
                         }`}
                       >
-                        {isSub ? "Отписаться" : "Подписаться"}
+                        {isSub ? tr("Жазылымнан шығу", "Отписаться", "Unfollow") : tr("Жазылу", "Подписаться", "Follow")}
                       </button>
                     )}
                   </div>
@@ -600,9 +587,9 @@ export default function SearchPage() {
           </div>
           <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
             {tagLoading && tagPosts.length > 0
-              ? "Загружаем..."
+              ? tr("Жүктелуде...", "Загружаем...", "Loading...")
               : tagNextOffset !== null
-                ? "Прокрутите, чтобы загрузить ещё"
+                ? tr("Тағы жүктеу үшін төмен сырғытыңыз", "Прокрутите, чтобы загрузить ещё", "Scroll to load more")
                 : ""}
           </div>
         </section>

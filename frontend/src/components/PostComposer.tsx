@@ -18,6 +18,7 @@ import {
   POST_CONTAINER_COLOR_OPTIONS,
 } from "../utils/postColors";
 import type { MediaItem as UploadedMediaItem, PostMusic as UploadedPostMusic } from "../types/media";
+import { useI18n } from "../i18n";
 
 type Props = {
   onCreated?: () => void;
@@ -252,6 +253,7 @@ const findActiveMention = (text: string, cursor: number) => {
 };
 
 export default function PostComposer({ onCreated }: Props) {
+  const { t } = useI18n();
   const token = useAuthStore((s) => s.token);
   const myProfile = useProfileMeStore((s) => s.profile);
   const setMyProfile = useProfileMeStore((s) => s.setProfile);
@@ -1152,7 +1154,7 @@ export default function PostComposer({ onCreated }: Props) {
       <div className="flex items-center justify-between text-sm text-white/70">
         <div className="flex items-center gap-2">
           <span className="inline-flex h-8 w-8 rounded-full bg-white/10 items-center justify-center text-lg">🙂</span>
-          <span className="font-semibold text-white">Поделиться чем-то новым</span>
+          <span className="font-semibold text-white">{t("composer.title")}</span>
         </div>
       </div>
       <ErrorMessage message={mediaError} />
@@ -1178,10 +1180,10 @@ export default function PostComposer({ onCreated }: Props) {
               <p className="truncate text-xs text-white/60">{music.artist || "Unknown artist"}</p>
               <p className="text-[11px] text-white/45">
                 {music.uploadStatus === "uploading"
-                  ? "Загрузка..."
+                  ? t("feed.loading")
                   : music.uploadStatus === "error"
-                    ? "Ошибка загрузки"
-                    : "Ваш файл"}
+                    ? t("composer.upload_error")
+                    : t("composer.your_file")}
               </p>
             </div>
             <button
@@ -1234,12 +1236,12 @@ export default function PostComposer({ onCreated }: Props) {
               )}
               {m.status === "error" && (
                 <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-2 px-2">
-                  <span className="text-xs text-white/80 text-center">{m.error || "Ошибка загрузки"}</span>
-                  <span className="text-[11px] text-white/60">Нажмите, чтобы повторить</span>
+                  <span className="text-xs text-white/80 text-center">{m.error || t("composer.upload_error")}</span>
+                  <span className="text-[11px] text-white/60">{t("composer.click_retry")}</span>
                 </div>
               )}
               <span className="absolute top-1 right-1 text-xs bg-black/70 text-white px-2 py-0.5 rounded-full opacity-0 group-hover:opacity-100 transition">
-                Просмотр
+                {t("composer.preview")}
               </span>
             </button>
           ))}
@@ -1248,17 +1250,17 @@ export default function PostComposer({ onCreated }: Props) {
       <div className="relative">
         <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3">
           <div className="pointer-events-none whitespace-pre-wrap break-words text-white font-medium relative z-0 min-h-[72px]">
-              {content.trim().length === 0 ? (
-                <span className="text-white/40">Что нового?</span>
-              ) : (
-                highlightInlineHashtags(content, suppressedHashtags, suppressedMentions)
-              )}
-            </div>
+            {content.trim().length === 0 ? (
+              <span className="text-white/40">{t("composer.placeholder")}</span>
+            ) : (
+              highlightInlineHashtags(content, suppressedHashtags, suppressedMentions)
+            )}
           </div>
+        </div>
         <textarea
           className="w-full rounded-xl border-0 bg-transparent px-3 py-3 text-transparent caret-white placeholder:text-transparent focus:border-0 focus:ring-0 focus:outline-none transition absolute inset-0 z-10 resize-none overflow-hidden font-medium"
           rows={3}
-          placeholder="Что нового?"
+          placeholder={t("composer.placeholder")}
           value={content}
           onChange={(e) => {
             let val = e.target.value;
@@ -1324,7 +1326,7 @@ export default function PostComposer({ onCreated }: Props) {
               }}
             >
               <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
-                <span>Хэштеги</span>
+                <span>{t("composer.tags")}</span>
                 <button
                   type="button"
                   className="text-white/60 hover:text-white"
@@ -1364,8 +1366,8 @@ export default function PostComposer({ onCreated }: Props) {
               ) : (
                 <div className="px-3 py-2 text-sm text-white/60">
                   {suggestionsLoading
-                    ? "Поиск..."
-                    : `Нажмите Enter, чтобы создать хэштег #${activeTag?.query ?? ""}`}
+                    ? t("composer.searching")
+                    : `${t("composer.create_hashtag")} #${activeTag?.query ?? ""}`}
                 </div>
               )}
             </div>,
@@ -1383,7 +1385,7 @@ export default function PostComposer({ onCreated }: Props) {
               }}
             >
               <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
-                <span>Упоминания</span>
+                <span>{t("composer.mentions")}</span>
                 <button
                   type="button"
                   className="text-white/60 hover:text-white"
@@ -1474,12 +1476,12 @@ export default function PostComposer({ onCreated }: Props) {
                   </li>
                 ))}
                   {mentionLoading && (
-                    <li className="px-3 py-2 text-sm text-white/60">Загрузка...</li>
+                    <li className="px-3 py-2 text-sm text-white/60">{t("notifications.loading")}</li>
                   )}
                 </ul>
               ) : (
                 <div className="px-3 py-2 text-sm text-white/60">
-                  {mentionLoading ? "Поиск..." : "Введите имя пользователя"}
+                  {mentionLoading ? t("composer.searching") : t("composer.enter_username")}
                 </div>
               )}
             </div>,
@@ -1510,7 +1512,7 @@ export default function PostComposer({ onCreated }: Props) {
           <button
             type="button"
             className="nav-icon shrink-0 bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/25"
-            title="Рисование"
+            title={t("composer.draw")}
             onClick={() => {
               if (mediaRef.current.length >= MAX_MEDIA) {
                 setMediaError("Можно добавить максимум 5 вложений");
@@ -1526,16 +1528,16 @@ export default function PostComposer({ onCreated }: Props) {
             ref={emojiButtonRef}
             type="button"
             className={`nav-icon shrink-0 border border-amber-300/35 text-amber-200 ${emojiOpen ? "bg-amber-300/25" : "bg-amber-300/10"} hover:bg-amber-300/20 hover:border-amber-200/45`}
-            title="Эмодзи"
-            aria-label="Открыть список эмодзи"
+            title={t("composer.emoji")}
+            aria-label={t("composer.emoji_open")}
             onClick={() => setEmojiOpen((prev) => !prev)}
           >
             <Smile className="w-5 h-5" strokeWidth={1.7} />
           </button>
           <label
             className="nav-icon shrink-0 border border-cyan-300/35 bg-cyan-300/10 text-cyan-200 hover:bg-cyan-300/20 hover:border-cyan-200/45 cursor-pointer"
-            title="Добавить музыку"
-            aria-label="Добавить музыку"
+            title={t("composer.add_music")}
+            aria-label={t("composer.add_music")}
           >
             <Music2 className="w-5 h-5" strokeWidth={1.7} />
             <input
@@ -1557,8 +1559,8 @@ export default function PostComposer({ onCreated }: Props) {
                     ? "border-violet-300/45 bg-violet-300/20 text-violet-100"
                     : "border-violet-300/30 bg-violet-300/10 text-violet-200"
                 } hover:bg-violet-300/20 hover:border-violet-200/45`}
-                title="Цвет контейнера поста"
-                aria-label="Цвет контейнера поста"
+                title={t("composer.pick_color")}
+                aria-label={t("composer.pick_color")}
                 onClick={() => setColorPickerOpen((prev) => !prev)}
               >
                 <Palette className="w-5 h-5" strokeWidth={1.7} />
@@ -1577,7 +1579,7 @@ export default function PostComposer({ onCreated }: Props) {
                       setColorPickerOpen(false);
                     }}
                   >
-                    Без цвета
+                    {t("composer.no_color")}
                   </button>
                   <div className="mt-1 space-y-1">
                     {POST_CONTAINER_COLOR_OPTIONS.map((option) => {
@@ -1610,22 +1612,22 @@ export default function PostComposer({ onCreated }: Props) {
         <div className="flex flex-col items-end gap-1 ml-auto">
           {hasPendingUploads && (
             <span className="text-xs text-white/50">
-              Загрузка медиа: {uploadedCount}/{media.length}
+              {t("composer.media_uploading")}: {uploadedCount}/{media.length}
             </span>
           )}
           {hasMusicPending && (
             <span className="text-xs text-white/50">
-              Загрузка музыки...
+              {t("composer.music_uploading")}
             </span>
           )}
           {hasMusicError && (
             <span className="text-xs text-red-300/90">
-              Исправьте ошибку музыки перед публикацией
+              {t("composer.fix_music_error")}
             </span>
           )}
           {remainingSec > 0 && (
             <span className="text-xs text-white/50">
-              Можно публиковать через {formatTimer(remainingSec)}
+              {t("composer.publish_after")} {formatTimer(remainingSec)}
             </span>
           )}
           <button
@@ -1633,7 +1635,7 @@ export default function PostComposer({ onCreated }: Props) {
             disabled={loading || !content.trim() || remainingSec > 0 || hasPendingUploads || hasUploadErrors || hasMusicPending || hasMusicError}
             className="rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
           >
-            {loading ? "Публикуем..." : "Опубликовать"}
+            {loading ? t("composer.publishing") : t("composer.publish")}
           </button>
         </div>
       </div>

@@ -6,8 +6,11 @@ import { CommentsModal, PostMeta } from "../components/CommentsModal";
 import { useFeedStore } from "../store/feed";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { useSubscriptionsStore } from "../store/subscriptions";
+import { useI18n } from "../i18n";
 
 export default function PostPermalinkPage() {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -33,7 +36,7 @@ export default function PostPermalinkPage() {
 
   useEffect(() => {
     if (!id) {
-      setError("Некорректная ссылка на пост");
+      setError(tr("Пост сілтемесі қате", "Некорректная ссылка на пост", "Invalid post link"));
       setLoading(false);
       return;
     }
@@ -75,7 +78,7 @@ export default function PostPermalinkPage() {
       })
       .catch((e: any) => {
         if (cancelled) return;
-        setError(e?.message || "Не удалось загрузить пост");
+        setError(e?.message || tr("Постты жүктеу мүмкін болмады", "Не удалось загрузить пост", "Failed to load post"));
       })
       .finally(() => {
         if (cancelled) return;
@@ -89,7 +92,7 @@ export default function PostPermalinkPage() {
 
   return (
     <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
-      {loading && <p className="text-white/60">Загрузка поста...</p>}
+      {loading && <p className="text-white/60">{tr("Пост жүктелуде...", "Загрузка поста...", "Loading post...")}</p>}
       {error && (
         <div className="card p-4 space-y-3">
           <ErrorMessage message={error} />
@@ -98,7 +101,7 @@ export default function PostPermalinkPage() {
             onClick={() => navigate("/", { replace: true })}
             className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/80 hover:bg-white/5"
           >
-            На главную
+            {tr("Басты бетке", "На главную", "Go home")}
           </button>
         </div>
       )}

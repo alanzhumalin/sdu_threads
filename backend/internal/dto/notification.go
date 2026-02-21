@@ -4,7 +4,7 @@ import "time"
 
 type Notification struct {
 	ID             string    `json:"id"`
-	Type           string    `json:"type"` // like, comment, follow, mention
+	Type           string    `json:"type"` // like, comment, follow, new_post, mention_post, mention_comment, reply_comment
 	ActorID        string    `json:"actor_id"`
 	ActorUsername  string    `json:"actor_username"`
 	ActorFullName  string    `json:"actor_full_name,omitempty"`

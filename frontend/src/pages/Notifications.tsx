@@ -9,10 +9,20 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { MentionPreview } from "../components/MentionPreview";
 import { AvatarCircle } from "../components/Avatar";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 
 type NotificationItem = {
   id: string;
-  type: "like" | "comment" | "follow" | "mention_post" | "mention_comment" | "reply_comment" | string;
+  type:
+    | "like"
+    | "comment"
+    | "follow"
+    | "new_post"
+    | "mention_post"
+    | "mention_comment"
+    | "reply_comment"
+    | string;
   actor_id: string;
   actor_username: string;
   actor_full_name?: string;
@@ -38,35 +48,19 @@ type TabState = {
   error: string;
 };
 
-const timeAgo = (iso: string) => {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
-};
-
 const icons: Record<string, JSX.Element> = {
   like: <Heart className="w-5 h-5 text-red-400" strokeWidth={1.7} />,
   comment: <MessageCircle className="w-5 h-5 text-white" strokeWidth={1.7} />,
   follow: <UserPlus className="w-5 h-5 text-white" strokeWidth={1.7} />,
+  new_post: <ImageIcon className="w-5 h-5 text-sky-300" strokeWidth={1.7} />,
   mention_post: <Hash className="w-5 h-5 text-white" strokeWidth={1.7} />,
   mention_comment: <Hash className="w-5 h-5 text-white" strokeWidth={1.7} />,
   reply_comment: <Hash className="w-5 h-5 text-white" strokeWidth={1.7} />,
 };
 
 export default function NotificationsPage() {
+  const { t, language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const [tab, setTab] = useState<Tab>("all");
   const [data, setData] = useState<Record<Tab, TabState>>({
@@ -144,7 +138,7 @@ export default function NotificationsPage() {
           ...prev[selectedTab],
           loading: false,
           loadingMore: false,
-          error: e.message || "Не удалось загрузить уведомления",
+          error: e.message || tr("Хабарландыруларды жүктеу мүмкін болмады", "Не удалось загрузить уведомления", "Failed to load notifications"),
         },
       }));
     }
@@ -162,7 +156,7 @@ export default function NotificationsPage() {
       });
       setUnreadCount(0);
     } catch (e: any) {
-      const msg = e?.message || "Не удалось пометить уведомления прочитанными";
+      const msg = e?.message || tr("Хабарландыруларды оқылған деп белгілеу мүмкін болмады", "Не удалось пометить уведомления прочитанными", "Failed to mark notifications as read");
       alert(msg);
     }
   };
@@ -194,19 +188,21 @@ export default function NotificationsPage() {
   const renderMessage = (n: NotificationItem) => {
     switch (n.type) {
       case "like":
-        return `понравился ваш пост`;
+        return t("notifications.action.like");
       case "comment":
-        return `прокомментировал ваш пост`;
+        return t("notifications.action.comment");
       case "follow":
-        return `подписался на вас`;
+        return t("notifications.action.follow");
+      case "new_post":
+        return t("notifications.action.new_post");
       case "mention_post":
-        return `упомянул вас в посте`;
+        return t("notifications.action.mention_post");
       case "mention_comment":
-        return `упомянул вас в комментарии`;
+        return t("notifications.action.mention_comment");
       case "reply_comment":
-        return `ответил на ваш комментарий`;
+        return t("notifications.action.reply_comment");
       default:
-        return `сделал действие`;
+        return t("notifications.action.default");
     }
   };
 
@@ -255,7 +251,7 @@ export default function NotificationsPage() {
     } catch (e) {
       setData((prev) => ({
         ...prev,
-        [tab]: { ...prev[tab], error: (e as any)?.message || "Не удалось открыть пост" },
+        [tab]: { ...prev[tab], error: (e as any)?.message || tr("Постты ашу мүмкін болмады", "Не удалось открыть пост", "Failed to open post") },
       }));
     }
   };
@@ -266,29 +262,29 @@ export default function NotificationsPage() {
     <main data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-white/60">Уведомления</p>
-          <h1 className="text-2xl font-semibold text-white">Все события</h1>
+          <p className="text-sm text-white/60">{t("notifications.page_label")}</p>
+          <h1 className="text-2xl font-semibold text-white">{t("notifications.page_title")}</h1>
         </div>
       </div>
 
       <div className="card p-2 flex gap-2">
-        {(["all", "mentions"] as const).map((t) => {
+        {(["all", "mentions"] as const).map((tabKey) => {
           const unreadTab =
-            t === "all"
+            tabKey === "all"
               ? data.all.items.filter((i) => i.read === false).length
               : data.mentions.items.filter((i) => i.read === false).length;
           return (
           <button
-            key={t}
+            key={tabKey}
             onClick={() => {
-              setTab(t);
+              setTab(tabKey);
             }}
             className={`flex-1 py-2 rounded-xl font-semibold transition ${
-              tab === t ? "bg-white text-black" : "text-white/70 hover:bg-white/5"
+              tab === tabKey ? "bg-white text-black" : "text-white/70 hover:bg-white/5"
             }`}
           >
             <span className="flex items-center justify-center gap-2">
-              {t === "all" ? "Все" : "Упоминания"}
+              {tabKey === "all" ? t("notifications.tab_all") : t("notifications.tab_mentions")}
               {unreadTab > 0 && <span className="w-2 h-2 rounded-full bg-sky-400 inline-block" />}
             </span>
           </button>
@@ -299,7 +295,7 @@ export default function NotificationsPage() {
           onClick={markAll}
           disabled={current.loading}
         >
-          Mark all read
+          {t("notifications.mark_all")}
         </button>
       </div>
 
@@ -321,7 +317,7 @@ export default function NotificationsPage() {
 
       {!current.loading && current.items.length === 0 && !current.error && (
         <div className="card p-6 text-white/70 text-sm flex items-center justify-center h-32">
-          Уведомлений пока нет.
+          {t("notifications.empty")}
         </div>
       )}
 
@@ -366,7 +362,7 @@ export default function NotificationsPage() {
                   </MentionPreview>{" "}
                   {renderMessage(n)}
                 </p>
-                <p className="text-white/50 text-sm">{timeAgo(n.created_at)}</p>
+                <p className="text-white/50 text-sm">{formatTimeAgo(n.created_at, language)}</p>
                 {n.comment_body && (
                   <p className="text-white/70 text-sm border-l border-white/10 pl-2 overflow-hidden text-ellipsis">
                     {n.comment_body}
@@ -394,9 +390,9 @@ export default function NotificationsPage() {
       <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
         {current.loadingMore ? (
           <span className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" /> Загружаем...
+            <Loader2 className="w-4 h-4 animate-spin" /> {t("notifications.loading")}
           </span>
-        ) : current.nextOffset !== null ? "Подгружаем ещё..." : ""}
+        ) : current.nextOffset !== null ? t("notifications.load_more") : ""}
       </div>
 
       {modalPost && (

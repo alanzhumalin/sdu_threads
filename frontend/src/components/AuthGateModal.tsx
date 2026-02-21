@@ -3,8 +3,11 @@ import { createPortal } from "react-dom";
 import { Lock, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuthGateStore } from "../store/authGate";
+import { useI18n } from "../i18n";
 
 export function AuthGateModal() {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const navigate = useNavigate();
   const open = useAuthGateStore((s) => s.open);
   const title = useAuthGateStore((s) => s.title);
@@ -37,7 +40,9 @@ export function AuthGateModal() {
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2">
             <Lock className="w-4 h-4 text-white/70" strokeWidth={1.7} />
-            <span className="text-white font-semibold">{title || "Сначала авторизуйся"}</span>
+            <span className="text-white font-semibold">
+              {title || tr("Алдымен авторизациядан өтіңіз", "Сначала авторизуйся", "Please sign in first")}
+            </span>
           </div>
           <button onClick={hide} className="text-white/60 hover:text-white">
             <X className="w-5 h-5" />
@@ -45,7 +50,9 @@ export function AuthGateModal() {
         </div>
 
         <div className="p-4 space-y-4">
-          <p className="text-sm text-white/70">{message || "Чтобы продолжить, нужно войти в аккаунт."}</p>
+          <p className="text-sm text-white/70">
+            {message || tr("Жалғастыру үшін аккаунтқа кіріңіз.", "Чтобы продолжить, нужно войти в аккаунт.", "Sign in to continue.")}
+          </p>
           <button
             type="button"
             onClick={() => {
@@ -54,7 +61,7 @@ export function AuthGateModal() {
             }}
             className="w-full rounded-full border border-white/10 py-2 text-sm text-white hover:bg-white/5"
           >
-            {ctaLabel || "Войти"}
+            {ctaLabel || tr("Кіру", "Войти", "Log in")}
           </button>
         </div>
       </div>
@@ -62,4 +69,3 @@ export function AuthGateModal() {
     document.body
   );
 }
-

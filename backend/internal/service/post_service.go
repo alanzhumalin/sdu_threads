@@ -1179,20 +1179,43 @@ func (s *PostService) Unreact(ctx context.Context, postID, userID, emoji string)
 }
 
 // CreateWithTags creates post and attaches hashtags.
-func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string, tags []string) error {
+func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string, tags []string) (*models.Post, error) {
 	post, err := s.Create(ctx, userID, content, media, music, containerColor)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	normalized := normalizeTags(tags)
 	if len(normalized) == 0 {
-		return nil
+		return post, nil
 	}
 	idMap, err := s.tags.Upsert(ctx, normalized)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.tags.AttachToPost(ctx, post.ID, idMap)
+	if err := s.tags.AttachToPost(ctx, post.ID, idMap); err != nil {
+		return nil, err
+	}
+	return post, nil
+}
+
+func (s *PostService) FollowerIDs(ctx context.Context, userID string) ([]string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || s.fols == nil {
+		return []string{}, nil
+	}
+	return s.fols.FollowerIDs(ctx, userID)
+}
+
+func (s *PostService) UserIdentity(ctx context.Context, userID string) (fullName string, username string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || s.users == nil {
+		return "", ""
+	}
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(u.FullName), strings.TrimSpace(u.Username)
 }
 
 func normalizeTags(raw []string) []string {

@@ -3,8 +3,10 @@ import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { ErrorMessage } from "../components/ErrorMessage";
+import { useI18n } from "../i18n";
 
 export default function LoginPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const setToken = useAuthStore((s) => s.setToken);
   const [login, setLogin] = useState("");
@@ -21,7 +23,7 @@ export default function LoginPage() {
       setToken(res.token);
       navigate("/");
     } catch (err: any) {
-      setError(err.message || "Ошибка входа");
+      setError(err.message || t("login.error"));
     } finally {
       setLoading(false);
     }
@@ -30,10 +32,10 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-md card p-6 md:p-8">
-        <h1 className="text-2xl font-semibold mb-6 text-white text-center">Вход</h1>
+        <h1 className="text-2xl font-semibold mb-6 text-white text-center">{t("login.title")}</h1>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="text-sm text-white/70">Email или username</label>
+            <label className="text-sm text-white/70">{t("login.email_or_username")}</label>
             <input
               className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-white focus:border-white/30 outline-none"
               type="text"
@@ -43,7 +45,7 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="text-sm text-white/70">Пароль</label>
+            <label className="text-sm text-white/70">{t("login.password")}</label>
             <input
               className="mt-1 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-white focus:border-white/30 outline-none"
               type="password"
@@ -58,13 +60,13 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full rounded-full px-4 py-2 font-semibold text-black bg-white hover:bg-gray-200 disabled:opacity-60"
           >
-            {loading ? "Входим..." : "Войти"}
+            {loading ? t("login.loading") : t("login.submit")}
           </button>
         </form>
         <p className="mt-4 text-sm text-white/60 text-center">
-          Нет аккаунта?{" "}
+          {t("login.no_account")}{" "}
           <Link className="text-white underline" to="/register">
-            Регистрация
+            {t("login.register")}
           </Link>
         </p>
       </div>

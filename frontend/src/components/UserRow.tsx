@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { MentionPreview } from "./MentionPreview";
 import { AvatarCircle } from "./Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { useI18n } from "../i18n";
 
 export type UserRowData = {
   id: string;
@@ -18,6 +19,9 @@ type Props = {
 };
 
 export function UserRow({ user, right }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+
   return (
     <div className="card p-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
@@ -37,7 +41,7 @@ export function UserRow({ user, right }: Props) {
             >
               <Link to={`/u/${user.username}`} className="text-white">
                 <span className="inline-flex items-center gap-[3px]">
-                  <span>{user.full_name || "Без имени"}</span>
+                  <span>{user.full_name || tr("Аты жоқ", "Без имени", "No name")}</span>
                   {user.is_verified ? <VerifiedBadge /> : null}
                 </span>
               </Link>

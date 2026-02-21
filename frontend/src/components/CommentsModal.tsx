@@ -18,6 +18,8 @@ import { ExpandablePostText } from "./ExpandablePostText";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import { AvatarCircle } from "./Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 
 type Comment = {
   id: string;
@@ -145,26 +147,9 @@ const findActiveMention = (text: string, cursor: number) => {
   }
 };
 
-const timeAgo = (iso: string) => {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
-};
-
 export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: Props) {
+  const { language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const me = useProfileMeStore((s) => s.profile);
   const patchPost = usePostCacheStore((s) => s.patch);
@@ -303,7 +288,7 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
       setHasMore(data.length === PAGE);
       setError("");
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить комментарии");
+      setError(e.message || tr("Пікірлерді жүктеу мүмкін болмады", "Не удалось загрузить комментарии", "Failed to load comments"));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
@@ -625,7 +610,7 @@ useLayoutEffect(() => {
         post_id: post.id,
         user_id: me?.id || "me",
         username: me?.username || "me",
-        full_name: me?.full_name || me?.username || "Вы",
+        full_name: me?.full_name || me?.username || tr("Сіз", "Вы", "You"),
         body: draft,
         created_at: now,
         liked_by_me: false,
@@ -737,7 +722,7 @@ useLayoutEffect(() => {
         onUpdatePost?.(prev.id, patch);
         return { ...prev, ...patch };
       });
-      setError(e.message || "Не удалось отправить комментарий");
+      setError(e.message || tr("Пікірді жіберу мүмкін болмады", "Не удалось отправить комментарий", "Failed to send comment"));
     }
   };
 
@@ -863,9 +848,13 @@ useLayoutEffect(() => {
                 </span>
               </Link>
             </MentionPreview>
-            <span className="shrink-0">{timeAgo(c.created_at)}</span>
+            <span className="shrink-0">{formatTimeAgo(c.created_at, language)}</span>
           </div>
-          {replyTarget && <div className="text-xs text-white/60 mt-1">Ответ для @{replyTarget}</div>}
+          {replyTarget && (
+            <div className="text-xs text-white/60 mt-1">
+              {tr("Жауап:", "Ответ для", "Reply to")} @{replyTarget}
+            </div>
+          )}
           <div className="mt-2 w-full max-w-full text-white leading-relaxed whitespace-pre-wrap break-words break-all">
             {replyTarget ? (
               <>
@@ -893,7 +882,7 @@ useLayoutEffect(() => {
                   focusTextarea();
                 }}
               >
-                Ответить
+                {tr("Жауап беру", "Ответить", "Reply")}
               </button>
             </div>
           </div>
@@ -950,8 +939,8 @@ useLayoutEffect(() => {
               type="button"
             >
               {items.length > 0
-                ? `Показать ещё ${Math.min(remaining, 10)} ответов`
-                : `Показать ответы (${Math.min(remaining, 10)})`}
+                ? `${tr("Тағы көрсету", "Показать ещё", "Show more")} ${Math.min(remaining, 10)}`
+                : `${tr("Жауаптарды көрсету", "Показать ответы", "Show replies")} (${Math.min(remaining, 10)})`}
             </button>
           );
         }
@@ -978,7 +967,7 @@ useLayoutEffect(() => {
             disabled={rootThread?.loading}
             type="button"
           >
-            Показать ответы ({Math.min(rootRemaining, 10)})
+            {tr("Жауаптарды көрсету", "Показать ответы", "Show replies")} ({Math.min(rootRemaining, 10)})
           </button>
         </div>
       ) : null;
@@ -997,7 +986,7 @@ useLayoutEffect(() => {
           disabled={rootThread?.loading}
           type="button"
         >
-          Показать ещё {Math.min(rootRemaining, 10)} ответов
+          {tr("Тағы көрсету", "Показать ещё", "Show more")} {Math.min(rootRemaining, 10)}
         </button>
       );
     }
@@ -1009,7 +998,7 @@ useLayoutEffect(() => {
     <div className="fixed inset-0 w-screen h-screen z-[120] flex items-center justify-center bg-black/70 backdrop-blur-lg">
       <div ref={containerRef} className="w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl bg-black border border-white/10 shadow-2xl flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <span className="text-white font-semibold">Комментарии</span>
+          <span className="text-white font-semibold">{tr("Пікірлер", "Комментарии", "Comments")}</span>
           <button onClick={onClose} className="text-white/60 hover:text-white">
             <X className="w-5 h-5" />
           </button>
@@ -1020,7 +1009,7 @@ useLayoutEffect(() => {
             <div className="flex items-center gap-3">
               <Link
                 to={`/u/${post.username}`}
-                aria-label={`Профиль ${post.full_name || post.username}`}
+                aria-label={`${tr("Профиль", "Профиль", "Profile")} ${post.full_name || post.username}`}
                 className="hover:opacity-90"
               >
                 <AvatarCircle
@@ -1040,7 +1029,7 @@ useLayoutEffect(() => {
                     </Link>
                   </MentionPreview>
                 </p>
-                <p className="text-white/60 text-sm">{timeAgo(post.created_at)}</p>
+                <p className="text-white/60 text-sm">{formatTimeAgo(post.created_at, language)}</p>
               </div>
             </div>
             <ExpandablePostText
@@ -1088,12 +1077,18 @@ useLayoutEffect(() => {
                     <div key={c.id}>{renderCommentCard(c, "parent", renderRepliesFlat(c.id))}</div>
                   ))}
                 </div>
-                {comments.length === 0 && !loading && <p className="text-white/60 py-3">Комментариев нет</p>}
+                {comments.length === 0 && !loading && (
+                  <p className="text-white/60 py-3">{tr("Пікір жоқ", "Комментариев нет", "No comments")}</p>
+                )}
               </>
             )}
             <ErrorMessage message={error} />
             <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
-              {loadingMore ? "Загружаем..." : hasMore ? "Подгружаем ещё..." : ""}
+              {loadingMore
+                ? tr("Жүктелуде...", "Загружаем...", "Loading...")
+                : hasMore
+                  ? tr("Тағы жүктелуде...", "Подгружаем ещё...", "Loading more...")
+                  : ""}
             </div>
           </div>
         </div>
@@ -1101,7 +1096,7 @@ useLayoutEffect(() => {
         <div className="border-t border-white/10 p-3 flex flex-col gap-3">
           {replyMode && replyTo && (
             <div className="flex items-center justify-between rounded-lg border border-sky-700/40 bg-sky-500/10 px-3 py-2 text-sm text-white">
-              <span>Ответить @{replyTo.username}</span>
+              <span>{tr("Жауап беру", "Ответить", "Reply")} @{replyTo.username}</span>
               <button
                 type="button"
                 className="text-white/70 hover:text-white"
@@ -1120,7 +1115,9 @@ useLayoutEffect(() => {
                 <div className="pointer-events-none whitespace-pre-wrap break-words text-white relative z-0 min-h-[48px]">
                   {body.trim().length === 0 ? (
                     <span className="text-white/40">
-                      {replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
+                      {replyMode && replyTo
+                        ? `${tr("Жауап беру", "Ответить", "Reply")} ${replyTo.username}`
+                        : tr("Пікір жазыңыз...", "Написать комментарий...", "Write a comment...")}
                     </span>
                   ) : (
                     highlightInlineHashtags(body, suppressedHashtags, suppressedMentions)
@@ -1131,7 +1128,11 @@ useLayoutEffect(() => {
                 ref={textareaRef}
                 className="w-full max-w-full box-border rounded-xl border-0 bg-transparent px-3 py-2 text-transparent caret-white placeholder:text-transparent focus:border-0 focus:ring-0 focus:outline-none transition absolute inset-0 z-10 resize-none overflow-hidden whitespace-pre-wrap break-words"
                 rows={2}
-                placeholder={replyMode && replyTo ? `Ответить ${replyTo.username}` : "Написать комментарий..."}
+                placeholder={
+                  replyMode && replyTo
+                    ? `${tr("Жауап беру", "Ответить", "Reply")} ${replyTo.username}`
+                    : tr("Пікір жазыңыз...", "Написать комментарий...", "Write a comment...")
+                }
                 value={body}
                 onChange={(e) => {
                   let val = e.target.value;
@@ -1194,7 +1195,7 @@ useLayoutEffect(() => {
               onClick={send}
               disabled={!body.trim() || !token}
               className={`nav-icon ${body.trim() && token ? "bg-sky-500 text-black" : "bg-white/10 text-white/60"}`}
-              aria-label="send"
+              aria-label={tr("Жіберу", "Отправить", "Send")}
             >
               <SendHorizontal className="w-5 h-5" />
             </button>
@@ -1212,9 +1213,9 @@ useLayoutEffect(() => {
               width: 300,
               transform: "translateY(-100%)",
             }}
-          >
+            >
             <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
-              <span>Хэштеги</span>
+              <span>{tr("Хэштегтер", "Хэштеги", "Hashtags")}</span>
               <button
                 type="button"
                 className="text-white/60 hover:text-white"
@@ -1250,13 +1251,21 @@ useLayoutEffect(() => {
                     </button>
                   </li>
                 ))}
-                {suggestionsLoading && <li className="px-3 py-2 text-sm text-white/60">Поиск...</li>}
+                {suggestionsLoading && (
+                  <li className="px-3 py-2 text-sm text-white/60">
+                    {tr("Іздеу...", "Поиск...", "Searching...")}
+                  </li>
+                )}
               </ul>
             ) : (
               <div className="px-3 py-2 text-sm text-white/60">
                 {suggestionsLoading
-                  ? "Поиск..."
-                  : `Нажмите Enter, чтобы создать хэштег #${activeTag?.query ?? ""}`}
+                  ? tr("Іздеу...", "Поиск...", "Searching...")
+                  : `${tr(
+                      "Хэштег жасау үшін Enter басыңыз",
+                      "Нажмите Enter, чтобы создать хэштег",
+                      "Press Enter to create hashtag"
+                    )} #${activeTag?.query ?? ""}`}
               </div>
             )}
           </div>,
@@ -1274,9 +1283,9 @@ useLayoutEffect(() => {
               width: 300,
               transform: "translateY(-100%)",
             }}
-          >
+            >
             <div className="flex items-center justify-between px-3 py-2 text-white/70 text-sm border-b border-white/10">
-              <span>Упоминания</span>
+              <span>{tr("Белгілеулер", "Упоминания", "Mentions")}</span>
               <button
                 type="button"
                 className="text-white/60 hover:text-white"
@@ -1362,11 +1371,17 @@ useLayoutEffect(() => {
                     </button>
                   </li>
                 ))}
-                {mentionLoading && <li className="px-3 py-2 text-sm text-white/60">Загрузка...</li>}
+                {mentionLoading && (
+                  <li className="px-3 py-2 text-sm text-white/60">
+                    {tr("Жүктелуде...", "Загрузка...", "Loading...")}
+                  </li>
+                )}
               </ul>
             ) : (
               <div className="px-3 py-2 text-sm text-white/60">
-                {mentionLoading ? "Поиск..." : "Введите имя пользователя"}
+                {mentionLoading
+                  ? tr("Іздеу...", "Поиск...", "Searching...")
+                  : tr("Қолданушы атын енгізіңіз", "Введите имя пользователя", "Enter username")}
               </div>
             )}
           </div>,

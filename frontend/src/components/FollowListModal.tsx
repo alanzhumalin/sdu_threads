@@ -6,6 +6,7 @@ import { ErrorMessage } from "./ErrorMessage";
 import { UserRow, UserRowSkeleton, type UserRowData } from "./UserRow";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
+import { useI18n } from "../i18n";
 
 type Mode = "followers" | "following";
 
@@ -33,7 +34,11 @@ function mergeUsers(existing: UserRowData[], incoming: UserRowData[]) {
 }
 
 export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
-  const title = mode === "followers" ? "Подписчики" : "Подписки";
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+  const title = mode === "followers"
+    ? tr("Жазылушылар", "Подписчики", "Followers")
+    : tr("Жазылымдар", "Подписки", "Following");
 
   const [items, setItems] = useState<UserRowData[]>([]);
   const [nextOffset, setNextOffset] = useState<number | null>(0);
@@ -54,7 +59,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
   const fetchPage = async (offset: number, append: boolean, seq: number) => {
     if (!userId) return;
     if (!token) {
-      setError("Сессия истекла. Войдите снова.");
+      setError(tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again."));
       return;
     }
     if (append) setLoadingMore(true);
@@ -73,7 +78,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
       setError("");
     } catch (e: any) {
       if (seq !== requestSeq.current) return;
-      setError(e?.message || "Не удалось загрузить список");
+      setError(e?.message || tr("Тізімді жүктеу мүмкін болмады", "Не удалось загрузить список", "Failed to load list"));
     } finally {
       if (seq !== requestSeq.current) return;
       if (append) setLoadingMore(false);
@@ -134,7 +139,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
 
   const unfollow = async (user: UserRowData) => {
     if (!token) {
-      setError("Сессия истекла. Войдите снова.");
+      setError(tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again."));
       return;
     }
     if (pendingUnfollowRef.current.has(user.id)) return;
@@ -172,7 +177,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
         next.splice(insertAt, 0, user);
         return next;
       });
-      setError(e?.message || "Не удалось отписаться");
+      setError(e?.message || tr("Жазылымнан шығу мүмкін болмады", "Не удалось отписаться", "Failed to unfollow"));
       return;
     }
 
@@ -204,7 +209,7 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
               type="button"
               className="text-white/60 hover:text-white"
               onClick={onClose}
-              aria-label="Закрыть"
+              aria-label={tr("Жабу", "Закрыть", "Close")}
             >
               <X className="w-5 h-5" />
             </button>
@@ -223,7 +228,9 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
 
             {!loading && !error && items.length === 0 && (
               <div className="py-8 text-center text-white/60 text-sm">
-                {mode === "followers" ? "Подписчиков пока нет." : "Подписок пока нет."}
+                {mode === "followers"
+                  ? tr("Әзірге жазылушы жоқ.", "Подписчиков пока нет.", "No followers yet.")
+                  : tr("Әзірге жазылым жоқ.", "Подписок пока нет.", "Not following anyone yet.")}
               </div>
             )}
 
@@ -245,16 +252,16 @@ export function FollowListModal({ open, mode, userId, token, onClose }: Props) {
                         className="px-3 py-1 rounded-full text-xs border border-white/20 text-white/80 hover:border-red-400/40 hover:text-red-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
                         onClick={() => unfollow(u)}
                         disabled={unfollowIds.has(u.id)}
-                        aria-label="Отписаться"
-                        title="Отписаться"
+                        aria-label={tr("Жазылымнан шығу", "Отписаться", "Unfollow")}
+                        title={tr("Жазылымнан шығу", "Отписаться", "Unfollow")}
                       >
                         {unfollowIds.has(u.id) ? (
                           <span className="inline-flex items-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            Отписка...
+                            {tr("Шығу...", "Отписка...", "Unfollowing...")}
                           </span>
                         ) : (
-                          "Отписаться"
+                          tr("Жазылымнан шығу", "Отписаться", "Unfollow")
                         )}
                       </button>
                     ) : null

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -138,6 +139,34 @@ func (r *FollowRepository) FollowingMap(ctx context.Context, followerID string, 
 		result[id] = true
 	}
 	return result, nil
+}
+
+func (r *FollowRepository) FollowerIDs(ctx context.Context, followeeID string) ([]string, error) {
+	followeeID = strings.TrimSpace(followeeID)
+	if followeeID == "" {
+		return []string{}, nil
+	}
+	rows, err := r.db.WithContext(ctx).
+		Raw(`SELECT follower_id FROM follows WHERE followee_id = ?`, followeeID).
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 32)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 type TopUser struct {

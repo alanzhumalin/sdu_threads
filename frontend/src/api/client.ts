@@ -2,8 +2,20 @@ import { useAuthStore } from "../store/auth";
 import type { MediaItem, PostMusic } from "../types/media";
 
 type HttpMethod = "GET" | "POST" | "DELETE" | "PATCH" | "PUT";
+type ClientLanguage = "kk" | "ru" | "en";
 
 const API_BASE = "/api";
+let clientLanguage: ClientLanguage = "kk";
+
+export const setClientLanguage = (next: ClientLanguage) => {
+  clientLanguage = next;
+};
+
+const tr = (kk: string, ru: string, en: string) => {
+  if (clientLanguage === "ru") return ru;
+  if (clientLanguage === "en") return en;
+  return kk;
+};
 
 type SocialLinks = Partial<
   Record<"instagram" | "telegram" | "github" | "linkedin", string>
@@ -81,6 +93,13 @@ export type TelegramConnectSession = {
   expires_at?: string;
 };
 
+export type TranslateResponse = {
+  translated_text: string;
+  source_lang?: "kk" | "ru" | "en" | "unknown" | string;
+  target_lang: "kk" | "ru" | "en";
+  model?: string;
+};
+
 type ApiErrorShape =
   | { error: string }
   | { error: { code?: string; message?: string; retry_after_seconds?: number } }
@@ -91,39 +110,39 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
   const lower = raw.toLowerCase();
 
   if (code === "INVALID_CREDENTIALS" || lower.includes("invalid credentials")) {
-    return "Неверный логин или пароль";
+    return tr("Логин немесе құпиясөз қате", "Неверный логин или пароль", "Invalid login or password");
   }
 
   if (status === 401 || code === "UNAUTHORIZED") {
-    return "Сессия истекла. Войдите снова.";
+    return tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again.");
   }
 
   if (status === 403 || code === "FORBIDDEN") {
-    return "Недостаточно прав для этого действия.";
+    return tr("Бұл әрекетке құқық жеткіліксіз.", "Недостаточно прав для этого действия.", "Not enough permissions for this action.");
   }
 
   if (status === 429 || code === "RATE_LIMIT") {
-    return "Слишком часто. Попробуйте позже.";
+    return tr("Тым жиі. Кейінірек қайталаңыз.", "Слишком часто. Попробуйте позже.", "Too many requests. Try again later.");
   }
 
   if (lower.includes("rules must be accepted")) {
-    return "Нужно принять правила использования сайта";
+    return tr("Сайт ережелерін қабылдау қажет", "Нужно принять правила использования сайта", "You need to accept the site rules");
   }
 
   if (lower.includes("email must be institutional")) {
-    return "Email должен быть в формате *@sdu.edu.kz";
+    return tr("Email *@sdu.edu.kz форматында болуы керек", "Email должен быть в формате *@sdu.edu.kz", "Email must be in *@sdu.edu.kz format");
   }
 
   if (lower.includes("email already registered")) {
-    return "Этот email уже зарегистрирован";
+    return tr("Бұл email бұрын тіркелген", "Этот email уже зарегистрирован", "This email is already registered");
   }
 
   if (lower.includes("username already taken")) {
-    return "Этот username уже занят";
+    return tr("Бұл username бос емес", "Этот username уже занят", "This username is already taken");
   }
 
   if (lower.includes("password must be at least")) {
-    return "Пароль должен быть минимум 8 символов";
+    return tr("Құпиясөз кемінде 8 таңба болуы керек", "Пароль должен быть минимум 8 символов", "Password must be at least 8 characters");
   }
 
   if (
@@ -131,14 +150,16 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
     lower.includes("invalid input syntax for type uuid") ||
     lower.includes("pq:")
   ) {
-    return "Что-то пошло не так. Попробуйте позже.";
+    return tr("Бірдеңе дұрыс болмады. Кейінірек қайталаңыз.", "Что-то пошло не так. Попробуйте позже.", "Something went wrong. Try again later.");
   }
 
   if (raw.startsWith("HTTP ") || raw === "") {
-    if (status >= 500) return "Ошибка сервера. Попробуйте позже.";
-    if (status === 404) return "Не найдено";
-    if (status === 400) return "Некорректный запрос";
-    return "Что-то пошло не так. Попробуйте позже.";
+    if (status >= 500) {
+      return tr("Сервер қатесі. Кейінірек қайталаңыз.", "Ошибка сервера. Попробуйте позже.", "Server error. Try again later.");
+    }
+    if (status === 404) return tr("Табылмады", "Не найдено", "Not found");
+    if (status === 400) return tr("Сұрау қате", "Некорректный запрос", "Invalid request");
+    return tr("Бірдеңе дұрыс болмады. Кейінірек қайталаңыз.", "Что-то пошло не так. Попробуйте позже.", "Something went wrong. Try again later.");
   }
 
   return raw;
@@ -197,7 +218,7 @@ async function request<T>(
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+    throw new Error(tr("Сервермен байланыс жоқ. Кейінірек қайталаңыз.", "Нет соединения с сервером. Попробуйте позже.", "No connection to server. Try again later."));
   }
   if (res.status === 401 && !isAuthEndpoint(path)) {
     const hadToken = !!token || !!useAuthStore.getState().token;
@@ -207,7 +228,11 @@ async function request<T>(
       // ignore
     }
     // Guest UX: don't force a redirect; pages/actions can show an auth-gate overlay/modal.
-    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
+    throw new Error(
+      hadToken
+        ? tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again.")
+        : tr("Алдымен авторизациядан өтіңіз", "Сначала авторизуйся", "Please sign in first")
+    );
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -238,7 +263,7 @@ async function requestWithHeaders<T>(
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+    throw new Error(tr("Сервермен байланыс жоқ. Кейінірек қайталаңыз.", "Нет соединения с сервером. Попробуйте позже.", "No connection to server. Try again later."));
   }
   if (res.status === 401 && !isAuthEndpoint(path)) {
     const hadToken = !!token || !!useAuthStore.getState().token;
@@ -247,7 +272,11 @@ async function requestWithHeaders<T>(
     } catch {
       // ignore
     }
-    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
+    throw new Error(
+      hadToken
+        ? tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again.")
+        : tr("Алдымен авторизациядан өтіңіз", "Сначала авторизуйся", "Please sign in first")
+    );
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -277,7 +306,7 @@ async function requestForm<T>(
       body: form,
     });
   } catch {
-    throw new Error("Нет соединения с сервером. Попробуйте позже.");
+    throw new Error(tr("Сервермен байланыс жоқ. Кейінірек қайталаңыз.", "Нет соединения с сервером. Попробуйте позже.", "No connection to server. Try again later."));
   }
   if (res.status === 401 && !isAuthEndpoint(path)) {
     const hadToken = !!token || !!useAuthStore.getState().token;
@@ -286,7 +315,11 @@ async function requestForm<T>(
     } catch {
       // ignore
     }
-    throw new Error(hadToken ? "Сессия истекла. Войдите снова." : "Сначала авторизуйся");
+    throw new Error(
+      hadToken
+        ? tr("Сессия аяқталды. Қайта кіріңіз.", "Сессия истекла. Войдите снова.", "Session expired. Please sign in again.")
+        : tr("Алдымен авторизациядан өтіңіз", "Сначала авторизуйся", "Please sign in first")
+    );
   }
   if (!res.ok) {
     const { message, code, retryAfterSeconds } = await readError(res);
@@ -792,6 +825,10 @@ export const api = {
     request<{ status: string }>(`/notifications/${id}/read`, "POST", undefined, token),
   markAllNotificationsRead: (token?: string | null) =>
     request<{ status: string; updated?: number }>(`/notifications-read-all`, "POST", undefined, token),
+  translateText: (
+    payload: { text: string; target_lang: "kk" | "ru" | "en"; source_lang?: "kk" | "ru" | "en" },
+    token?: string | null
+  ) => request<TranslateResponse>(`/translate`, "POST", payload, token),
   searchUsersPaged: (q: string, limit = 10, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {

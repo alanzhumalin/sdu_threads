@@ -127,7 +127,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	handler.NewHealthHandler().Register(mux)
 	handler.NewAuthHandler(authService, queryCache).Register(mux)
 	handler.NewUserHandler(userService).Register(mux)
-	handler.NewPostHandler(postService, viewService, jwtMgr, queryCache).Register(mux)
+	handler.NewPostHandler(postService, viewService, telegramService, jwtMgr, queryCache).Register(mux)
 	handler.NewCommentHandler(commentService, jwtMgr, queryCache).Register(mux)
 	handler.NewFollowHandler(followService, profileService, postService, jwtMgr, queryCache).Register(mux)
 	handler.NewHashtagHandler(hashtagService, jwtMgr, queryCache).Register(mux)
@@ -138,6 +138,7 @@ func NewServer(cfg config.Config, client *db.Client) *Server {
 	mediaHandler.Register(mux)
 	chatHandler.Register(mux)
 	telegramHandler.Register(mux)
+	// Translation is temporarily disabled.
 	adminHandler.Register(mux)
 	moderationHandler.Register(mux)
 

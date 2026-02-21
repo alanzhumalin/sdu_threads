@@ -8,6 +8,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import telegramIconUrl from "../assets/telegram.png";
+import { useI18n } from "../i18n";
 
 export type SocialType = "instagram" | "telegram" | "github" | "linkedin";
 export type SocialLinks = Partial<Record<SocialType, string>>;
@@ -46,6 +47,8 @@ type Props = {
 };
 
 export function SocialLinksOverlay({ links, className = "" }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const items = useMemo(() => {
     if (!links) return [];
     return (Object.entries(links) as [SocialType, string][])
@@ -97,7 +100,7 @@ export function SocialLinksOverlay({ links, className = "" }: Props) {
                   type="button"
                   className="absolute top-3 right-3 text-white/60 hover:text-white"
                   onClick={() => setOpen(null)}
-                  aria-label="Закрыть"
+                  aria-label={tr("Жабу", "Закрыть", "Close")}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -111,7 +114,7 @@ export function SocialLinksOverlay({ links, className = "" }: Props) {
                       {labels[open.type]}
                     </p>
                     <p className="text-white/50 text-sm">
-                      Вы переходите на внешний сайт
+                      {tr("Сіз сыртқы сайтқа өтесіз", "Вы переходите на внешний сайт", "You are leaving to an external site")}
                     </p>
                   </div>
                 </div>
@@ -127,7 +130,7 @@ export function SocialLinksOverlay({ links, className = "" }: Props) {
                     onClick={() => setOpen(null)}
                     className="rounded-full border border-white/20 px-4 py-2 text-sm text-white/80 hover:border-white/40 transition"
                   >
-                    Отмена
+                    {tr("Бас тарту", "Отмена", "Cancel")}
                   </button>
                   <button
                     type="button"
@@ -141,7 +144,7 @@ export function SocialLinksOverlay({ links, className = "" }: Props) {
                     }}
                     className="rounded-full bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-white/90 transition"
                   >
-                    Перейти
+                    {tr("Өту", "Перейти", "Open")}
                   </button>
                 </div>
               </div>

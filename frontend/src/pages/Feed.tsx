@@ -24,6 +24,8 @@ import { useSubscriptionsStore } from "../store/subscriptions";
 import { useFollowingFeedStore } from "../store/followingFeed";
 import { useUserStatsStore } from "../store/userStats";
 import { useAuthGateStore } from "../store/authGate";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import {
   Heart,
@@ -62,25 +64,6 @@ const isHalfVisible = (el: HTMLElement) => {
   const viewH = window.innerHeight || document.documentElement.clientHeight;
   const visibleH = Math.min(rect.bottom, viewH) - Math.max(rect.top, 0);
   return visibleH >= rect.height * 0.5;
-};
-
-const timeAgo = (iso: string) => {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
 };
 
 const normalizeReactions = (input?: ReactionItem[]) => {
@@ -124,6 +107,8 @@ const toggleReactionInList = (input: ReactionItem[], emoji: string, shouldReact:
 };
 
 export default function FeedPage() {
+  const { t, language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const showAuthGate = useAuthGateStore((s) => s.show);
   const {
@@ -242,7 +227,7 @@ export default function FeedPage() {
       setCache(items, nextOffset);
       setPopularError("");
     } catch (e: any) {
-      setPopularError(e.message || "Не удалось загрузить ленту");
+      setPopularError(e.message || t("feed.load_error"));
     } finally {
       setPopularLoading(false);
     }
@@ -260,7 +245,7 @@ export default function FeedPage() {
       setFollowingError("");
       setFollowingSeenVersion(subsVersion);
     } catch (e: any) {
-      setFollowingError(e.message || "Не удалось загрузить ленту подписок");
+      setFollowingError(e.message || t("feed.load_error"));
     } finally {
       setFollowingLoading(false);
     }
@@ -343,7 +328,7 @@ export default function FeedPage() {
       setPopularNextOffset(n);
       setPopularError("");
     } catch (e: any) {
-      setPopularError(e.message || "Не удалось загрузить ленту");
+      setPopularError(e.message || t("feed.load_error"));
     } finally {
       setPopularLoading(false);
     }
@@ -363,7 +348,7 @@ export default function FeedPage() {
       setFollowingNextOffset(n);
       setFollowingError("");
     } catch (e: any) {
-      setFollowingError(e.message || "Не удалось загрузить ленту подписок");
+      setFollowingError(e.message || t("feed.load_error"));
     } finally {
       setFollowingLoading(false);
     }
@@ -418,9 +403,9 @@ export default function FeedPage() {
   const toggleFollow = async (post: FeedItem, currentIsSubscribed: boolean) => {
     if (!token) {
       showAuthGate({
-        title: "Сначала авторизуйся",
-        message: "Чтобы подписываться на пользователей, нужно войти.",
-        ctaLabel: "Войти",
+        title: t("auth.required_title"),
+        message: t("feed.auth.subscribe_message"),
+        ctaLabel: t("auth.cta_login"),
       });
       return;
     }
@@ -463,9 +448,9 @@ export default function FeedPage() {
   const togglePostReaction = async (postId: string, emoji: string) => {
     if (!token) {
       showAuthGate({
-        title: "Сначала авторизуйся",
-        message: "Чтобы ставить реакции, нужно войти.",
-        ctaLabel: "Войти",
+        title: t("auth.required_title"),
+        message: t("feed.auth.reaction_message"),
+        ctaLabel: t("auth.cta_login"),
       });
       return;
     }
@@ -483,7 +468,7 @@ export default function FeedPage() {
         : await api.reactPost(postId, emoji, token);
       updatePostReactions(postId, result.reactions || []);
     } catch (e: any) {
-      setActiveError(e.message || "Ошибка реакции");
+      setActiveError(e.message || tr("Реакция қатесі", "Ошибка реакции", "Reaction error"));
       updatePostReactions(postId, previousReactions);
     }
   };
@@ -491,9 +476,9 @@ export default function FeedPage() {
   const toggleLike = async (id: string, liked: boolean) => {
     if (!token) {
       showAuthGate({
-        title: "Сначала авторизуйся",
-        message: "Чтобы ставить лайки, нужно войти.",
-        ctaLabel: "Войти",
+        title: t("auth.required_title"),
+        message: t("feed.auth.reaction_message"),
+        ctaLabel: t("auth.cta_login"),
       });
       return;
     }
@@ -516,7 +501,7 @@ export default function FeedPage() {
       if (liked) await api.unlikePost(id, token);
       else await api.likePost(id, token);
     } catch (e: any) {
-      setActiveError(e.message || "Ошибка лайка");
+      setActiveError(e.message || tr("Лайк қатесі", "Ошибка лайка", "Like error"));
       if (current) {
         setFeed((prev) =>
           prev.map((p) => (p.id === id ? { ...p, liked_by_me: liked, like_count: currentLikeCount } : p))
@@ -537,7 +522,7 @@ export default function FeedPage() {
     const url = `${window.location.origin}/p/${postId}`;
     try {
       await navigator.clipboard.writeText(url);
-      showToast("Ссылка скопирована");
+      showToast(t("feed.toast.link_copied"));
       return;
     } catch {
       // Fallback for non-secure contexts / older browsers
@@ -554,9 +539,9 @@ export default function FeedPage() {
       el.select();
       const ok = document.execCommand("copy");
       document.body.removeChild(el);
-      showToast(ok ? "Ссылка скопирована" : "Не удалось скопировать ссылку");
+      showToast(ok ? t("feed.toast.link_copied") : t("feed.toast.link_copy_failed"));
     } catch {
-      showToast("Не удалось скопировать ссылку");
+      showToast(t("feed.toast.link_copy_failed"));
     }
   };
 
@@ -578,8 +563,8 @@ export default function FeedPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-white/60">Лента</p>
-            <h1 className="text-2xl font-semibold text-white">Что нового?</h1>
+            <p className="text-sm text-white/60">{t("feed.page_label")}</p>
+            <h1 className="text-2xl font-semibold text-white">{t("feed.page_title")}</h1>
           </div>
         </div>
 
@@ -592,9 +577,9 @@ export default function FeedPage() {
           />
         ) : (
           <AuthGateOverlay
-            title="Сначала авторизуйся"
-            message="Чтобы создать пост, нужно войти."
-            ctaLabel="Войти"
+            title={t("auth.required_title")}
+            message={t("feed.auth.create_post_message")}
+            ctaLabel={t("auth.cta_login")}
             className="overflow-hidden"
           >
             <div className="card p-4 md:p-4 space-y-3 min-h-[210px]">
@@ -626,16 +611,16 @@ export default function FeedPage() {
                   : "text-white/70 hover:text-white hover:bg-white/10"
               }`}
             >
-              Популярное
+              {t("feed.tab_popular")}
             </button>
             <button
               type="button"
               onClick={() => {
                 if (!token) {
                   showAuthGate({
-                    title: "Сначала авторизуйся",
-                    message: "Лента подписок доступна только после входа.",
-                    ctaLabel: "Войти",
+                    title: t("auth.required_title"),
+                    message: t("feed.following_locked_message"),
+                    ctaLabel: t("auth.cta_login"),
                   });
                   return;
                 }
@@ -647,7 +632,7 @@ export default function FeedPage() {
                   : "text-white/70 hover:text-white hover:bg-white/10"
               }`}
             >
-              Подписки
+              {t("feed.tab_following")}
             </button>
           </div>
         </div>
@@ -685,7 +670,7 @@ export default function FeedPage() {
               <div className="flex items-center gap-3">
                 <Link
                   to={`/u/${p.username}`}
-                  aria-label={`Профиль ${p.full_name || p.username}`}
+                  aria-label={`${tr("Профиль", "Профиль", "Profile")} ${p.full_name || p.username}`}
                   className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                 >
                   <span aria-hidden>{p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}</span>
@@ -709,17 +694,17 @@ export default function FeedPage() {
                       to={`/u/${item.username}`}
                       className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                     >
-                      <span>{item.full_name || "Без имени"}</span>
+                      <span>{item.full_name || t("top_users.unnamed")}</span>
                       {item.is_verified ? <VerifiedBadge /> : null}
                     </Link>
                   </MentionPreview>
-                  <p className="text-sm text-white/60">{timeAgo(item.created_at)}</p>
+                  <p className="text-sm text-white/60">{formatTimeAgo(item.created_at, language)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {isMe ? (
                   <span className="px-3 py-1 rounded-full border border-white/15 bg-white/5 text-white/70 text-xs">
-                    Это вы
+                    {t("feed.badge_me")}
                   </span>
                 ) : (
                   <button
@@ -733,7 +718,7 @@ export default function FeedPage() {
                         : "border-white text-black bg-white hover:bg-white/90"
                     }`}
                   >
-                    {isSub ? "Отписаться" : "Подписаться"}
+                    {isSub ? t("feed.unfollow") : t("feed.follow")}
                   </button>
                 )}
                 <button
@@ -761,7 +746,7 @@ export default function FeedPage() {
                     className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
                   >
                     <Share2 className="w-4 h-4" strokeWidth={1.7} />
-                    Поделиться
+                    {t("feed.menu.share")}
                   </button>
                   <button
                     type="button"
@@ -770,9 +755,9 @@ export default function FeedPage() {
                       setMenuOpenId(null);
                       if (!token) {
                         showAuthGate({
-                          title: "Сначала авторизуйся",
-                          message: "Чтобы отправить жалобу, нужно войти.",
-                          ctaLabel: "Войти",
+                          title: t("auth.required_title"),
+                          message: t("feed.auth.report_message"),
+                          ctaLabel: t("auth.cta_login"),
                         });
                         return;
                       }
@@ -781,7 +766,7 @@ export default function FeedPage() {
                     className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
                   >
                     <Flag className="w-4 h-4" strokeWidth={1.7} />
-                    Пожаловаться
+                    {t("feed.menu.report")}
                   </button>
                 </div>
               )}
@@ -815,8 +800,8 @@ export default function FeedPage() {
                         ? "border-amber-300/50 bg-amber-300/20 text-amber-100"
                         : "border-white/15 bg-white/5 text-white/80 hover:border-white/30 hover:text-white"
                     }`}
-                    aria-label={`Реакция ${reaction.emoji}`}
-                    title={reaction.reacted_by_me ? "Убрать реакцию" : "Поставить реакцию"}
+                    aria-label={`${t("feed.action.reaction")} ${reaction.emoji}`}
+                    title={reaction.reacted_by_me ? t("feed.reaction.toggle_off") : t("feed.reaction.toggle_on")}
                   >
                     <span className="text-sm leading-none">{reaction.emoji}</span>
                     <span className="font-medium">{reaction.count}</span>
@@ -846,9 +831,9 @@ export default function FeedPage() {
                   onClick={() => {
                     if (!token) {
                       showAuthGate({
-                        title: "Сначала авторизуйся",
-                        message: "Чтобы открыть комментарии, нужно войти.",
-                        ctaLabel: "Войти",
+                        title: t("auth.required_title"),
+                        message: t("feed.auth.comments_message"),
+                        ctaLabel: t("auth.cta_login"),
                       });
                       return;
                     }
@@ -869,11 +854,11 @@ export default function FeedPage() {
                       ? "text-amber-200 bg-amber-300/15 border border-amber-300/30"
                       : "text-white/60 hover:text-white"
                   }`}
-                  aria-label="Добавить реакцию"
-                  title="Добавить реакцию"
+                  aria-label={t("feed.action.add_reaction")}
+                  title={t("feed.action.add_reaction")}
                 >
                   <Smile className="w-5 h-5" strokeWidth={1.7} />
-                  <span className="font-medium">Реакция</span>
+                  <span className="font-medium">{t("feed.action.reaction")}</span>
                 </button>
               </div>
 
@@ -891,17 +876,17 @@ export default function FeedPage() {
               {tab === "following" ? (
                 <>
                   <p className="text-white/80">
-                    Здесь будут появляться посты от людей, на которых вы подписаны
+                    {t("feed.empty.following_title")}
                   </p>
                   <p className="text-sm text-white/50">
-                    Подпишитесь на активных пользователей, чтобы видеть их посты
+                    {t("feed.empty.following_desc")}
                   </p>
                 </>
               ) : (
                 <>
-                  <p className="text-white/80">Постов пока нет</p>
+                  <p className="text-white/80">{t("feed.empty.popular_title")}</p>
                   <p className="text-sm text-white/50">
-                    Создайте первый пост через кнопку &quot;Опубликовать&quot; выше
+                    {t("feed.empty.popular_desc")}
                   </p>
                 </>
               )}
@@ -910,7 +895,7 @@ export default function FeedPage() {
         </div>
         {activeNextOffset !== null && (
           <div ref={loadMoreRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
-            {activeLoading ? "Загрузка..." : "Подгружаем ещё..."}
+            {activeLoading ? t("feed.loading") : t("feed.loading_more")}
           </div>
         )}
         {commentsPost && (
@@ -937,7 +922,7 @@ export default function FeedPage() {
         <ReportModal
           postId={reportPost.id}
           userId={reportPost.user_id}
-          onSuccess={() => showToast("Жалоба отправлена")}
+          onSuccess={() => showToast(t("feed.toast.report_sent"))}
           onClose={() => setReportPost(null)}
         />
       )}

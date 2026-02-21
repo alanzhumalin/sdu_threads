@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { useI18n } from "../i18n";
 
 type Props = {
   username: string;
@@ -24,6 +25,8 @@ type Profile = {
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
 
 export function MentionPreview({ username, children, className }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const anchorRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -137,18 +140,18 @@ export function MentionPreview({ username, children, className }: Props) {
         <p className="text-white/60 text-sm">@{username}</p>
         {data?.created_at && (
           <p className="text-white/50 text-xs">
-            на сайте с {new Date(data.created_at).toLocaleDateString()}
+            {tr("сайтта тіркелген:", "на сайте с", "on site since")} {new Date(data.created_at).toLocaleDateString()}
           </p>
         )}
         <div className="flex items-center gap-3 text-sm text-white/70 pt-1">
           <span>
-            <span className="font-semibold text-white">{data?.followers ?? "—"}</span> подписчиков
+            <span className="font-semibold text-white">{data?.followers ?? "—"}</span> {tr("жазылушы", "подписчиков", "followers")}
           </span>
           <span>
-            <span className="font-semibold text-white">{data?.following ?? "—"}</span> подписки
+            <span className="font-semibold text-white">{data?.following ?? "—"}</span> {tr("жазылым", "подписки", "following")}
           </span>
         </div>
-        {loading && <p className="text-white/50 text-xs pt-1">Загрузка...</p>}
+        {loading && <p className="text-white/50 text-xs pt-1">{tr("Жүктелуде...", "Загрузка...", "Loading...")}</p>}
       </div>
     </div>
   ) : null;

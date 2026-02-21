@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Music2, Pause, Play } from "lucide-react";
 import type { PostMusic as PostMusicItem } from "../types/media";
+import { useI18n } from "../i18n";
 
 type Props = {
   music?: PostMusicItem | null;
@@ -15,6 +16,8 @@ const fmt = (sec: number) => {
 };
 
 export function PostMusic({ music, className }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const audioURL = String(music?.audio_url || "").trim();
   if (!audioURL) return null;
 
@@ -157,8 +160,8 @@ export function PostMusic({ music, className }: Props) {
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-white">{meta.title}</p>
-          <p className="truncate text-xs text-white/60">{meta.artist || "Unknown artist"}</p>
-          <p className="truncate text-[11px] text-white/45">Ваш файл</p>
+          <p className="truncate text-xs text-white/60">{meta.artist || tr("Белгісіз әртіс", "Неизвестный исполнитель", "Unknown artist")}</p>
+          <p className="truncate text-[11px] text-white/45">{tr("Сіздің файлыңыз", "Ваш файл", "Your file")}</p>
         </div>
 
         <button

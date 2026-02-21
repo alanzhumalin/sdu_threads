@@ -22,6 +22,8 @@ import { MentionPreview } from "../components/MentionPreview";
 import { FollowListModal } from "../components/FollowListModal";
 import FabricImageEditor from "../components/FabricImageEditor";
 import { VerifiedBadge } from "../components/VerifiedBadge";
+import { useI18n } from "../i18n";
+import { formatTimeAgo } from "../utils/time";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -35,26 +37,9 @@ const isHalfVisible = (el: HTMLElement) => {
   return visibleH >= rect.height * 0.5;
 };
 
-const timeAgo = (iso: string) => {
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  const min = Math.floor(sec / 60);
-  const hour = Math.floor(min / 60);
-  const day = Math.floor(hour / 24);
-  if (sec < 45) return "только что";
-  if (min < 2) return "минуту назад";
-  if (min < 5) return `${min} минуты назад`;
-  if (min < 60) return `${min} мин назад`;
-  if (hour < 2) return "час назад";
-  if (hour < 5) return `${hour} часа назад`;
-  if (hour < 24) return `${hour} ч назад`;
-  if (day === 1) return "вчера";
-  if (day < 7) return `${day} дн назад`;
-  return date.toLocaleString();
-};
-
 export default function ProfilePage() {
+  const { language, pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const token = useAuthStore((s) => s.token);
   const setToken = useAuthStore((s) => s.setToken);
   const navigate = useNavigate();
@@ -187,7 +172,7 @@ export default function ProfilePage() {
       setError("");
       loadMyPosts(p.id, 0, false);
     } catch (e: any) {
-      setError(e.message || "Не удалось загрузить профиль");
+      setError(e.message || tr("Профиль жүктелмеді", "Не удалось загрузить профиль", "Failed to load profile"));
     } finally {
       setLoadingProfile(false);
     }
@@ -291,7 +276,7 @@ export default function ProfilePage() {
   };
   const socialPlaceholder: Record<SocialType, string> = {
     instagram: "username",
-    telegram: "username или @username",
+    telegram: tr("username немесе @username", "username или @username", "username or @username"),
     github: "username",
     linkedin: "https://www.linkedin.com/in/username",
   };
@@ -305,23 +290,23 @@ export default function ProfilePage() {
       return {
         error:
           type === "linkedin"
-            ? "Введите ссылку LinkedIn или удалите соцсеть"
-            : "Введите username или удалите соцсеть",
+            ? tr("LinkedIn сілтемесін енгізіңіз немесе соцжеліні өшіріңіз", "Введите ссылку LinkedIn или удалите соцсеть", "Enter LinkedIn URL or remove this social link")
+            : tr("username енгізіңіз немесе соцжеліні өшіріңіз", "Введите username или удалите соцсеть", "Enter username or remove this social link"),
       };
     }
 
     // LinkedIn: only full URL, no username-mode.
     if (type === "linkedin") {
       if (!original.startsWith("https://www.linkedin.com/")) {
-        return { error: "Ссылка должна начинаться с https://www.linkedin.com/" };
+        return { error: tr("Сілтеме https://www.linkedin.com/ арқылы басталуы керек", "Ссылка должна начинаться с https://www.linkedin.com/", "Link must start with https://www.linkedin.com/") };
       }
       try {
         const u = new URL(original);
         if (u.protocol !== "https:" || u.hostname.toLowerCase() !== "www.linkedin.com") {
-          return { error: "Ссылка должна начинаться с https://www.linkedin.com/" };
+          return { error: tr("Сілтеме https://www.linkedin.com/ арқылы басталуы керек", "Ссылка должна начинаться с https://www.linkedin.com/", "Link must start with https://www.linkedin.com/") };
         }
       } catch {
-        return { error: "Неверная ссылка" };
+        return { error: tr("Сілтеме қате", "Неверная ссылка", "Invalid URL") };
       }
       return { username: original, url: original };
     }
@@ -334,41 +319,41 @@ export default function ProfilePage() {
     const stripWww = (host: string) => host.toLowerCase().replace(/^www\./, "");
 
     const extractFromUrl = (u: URL): { username: string } | { error: string } => {
-      if (u.protocol !== "https:") return { error: "Ссылка должна начинаться с https://" };
+      if (u.protocol !== "https:") return { error: tr("Сілтеме https:// арқылы басталуы керек", "Ссылка должна начинаться с https://", "Link must start with https://") };
       const host = stripWww(u.hostname);
       const parts = u.pathname.split("/").filter(Boolean);
 
       if (type === "instagram") {
-        if (host !== "instagram.com") return { error: "Ссылка должна вести на instagram.com" };
+        if (host !== "instagram.com") return { error: tr("Сілтеме instagram.com-ға апаруы керек", "Ссылка должна вести на instagram.com", "Link must point to instagram.com") };
         const username = parts[0] || "";
         if (!username || username === "p" || username === "reel" || username === "tv" || username === "stories") {
-          return { error: "Укажите username профиля Instagram" };
+          return { error: tr("Instagram профилінің username-ын көрсетіңіз", "Укажите username профиля Instagram", "Provide Instagram profile username") };
         }
         return { username };
       }
 
       if (type === "telegram") {
-        if (host !== "t.me" && host !== "telegram.me") return { error: "Ссылка должна вести на t.me" };
+        if (host !== "t.me" && host !== "telegram.me") return { error: tr("Сілтеме t.me-ге апаруы керек", "Ссылка должна вести на t.me", "Link must point to t.me") };
         const username = (parts[0] === "s" ? parts[1] : parts[0]) || "";
-        if (!username || username.startsWith("+")) return { error: "Укажите username профиля Telegram" };
+        if (!username || username.startsWith("+")) return { error: tr("Telegram профилінің username-ын көрсетіңіз", "Укажите username профиля Telegram", "Provide Telegram profile username") };
         return { username: username.replace(/^@+/, "") };
       }
 
       if (type === "github") {
-        if (host !== "github.com") return { error: "Ссылка должна вести на github.com" };
+        if (host !== "github.com") return { error: tr("Сілтеме github.com-ға апаруы керек", "Ссылка должна вести на github.com", "Link must point to github.com") };
         const username = parts[0] || "";
-        if (!username) return { error: "Укажите username профиля GitHub" };
+        if (!username) return { error: tr("GitHub профилінің username-ын көрсетіңіз", "Укажите username профиля GitHub", "Provide GitHub profile username") };
         return { username };
       }
 
       if (type === "linkedin") {
-        if (host !== "linkedin.com") return { error: "Ссылка должна вести на linkedin.com" };
+        if (host !== "linkedin.com") return { error: tr("Сілтеме linkedin.com-ға апаруы керек", "Ссылка должна вести на linkedin.com", "Link must point to linkedin.com") };
         const username = parts[0] === "in" ? parts[1] || "" : "";
-        if (!username) return { error: "Укажите username профиля LinkedIn" };
+        if (!username) return { error: tr("LinkedIn профилінің username-ын көрсетіңіз", "Укажите username профиля LinkedIn", "Provide LinkedIn profile username") };
         return { username };
       }
 
-      return { error: "Неизвестный тип соцсети" };
+      return { error: tr("Белгісіз әлеуметтік желі түрі", "Неизвестный тип соцсети", "Unknown social type") };
     };
 
     const fromUrlMaybe = () => {
@@ -387,7 +372,7 @@ export default function ProfilePage() {
         const u = new URL(toUrl(v));
         return extractFromUrl(u);
       } catch {
-        return { error: "Неверная ссылка" } as const;
+        return { error: tr("Сілтеме қате", "Неверная ссылка", "Invalid URL") } as const;
       }
     };
 
@@ -402,7 +387,13 @@ export default function ProfilePage() {
     username = username.trim().replace(/^@+/, "");
 
     const invalid = () =>
-      ({ error: "Некорректный username: используйте буквы/цифры и допустимые символы" }) as const;
+      ({
+        error: tr(
+          "Қате username: тек әріп/сан және рұқсат етілген таңбаларды қолданыңыз",
+          "Некорректный username: используйте буквы/цифры и допустимые символы",
+          "Invalid username: use letters/digits and allowed symbols"
+        ),
+      }) as const;
 
     if (type === "github") {
       // GitHub: alnum and hyphen; can't start/end with hyphen; max 39 chars.
@@ -458,7 +449,9 @@ export default function ProfilePage() {
       }
       return status;
     } catch (e: any) {
-      if (!silent) setTelegramError(e?.message || "Не удалось получить статус Telegram");
+      if (!silent) {
+        setTelegramError(e?.message || tr("Telegram статусы алынбады", "Не удалось получить статус Telegram", "Failed to get Telegram status"));
+      }
       return null;
     } finally {
       if (!silent) setTelegramLoading(false);
@@ -519,7 +512,7 @@ export default function ProfilePage() {
       if (botWindow && !botWindow.closed) {
         botWindow.close();
       }
-      setTelegramError(e?.message || "Не удалось создать код подключения");
+      setTelegramError(e?.message || tr("Қосылу коды жасалмады", "Не удалось создать код подключения", "Failed to create connection code"));
       stopTelegramConnectPolling();
     } finally {
       setTelegramActionLoading(false);
@@ -536,7 +529,7 @@ export default function ProfilePage() {
       setTelegramConnect(null);
       await loadTelegramStatus();
     } catch (e: any) {
-      setTelegramError(e?.message || "Не удалось отключить Telegram");
+      setTelegramError(e?.message || tr("Telegram ажыратылмады", "Не удалось отключить Telegram", "Failed to disconnect Telegram"));
     } finally {
       setTelegramActionLoading(false);
     }
@@ -556,7 +549,7 @@ export default function ProfilePage() {
         telegramCopyTimerRef.current = null;
       }, 1300);
     } catch {
-      setTelegramError("Не удалось скопировать код");
+      setTelegramError(tr("Код көшірілмеді", "Не удалось скопировать код", "Failed to copy code"));
     }
   };
 
@@ -664,10 +657,10 @@ export default function ProfilePage() {
     try {
       const uploadFile = file;
       if (!uploadFile.type.startsWith("image/") || uploadFile.type === "image/svg+xml") {
-        throw new Error("Можно загрузить только изображения");
+        throw new Error(tr("Тек суреттерді жүктеуге болады", "Можно загрузить только изображения", "Only images can be uploaded"));
       }
       if (uploadFile.size > MAX_MEDIA_BYTES) {
-        throw new Error("Изображение не должно превышать 5 МБ");
+        throw new Error(tr("Сурет 5 МБ-тан аспауы керек", "Изображение не должно превышать 5 МБ", "Image size must be <= 5 MB"));
       }
 
       const presigned = await api.presignMedia(
@@ -676,7 +669,7 @@ export default function ProfilePage() {
         token
       );
       const p = presigned[0];
-      if (!p) throw new Error("Не удалось подготовить загрузку");
+      if (!p) throw new Error(tr("Жүктеуді дайындау сәтсіз", "Не удалось подготовить загрузку", "Failed to prepare upload"));
 
       await api.uploadPresignedPut(p, uploadFile, controller.signal);
 
@@ -685,7 +678,7 @@ export default function ProfilePage() {
     } catch (e: any) {
       if (controller.signal.aborted) return;
       if (ctl.current.version !== version) return;
-      const msg = e?.message || "Не удалось загрузить файл";
+      const msg = e?.message || tr("Файл жүктелмеді", "Не удалось загрузить файл", "Failed to upload file");
       setState({ uploading: false, uploadedUrl: undefined, uploadedKey: undefined, error: msg });
       setSaveError(msg);
     }
@@ -714,7 +707,7 @@ export default function ProfilePage() {
 
   const setPendingImage = (target: "background" | "avatar", file: File) => {
     if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
-      setSaveError("Можно загрузить только изображения");
+      setSaveError(tr("Тек суреттерді жүктеуге болады", "Можно загрузить только изображения", "Only images can be uploaded"));
       return;
     }
     setSaveError("");
@@ -750,20 +743,20 @@ export default function ProfilePage() {
     setSocialErrors(nextErrors);
     setSocialLinks(normalizedList);
     if (Object.keys(nextErrors).length > 0) {
-      setSaveError("Проверьте ссылки на соцсети");
+      setSaveError(tr("Әлеуметтік желі сілтемелерін тексеріңіз", "Проверьте ссылки на соцсети", "Check social links"));
       return;
     }
 
     if (avatarUpload.uploading || bgUpload.uploading) {
-      setSaveError("Дождитесь завершения загрузки медиа");
+      setSaveError(tr("Медиа жүктелуінің аяқталуын күтіңіз", "Дождитесь завершения загрузки медиа", "Wait until media upload finishes"));
       return;
     }
     if (pendingAvatar && !avatarUpload.uploadedUrl) {
-      setSaveError(avatarUpload.error || "Не удалось загрузить аватар");
+      setSaveError(avatarUpload.error || tr("Аватар жүктелмеді", "Не удалось загрузить аватар", "Failed to upload avatar"));
       return;
     }
     if (pendingBackground && !bgUpload.uploadedUrl) {
-      setSaveError(bgUpload.error || "Не удалось загрузить фон");
+      setSaveError(bgUpload.error || tr("Фон жүктелмеді", "Не удалось загрузить фон", "Failed to upload background"));
       return;
     }
 
@@ -801,7 +794,7 @@ export default function ProfilePage() {
       closeCrop();
       setEditOpen(false);
     } catch (e: any) {
-      setSaveError(e.message || "Не удалось сохранить");
+      setSaveError(e.message || tr("Сақтау сәтсіз аяқталды", "Не удалось сохранить", "Failed to save"));
     } finally {
       setSaving(false);
     }
@@ -813,15 +806,15 @@ export default function ProfilePage() {
     setPasswordSuccess("");
 
     if (!passwordForm.current_password.trim()) {
-      setPasswordError("Введите текущий пароль");
+      setPasswordError(tr("Қазіргі құпиясөзді енгізіңіз", "Введите текущий пароль", "Enter current password"));
       return;
     }
     if (passwordForm.new_password.length < 8) {
-      setPasswordError("Новый пароль должен быть минимум 8 символов");
+      setPasswordError(tr("Жаңа құпиясөз кемінде 8 таңба болуы керек", "Новый пароль должен быть минимум 8 символов", "New password must be at least 8 characters"));
       return;
     }
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setPasswordError("Новый пароль и подтверждение не совпадают");
+      setPasswordError(tr("Жаңа құпиясөз бен растау сәйкес келмейді", "Новый пароль и подтверждение не совпадают", "New password and confirmation do not match"));
       return;
     }
 
@@ -839,9 +832,9 @@ export default function ProfilePage() {
         new_password: "",
         confirm_password: "",
       });
-      setPasswordSuccess("Пароль успешно изменен");
+      setPasswordSuccess(tr("Құпиясөз сәтті өзгертілді", "Пароль успешно изменен", "Password changed successfully"));
     } catch (e: any) {
-      setPasswordError(e.message || "Не удалось изменить пароль");
+      setPasswordError(e.message || tr("Құпиясөз өзгертілмеді", "Не удалось изменить пароль", "Failed to change password"));
     } finally {
       setPasswordSaving(false);
     }
@@ -980,7 +973,7 @@ export default function ProfilePage() {
         ...prev,
         loading: false,
         loadingMore: false,
-        error: e.message || "Не удалось загрузить посты",
+        error: e.message || tr("Посттар жүктелмеді", "Не удалось загрузить посты", "Failed to load posts"),
       }));
     }
   };
@@ -1005,7 +998,7 @@ export default function ProfilePage() {
         ...prev,
         loading: false,
         loadingMore: false,
-        error: e.message || "Не удалось загрузить понравившиеся",
+        error: e.message || tr("Ұнаған посттар жүктелмеді", "Не удалось загрузить понравившиеся", "Failed to load liked posts"),
       }));
     }
   };
@@ -1058,14 +1051,14 @@ export default function ProfilePage() {
   if (!loadingProfile && !profile) {
     return (
       <div data-page-root className="max-w-[672px] w-full mx-auto py-6 space-y-6 page-fade">
-        <ErrorMessage message={error || "Не удалось загрузить профиль"} />
+        <ErrorMessage message={error || tr("Профиль жүктелмеді", "Не удалось загрузить профиль", "Failed to load profile")} />
         <div className="flex justify-center">
           <button
             type="button"
             onClick={fetchProfile}
             className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition"
           >
-            Повторить
+            {tr("Қайталау", "Повторить", "Retry")}
           </button>
         </div>
       </div>
@@ -1105,30 +1098,32 @@ export default function ProfilePage() {
                   {profile?.is_verified ? <VerifiedBadge /> : null}
                 </p>
                 <p className="text-white/60">@{profile?.username}</p>
-                <p className="text-white/50 text-sm">На сайте с {profile?.created_at ? formatDate(profile.created_at) : "--"}</p>
+                <p className="text-white/50 text-sm">
+                  {tr("Сайтта", "На сайте с", "On site since")} {profile?.created_at ? formatDate(profile.created_at) : "--"}
+                </p>
                 {profile?.bio ? (
                   <p className="text-white/70 text-sm">{profile.bio}</p>
                 ) : (
-                  <p className="text-white/40 text-sm">Нет описания</p>
+                  <p className="text-white/40 text-sm">{tr("Сипаттама жоқ", "Нет описания", "No bio")}</p>
                 )}
                 <div className="flex items-center gap-5 text-white/80 pt-1 text-sm">
                   <button
                     type="button"
                     onClick={() => setFollowListMode("followers")}
                     className="flex items-baseline gap-1 hover:text-white transition cursor-pointer"
-                    title="Посмотреть подписчиков"
+                    title={tr("Жазылушыларды көру", "Посмотреть подписчиков", "View followers")}
                   >
                     <span className="font-semibold text-white text-base">{followersCount}</span>
-                    <span className="text-white/60 hover:underline">Подписчики</span>
+                    <span className="text-white/60 hover:underline">{tr("Жазылушылар", "Подписчики", "Followers")}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setFollowListMode("following")}
                     className="flex items-baseline gap-1 hover:text-white transition cursor-pointer"
-                    title="Посмотреть подписки"
+                    title={tr("Жазылымдарды көру", "Посмотреть подписки", "View following")}
                   >
                     <span className="font-semibold text-white text-base">{followingCount}</span>
-                    <span className="text-white/60 hover:underline">Подписки</span>
+                    <span className="text-white/60 hover:underline">{tr("Жазылымдар", "Подписки", "Following")}</span>
                   </button>
                 </div>
               </div>
@@ -1139,13 +1134,13 @@ export default function ProfilePage() {
               className="rounded-full border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40 transition self-start"
               onClick={openEdit}
             >
-              Редактировать
+              {tr("Өңдеу", "Редактировать", "Edit")}
             </button>
             <button
               className="min-[871px]:hidden rounded-full border border-red-400/40 px-4 py-2 text-sm text-red-300 hover:border-red-300/70 hover:text-red-200 transition self-start"
               onClick={handleLogout}
             >
-              Выйти
+              {tr("Шығу", "Выйти", "Log out")}
             </button>
           </div>
           <SocialLinksOverlay
@@ -1161,13 +1156,13 @@ export default function ProfilePage() {
             className={`px-4 py-2 rounded-full text-sm font-semibold ${activeTab === "posts" ? "bg-white text-black" : "text-white/70 hover:text-white"}`}
             onClick={() => setActiveTab("posts")}
           >
-            Посты
+            {tr("Посттар", "Посты", "Posts")}
           </button>
           <button
             className={`px-4 py-2 rounded-full text-sm font-semibold ${activeTab === "liked" ? "bg-white text-black" : "text-white/70 hover:text-white"}`}
             onClick={() => setActiveTab("liked")}
           >
-            Понравившиеся
+            {tr("Ұнағандар", "Понравившиеся", "Liked")}
           </button>
         </div>
 
@@ -1213,7 +1208,7 @@ export default function ProfilePage() {
 
           {!postsLoading && postsToShow.length === 0 && (
             <div className="py-8 flex justify-center">
-              <p className="text-white/60 text-sm">Пока нет постов</p>
+              <p className="text-white/60 text-sm">{tr("Әзірге пост жоқ", "Пока нет постов", "No posts yet")}</p>
             </div>
           )}
 
@@ -1234,7 +1229,7 @@ export default function ProfilePage() {
                   <div className="flex items-center gap-3">
                     <Link
                       to={`/u/${p.username}`}
-                      aria-label={`Профиль ${p.full_name || p.username}`}
+                      aria-label={`${tr("Профиль", "Профиль", "Profile")} ${p.full_name || p.username}`}
                       className="relative w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-sm font-semibold hover:opacity-90"
                     >
                       <span aria-hidden>{p.full_name?.[0]?.toUpperCase() || p.username[0].toUpperCase()}</span>
@@ -1258,11 +1253,11 @@ export default function ProfilePage() {
                           to={`/u/${p.username}`}
                           className="text-white font-semibold leading-tight flex items-center gap-[3px] hover:underline"
                         >
-                          <span>{p.full_name || "Без имени"}</span>
+                          <span>{p.full_name || tr("Аты жоқ", "Без имени", "No name")}</span>
                           {p.is_verified ? <VerifiedBadge /> : null}
                         </Link>
                       </MentionPreview>
-                      <p className="text-sm text-white/60">{timeAgo(p.created_at)}</p>
+                      <p className="text-sm text-white/60">{formatTimeAgo(p.created_at, language)}</p>
                     </div>
                   </div>
                 </div>
@@ -1315,14 +1310,14 @@ export default function ProfilePage() {
         <div ref={sentinelRef} className="min-h-[1px] flex items-center justify-center text-white/60 text-sm">
           {activeTab === "posts"
             ? myPosts.loadingMore
-              ? "Загружаем..."
+              ? tr("Жүктелуде...", "Загружаем...", "Loading...")
               : myPosts.nextOffset !== null
-                ? "Прокрутите, чтобы загрузить ещё"
+                ? tr("Тағы жүктеу үшін төмен сырғытыңыз", "Прокрутите, чтобы загрузить ещё", "Scroll to load more")
                 : ""
             : likedPosts.loadingMore
-              ? "Загружаем..."
+              ? tr("Жүктелуде...", "Загружаем...", "Loading...")
               : likedPosts.nextOffset !== null
-                ? "Прокрутите, чтобы загрузить ещё"
+                ? tr("Тағы жүктеу үшін төмен сырғытыңыз", "Прокрутите, чтобы загрузить ещё", "Scroll to load more")
                 : ""}
         </div>
       </div>
@@ -1354,7 +1349,7 @@ export default function ProfilePage() {
                   <X className="w-5 h-5" />
                 </button>
                 <div className="px-7 pt-7 pb-4 shrink-0">
-                  <h3 className="text-lg font-semibold text-white">Настройки профиля</h3>
+                  <h3 className="text-lg font-semibold text-white">{tr("Профиль баптаулары", "Настройки профиля", "Profile settings")}</h3>
                   <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-1 grid grid-cols-2 gap-1">
                     <button
                       type="button"
@@ -1369,7 +1364,7 @@ export default function ProfilePage() {
                           : "text-white/70 hover:text-white"
                       }`}
                     >
-                      Оформление профиля
+                      {tr("Профильді баптау", "Оформление профиля", "Profile setup")}
                     </button>
                     <button
                       type="button"
@@ -1383,7 +1378,7 @@ export default function ProfilePage() {
                           : "text-white/70 hover:text-white"
                       }`}
                     >
-                      Поменять пароль
+                      {tr("Құпиясөзді өзгерту", "Поменять пароль", "Change password")}
                     </button>
                   </div>
                 </div>
@@ -1393,7 +1388,7 @@ export default function ProfilePage() {
                     <>
                   <div className="space-y-5">
                     <div className="space-y-2">
-                      <p className="text-sm text-white/60">Фон</p>
+                      <p className="text-sm text-white/60">{tr("Фон", "Фон", "Background")}</p>
                       <div className="relative overflow-visible">
                         <div className="relative h-36 rounded-xl overflow-hidden bg-gradient-to-r from-slate-800 via-slate-700 to-slate-900">
                           {bgPreview ? (
@@ -1410,7 +1405,7 @@ export default function ProfilePage() {
                             <button
                               className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
                               onClick={() => setDrawingTarget("background")}
-                              aria-label="Рисовать фон"
+                              aria-label={tr("Фонды салу", "Рисовать фон", "Draw background")}
                               disabled={saving}
                             >
                               <Paintbrush className="w-4 h-4" />
@@ -1418,7 +1413,7 @@ export default function ProfilePage() {
                             <button
                               className="w-8 h-8 rounded-full bg-black/60 text-white border border-white/20 hover:border-white/40 flex items-center justify-center"
                               onClick={() => bgInputRef.current?.click()}
-                              aria-label={bgPreview ? "Изменить фон" : "Добавить фон"}
+                              aria-label={bgPreview ? tr("Фонды өзгерту", "Изменить фон", "Change background") : tr("Фон қосу", "Добавить фон", "Add background")}
                               disabled={saving}
                             >
                               <Plus className="w-4 h-4" />
@@ -1456,7 +1451,7 @@ export default function ProfilePage() {
                               <button
                                 className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
                                 onClick={() => setDrawingTarget("avatar")}
-                                aria-label="Рисовать аватар"
+                                aria-label={tr("Аватар салу", "Рисовать аватар", "Draw avatar")}
                                 disabled={saving}
                               >
                                 <Paintbrush className="w-4 h-4" />
@@ -1464,7 +1459,7 @@ export default function ProfilePage() {
                               <button
                                 className="w-8 h-8 rounded-full bg-white text-black border border-white/40 hover:bg-white/90 flex items-center justify-center"
                                 onClick={() => avatarInputRef.current?.click()}
-                                aria-label={avatarPreview ? "Изменить аватар" : "Добавить аватар"}
+                                aria-label={avatarPreview ? tr("Аватарды өзгерту", "Изменить аватар", "Change avatar") : tr("Аватар қосу", "Добавить аватар", "Add avatar")}
                                 disabled={saving}
                               >
                                 <Plus className="w-4 h-4" />
@@ -1490,28 +1485,28 @@ export default function ProfilePage() {
 
                   <div className="space-y-4 mt-14 md:mt-16">
                     <div className="mt-0">
-                      <label className="block text-sm text-white/60 mb-1.5">Полное имя</label>
+                      <label className="block text-sm text-white/60 mb-1.5">{tr("Толық аты", "Полное имя", "Full name")}</label>
                       <input
                         value={form.full_name}
                         onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
                         className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                        placeholder="Ваше имя"
+                        placeholder={tr("Сіздің атыңыз", "Ваше имя", "Your name")}
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-white/60 mb-1.5">Описание</label>
+                      <label className="block text-sm text-white/60 mb-1.5">{tr("Сипаттама", "Описание", "Bio")}</label>
                       <textarea
                         value={form.bio}
                         onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
                         maxLength={240}
                         rows={3}
                         className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none resize-none"
-                        placeholder="Например, чем вы занимаетесь или что вам интересно"
+                        placeholder={tr("Мысалы, немен айналысасыз немесе не қызықтырады", "Например, чем вы занимаетесь или что вам интересно", "For example, what you do or what interests you")}
                       />
                       <p className="mt-1 text-xs text-white/40">{form.bio.length}/240</p>
                     </div>
                     <div className="space-y-2">
-                      <label className="block text-sm text-white/60">Социальные сети</label>
+                      <label className="block text-sm text-white/60">{tr("Әлеуметтік желілер", "Социальные сети", "Social links")}</label>
 
                       {socialLinks.length > 0 && (
                         <div className="space-y-3">
@@ -1575,8 +1570,8 @@ export default function ProfilePage() {
                                   });
                                 }}
                                 className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 grid place-items-center text-red-300 hover:text-red-200 transition"
-                                aria-label="Удалить"
-                                title="Удалить"
+                                aria-label={tr("Жою", "Удалить", "Delete")}
+                                title={tr("Жою", "Удалить", "Delete")}
                               >
                                 <Trash2 className="w-4 h-4" strokeWidth={1.7} />
                               </button>
@@ -1587,18 +1582,22 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-sm text-white/60">Telegram уведомления</label>
+                      <label className="block text-sm text-white/60">{tr("Telegram хабарламалары", "Telegram уведомления", "Telegram notifications")}</label>
                       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
                         {telegramLoading ? (
-                          <p className="text-sm text-white/60">Загрузка статуса...</p>
+                          <p className="text-sm text-white/60">{tr("Статус жүктелуде...", "Загрузка статуса...", "Loading status...")}</p>
                         ) : telegramStatus?.enabled === false ? (
                           <p className="text-sm text-white/60">
-                            Бот не настроен на сервере. Укажите `TELEGRAM_BOT_TOKEN` в `.env`.
+                            {tr(
+                              "Серверде бот бапталмаған. `.env` ішінде `TELEGRAM_BOT_TOKEN` орнатыңыз.",
+                              "Бот не настроен на сервере. Укажите `TELEGRAM_BOT_TOKEN` в `.env`.",
+                              "Bot is not configured on server. Set `TELEGRAM_BOT_TOKEN` in `.env`."
+                            )}
                           </p>
                         ) : telegramStatus?.connected ? (
                           <>
                             <p className="text-sm text-emerald-300">
-                              Подключено
+                              {tr("Қосылған", "Подключено", "Connected")}
                               {telegramStatus.telegram_username
                                 ? `: @${telegramStatus.telegram_username.replace(/^@+/, "")}`
                                 : ""}
@@ -1610,14 +1609,20 @@ export default function ProfilePage() {
                                 disabled={telegramActionLoading}
                                 className="rounded-full border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:border-white/40 transition disabled:opacity-60"
                               >
-                                {telegramActionLoading ? "Отключение..." : "Отключить"}
+                                {telegramActionLoading
+                                  ? tr("Ажыратылуда...", "Отключение...", "Disconnecting...")
+                                  : tr("Ажырату", "Отключить", "Disconnect")}
                               </button>
                             </div>
                           </>
                         ) : (
                           <>
                             <p className="text-sm text-white/70">
-                              Подключите Telegram, чтобы получать push о новых сообщениях в чатах.
+                              {tr(
+                                "Чаттағы жаңа хабарламалар туралы push алу үшін Telegram қосыңыз.",
+                                "Подключите Telegram, чтобы получать push о новых сообщениях в чатах.",
+                                "Connect Telegram to receive push alerts about new chat messages."
+                              )}
                             </p>
                             <button
                               type="button"
@@ -1626,14 +1631,18 @@ export default function ProfilePage() {
                               className="rounded-full border border-white/20 px-3 py-1.5 text-xs text-white/80 hover:border-white/40 transition disabled:opacity-60"
                             >
                               {telegramActionLoading
-                                ? "Открываем Telegram..."
+                                ? tr("Telegram ашылуда...", "Открываем Telegram...", "Opening Telegram...")
                                 : telegramAwaitingConfirm
-                                  ? "Ожидаем подтверждение..."
-                                  : "Подключить Telegram"}
+                                  ? tr("Растау күтілуде...", "Ожидаем подтверждение...", "Waiting for confirmation...")
+                                  : tr("Telegram қосу", "Подключить Telegram", "Connect Telegram")}
                             </button>
                             {telegramAwaitingConfirm && (
                               <p className="text-xs text-white/60">
-                                Нажмите Start в Telegram. После возврата статус обновится автоматически.
+                                {tr(
+                                  "Telegram ішінде Start басыңыз. Оралғаннан кейін статус автоматты жаңарады.",
+                                  "Нажмите Start в Telegram. После возврата статус обновится автоматически.",
+                                  "Tap Start in Telegram. Status will refresh automatically after you return."
+                                )}
                               </p>
                             )}
                           </>
@@ -1641,7 +1650,7 @@ export default function ProfilePage() {
 
                         {telegramConnect?.start_code && telegramStatus?.connected !== true && (
                           <div className="rounded-lg border border-white/10 bg-black/30 p-2.5 space-y-2">
-                            <p className="text-xs text-white/60">Код для бота (`/start код`):</p>
+                            <p className="text-xs text-white/60">{tr("Ботқа код (`/start код`):", "Код для бота (`/start код`):", "Code for bot (`/start code`):")}</p>
                             <div className="flex items-center gap-2">
                               <code className="flex-1 rounded bg-white/10 px-2 py-1 text-xs text-white break-all">
                                 {telegramConnect.start_code}
@@ -1651,7 +1660,7 @@ export default function ProfilePage() {
                                 onClick={() => void handleCopyTelegramCode()}
                                 className="rounded-full border border-white/20 px-2.5 py-1 text-xs text-white/80 hover:border-white/40 transition"
                               >
-                                {telegramCopyDone ? "Скопировано" : "Копировать"}
+                                {telegramCopyDone ? tr("Көшірілді", "Скопировано", "Copied") : tr("Көшіру", "Копировать", "Copy")}
                               </button>
                             </div>
                             {telegramConnect.deep_link && (
@@ -1661,7 +1670,7 @@ export default function ProfilePage() {
                                 rel="noreferrer"
                                 className="inline-flex items-center text-xs text-sky-200/90 hover:text-sky-100 underline underline-offset-2"
                               >
-                                Открыть бота повторно
+                                {tr("Ботты қайта ашу", "Открыть бота повторно", "Open bot again")}
                               </a>
                             )}
                           </div>
@@ -1674,7 +1683,7 @@ export default function ProfilePage() {
                   ) : (
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-sm text-white/60 mb-1.5">Текущий пароль</label>
+                        <label className="block text-sm text-white/60 mb-1.5">{tr("Қазіргі құпиясөз", "Текущий пароль", "Current password")}</label>
                         <input
                           type="password"
                           value={passwordForm.current_password}
@@ -1682,12 +1691,12 @@ export default function ProfilePage() {
                             setPasswordForm((prev) => ({ ...prev, current_password: e.target.value }))
                           }
                           className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                          placeholder="Введите текущий пароль"
+                          placeholder={tr("Қазіргі құпиясөзді енгізіңіз", "Введите текущий пароль", "Enter current password")}
                           autoComplete="current-password"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-white/60 mb-1.5">Новый пароль</label>
+                        <label className="block text-sm text-white/60 mb-1.5">{tr("Жаңа құпиясөз", "Новый пароль", "New password")}</label>
                         <input
                           type="password"
                           value={passwordForm.new_password}
@@ -1695,12 +1704,12 @@ export default function ProfilePage() {
                             setPasswordForm((prev) => ({ ...prev, new_password: e.target.value }))
                           }
                           className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                          placeholder="Минимум 8 символов"
+                          placeholder={tr("Кемінде 8 таңба", "Минимум 8 символов", "Minimum 8 characters")}
                           autoComplete="new-password"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm text-white/60 mb-1.5">Подтвердите новый пароль</label>
+                        <label className="block text-sm text-white/60 mb-1.5">{tr("Жаңа құпиясөзді растаңыз", "Подтвердите новый пароль", "Confirm new password")}</label>
                         <input
                           type="password"
                           value={passwordForm.confirm_password}
@@ -1708,12 +1717,16 @@ export default function ProfilePage() {
                             setPasswordForm((prev) => ({ ...prev, confirm_password: e.target.value }))
                           }
                           className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2.5 text-white focus:border-white/40 outline-none"
-                          placeholder="Повторите новый пароль"
+                          placeholder={tr("Жаңа құпиясөзді қайталаңыз", "Повторите новый пароль", "Repeat new password")}
                           autoComplete="new-password"
                         />
                       </div>
                       <p className="text-xs text-white/45">
-                        После смены пароля войдите заново на других устройствах.
+                        {tr(
+                          "Құпиясөзді ауыстырғаннан кейін басқа құрылғыларда қайта кіріңіз.",
+                          "После смены пароля войдите заново на других устройствах.",
+                          "After changing password, sign in again on other devices."
+                        )}
                       </p>
                     </div>
                   )}
@@ -1724,7 +1737,7 @@ export default function ProfilePage() {
                     <ErrorMessage message={saveError} />
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs text-white/50">
-                        {socialLinks.length >= 4 ? "Можно добавить не более 4 соцсетей" : ""}
+                        {socialLinks.length >= 4 ? tr("Ең көбі 4 әлеуметтік желі қосуға болады", "Можно добавить не более 4 соцсетей", "You can add up to 4 social links") : ""}
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -1739,7 +1752,7 @@ export default function ProfilePage() {
                           disabled={socialLinks.length >= 4 || availableSocialTypes.length === 0}
                           className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition disabled:opacity-50"
                         >
-                          Добавить соцсеть
+                          {tr("Әлеуметтік желі қосу", "Добавить соцсеть", "Add social link")}
                         </button>
                         <button
                           onClick={handleSave}
@@ -1752,7 +1765,7 @@ export default function ProfilePage() {
                           }
                           className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
                         >
-                          {saving ? "Сохранение..." : "Сохранить"}
+                          {saving ? tr("Сақталуда...", "Сохранение...", "Saving...") : tr("Сақтау", "Сохранить", "Save")}
                         </button>
                       </div>
                     </div>
@@ -1767,7 +1780,7 @@ export default function ProfilePage() {
                         onClick={closeEditModal}
                         className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition"
                       >
-                        Отмена
+                        {tr("Бас тарту", "Отмена", "Cancel")}
                       </button>
                       <button
                         type="button"
@@ -1775,7 +1788,7 @@ export default function ProfilePage() {
                         disabled={passwordSaving}
                         className="bg-white text-black rounded-full px-4 py-2 text-sm font-semibold hover:bg-white/90 disabled:opacity-60"
                       >
-                        {passwordSaving ? "Сохранение..." : "Сменить пароль"}
+                        {passwordSaving ? tr("Сақталуда...", "Сохранение...", "Saving...") : tr("Құпиясөзді ауыстыру", "Сменить пароль", "Change password")}
                       </button>
                     </div>
                   </div>
@@ -1796,7 +1809,7 @@ export default function ProfilePage() {
                       onMouseDown={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-white font-semibold">Добавить соцсеть</p>
+                        <p className="text-white font-semibold">{tr("Әлеуметтік желі қосу", "Добавить соцсеть", "Add social link")}</p>
                         <button
                           type="button"
                           className="text-white/60 hover:text-white"
@@ -1805,7 +1818,7 @@ export default function ProfilePage() {
                             setSocialDraftError("");
                             setSocialDraftUsername("");
                           }}
-                          aria-label="Закрыть"
+                          aria-label={tr("Жабу", "Закрыть", "Close")}
                         >
                           <X className="w-5 h-5" />
                         </button>
@@ -1854,7 +1867,7 @@ export default function ProfilePage() {
                           }}
                           className="rounded-full border border-white/20 px-3 py-2 text-sm text-white/80 hover:border-white/40 transition"
                         >
-                          Отмена
+                          {tr("Бас тарту", "Отмена", "Cancel")}
                         </button>
                         <button
                           type="button"
@@ -1877,7 +1890,7 @@ export default function ProfilePage() {
                           }}
                           className="rounded-full bg-white text-black px-3 py-2 text-sm font-semibold hover:bg-white/90 transition"
                         >
-                          Добавить
+                          {tr("Қосу", "Добавить", "Add")}
                         </button>
                       </div>
                     </div>
@@ -1891,7 +1904,9 @@ export default function ProfilePage() {
 
       {drawingTarget && (
         <DrawingModal
-          title={drawingTarget === "background" ? "Рисование фона" : "Рисование аватара"}
+          title={drawingTarget === "background"
+            ? tr("Фонды салу", "Рисование фона", "Draw background")
+            : tr("Аватар салу", "Рисование аватара", "Draw avatar")}
           canvasWidth={drawingTarget === "background" ? Math.max(600, Math.round(500 * bgCropRatio)) : 1024}
           canvasHeight={drawingTarget === "background" ? 500 : 1024}
           canvasContainerClassName={
@@ -1926,7 +1941,9 @@ export default function ProfilePage() {
             >
               <FabricImageEditor
                 variant="cropOnly"
-                title={cropTarget.target === "avatar" ? "Кадрирование аватара" : "Кадрирование фона"}
+                title={cropTarget.target === "avatar"
+                  ? tr("Аватарды қию", "Кадрирование аватара", "Crop avatar")
+                  : tr("Фонды қию", "Кадрирование фона", "Crop background")}
                 src={cropTarget.srcUrl}
                 fileName={cropTarget.file.name}
                 fixedCropRatio={cropTarget.target === "avatar" ? 1 : bgCropRatio}

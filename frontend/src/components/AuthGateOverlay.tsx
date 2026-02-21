@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useI18n } from "../i18n";
 
 type Props = {
   children: ReactNode;
@@ -13,12 +14,14 @@ type Props = {
 
 export function AuthGateOverlay({
   children,
-  title = "Сначала авторизуйся",
-  message = "Чтобы продолжить, нужно войти в аккаунт.",
-  ctaLabel = "Войти",
+  title,
+  message,
+  ctaLabel,
   mode = "local",
   className = "",
 }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const navigate = useNavigate();
   // Keep page-level gate below navigation (sidebar z-30, mobile bottom nav z-[120])
   // so users can still navigate back to feed without being trapped by the overlay.
@@ -31,14 +34,16 @@ export function AuthGateOverlay({
         <div className="absolute inset-0 bg-black/40" />
         <div className="relative z-10 mx-4 w-full max-w-sm rounded-2xl border border-white/10 bg-black/80 p-5 text-center shadow-2xl backdrop-blur">
           <Lock className="mx-auto mb-3 h-6 w-6 text-white/80" strokeWidth={1.7} />
-          <p className="text-white font-semibold">{title}</p>
-          <p className="mt-1 text-sm text-white/60">{message}</p>
+          <p className="text-white font-semibold">{title || tr("Алдымен авторизациядан өтіңіз", "Сначала авторизуйся", "Please sign in first")}</p>
+          <p className="mt-1 text-sm text-white/60">
+            {message || tr("Жалғастыру үшін аккаунтқа кіріңіз.", "Чтобы продолжить, нужно войти в аккаунт.", "Sign in to continue.")}
+          </p>
           <button
             type="button"
             onClick={() => navigate("/login")}
             className="mt-4 w-full rounded-full border border-white/10 py-2 text-sm text-white hover:bg-white/5"
           >
-            {ctaLabel}
+            {ctaLabel || tr("Кіру", "Войти", "Log in")}
           </button>
         </div>
       </div>

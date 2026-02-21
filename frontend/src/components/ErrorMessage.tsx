@@ -1,4 +1,5 @@
 import { AlertTriangle, X } from "lucide-react";
+import { useI18n } from "../i18n";
 
 type Props = {
   message?: string | null;
@@ -7,6 +8,8 @@ type Props = {
 };
 
 export function ErrorMessage({ message, onClose, className = "" }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   if (!message) return null;
 
   return (
@@ -25,7 +28,7 @@ export function ErrorMessage({ message, onClose, className = "" }: Props) {
           type="button"
           className="text-red-200/70 hover:text-red-200"
           onClick={onClose}
-          aria-label="Закрыть"
+          aria-label={tr("Жабу", "Закрыть", "Close")}
         >
           <X className="w-4 h-4" />
         </button>
@@ -33,4 +36,3 @@ export function ErrorMessage({ message, onClose, className = "" }: Props) {
     </div>
   );
 }
-

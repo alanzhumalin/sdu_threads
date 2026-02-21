@@ -11,6 +11,7 @@ import {
   Redo2,
   Trash2,
 } from "lucide-react";
+import { useI18n } from "../i18n";
 
 type Tool = "brush" | "eraser" | "line" | "rect" | "circle";
 
@@ -37,13 +38,16 @@ function clampHistory<T>(arr: T[]) {
 export function DrawingModal({
   onClose,
   onSave,
-  title = "Рисование",
+  title,
   canvasWidth = 960,
   canvasHeight = 540,
   canvasContainerClassName = "",
   canvasContainerStyle,
   canvasClassName = "w-full h-[328px] md:h-[428px] rounded-xl touch-none select-none",
 }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
+  const modalTitle = title || tr("Сурет салу", "Рисование", "Drawing");
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [tool, setTool] = useState<Tool>("brush");
   const [size, setSize] = useState<number>(SIZES[1]);
@@ -182,19 +186,19 @@ export function DrawingModal({
   const toolLabel = useMemo(() => {
     switch (tool) {
       case "brush":
-        return "Кисть";
+        return tr("Қылқалам", "Кисть", "Brush");
       case "eraser":
-        return "Ластик";
+        return tr("Өшіргіш", "Ластик", "Eraser");
       case "line":
-        return "Линия";
+        return tr("Сызық", "Линия", "Line");
       case "rect":
-        return "Прямоугольник";
+        return tr("Тікбұрыш", "Прямоугольник", "Rectangle");
       case "circle":
-        return "Круг";
+        return tr("Шеңбер", "Круг", "Circle");
       default:
-        return "Инструмент";
+        return tr("Құрал", "Инструмент", "Tool");
     }
-  }, [tool]);
+  }, [tool, tr]);
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -277,14 +281,14 @@ export function DrawingModal({
         canvas.toBlob((b) => resolve(b), "image/png")
       );
       if (!blob) {
-        setError("Не удалось сохранить рисунок");
+        setError(tr("Суретті сақтау мүмкін болмады", "Не удалось сохранить рисунок", "Failed to save drawing"));
         return;
       }
       const name = `drawing-${Date.now()}.png`;
       const file = new File([blob], name, { type: "image/png" });
       onSave(file);
     } catch {
-      setError("Не удалось сохранить рисунок");
+      setError(tr("Суретті сақтау мүмкін болмады", "Не удалось сохранить рисунок", "Failed to save drawing"));
     } finally {
       setSaving(false);
     }
@@ -324,7 +328,7 @@ export function DrawingModal({
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="space-y-0.5">
-            <p className="text-white font-semibold">{title}</p>
+            <p className="text-white font-semibold">{modalTitle}</p>
             <p className="text-white/50 text-xs">{toolLabel}</p>
           </div>
           <button type="button" onClick={onClose} className="text-white/60 hover:text-white">
@@ -334,19 +338,19 @@ export function DrawingModal({
 
         <div className="p-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <ToolButton t="brush" title="Кисть">
+            <ToolButton t="brush" title={tr("Қылқалам", "Кисть", "Brush")}>
               <Paintbrush className="w-5 h-5" strokeWidth={1.7} />
             </ToolButton>
-            <ToolButton t="eraser" title="Ластик">
+            <ToolButton t="eraser" title={tr("Өшіргіш", "Ластик", "Eraser")}>
               <Eraser className="w-5 h-5" strokeWidth={1.7} />
             </ToolButton>
-            <ToolButton t="line" title="Линия">
+            <ToolButton t="line" title={tr("Сызық", "Линия", "Line")}>
               <Minus className="w-5 h-5" strokeWidth={1.7} />
             </ToolButton>
-            <ToolButton t="rect" title="Прямоугольник">
+            <ToolButton t="rect" title={tr("Тікбұрыш", "Прямоугольник", "Rectangle")}>
               <Square className="w-5 h-5" strokeWidth={1.7} />
             </ToolButton>
-            <ToolButton t="circle" title="Круг">
+            <ToolButton t="circle" title={tr("Шеңбер", "Круг", "Circle")}>
               <Circle className="w-5 h-5" strokeWidth={1.7} />
             </ToolButton>
 
@@ -369,7 +373,7 @@ export function DrawingModal({
               </button>
               <button
                 type="button"
-                title="Очистить"
+                title={tr("Тазарту", "Очистить", "Clear")}
                 onClick={clear}
                 className="nav-icon bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:border-white/25"
               >
@@ -380,7 +384,7 @@ export function DrawingModal({
 
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-white/50 text-xs">Размер</span>
+              <span className="text-white/50 text-xs">{tr("Өлшем", "Размер", "Size")}</span>
               <div className="flex items-center gap-2">
                 {SIZES.map((s) => (
                   <button
@@ -404,7 +408,7 @@ export function DrawingModal({
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-white/50 text-xs">Цвет</span>
+              <span className="text-white/50 text-xs">{tr("Түс", "Цвет", "Color")}</span>
               <div className="flex items-center gap-2 flex-wrap">
                 {COLORS.slice(0, 7).map((c) => (
                   <button
@@ -425,7 +429,7 @@ export function DrawingModal({
                   value={color}
                   onChange={(e) => setColor(e.target.value)}
                   className="w-9 h-9 p-0 rounded-full border border-white/10 bg-white/5 overflow-hidden cursor-pointer"
-                  title="Выбрать цвет"
+                  title={tr("Түсті таңдау", "Выбрать цвет", "Pick color")}
                 />
               </div>
             </div>
@@ -456,7 +460,7 @@ export function DrawingModal({
               onClick={onClose}
               disabled={saving}
             >
-              Отмена
+              {tr("Бас тарту", "Отмена", "Cancel")}
             </button>
             <button
               type="button"
@@ -464,7 +468,7 @@ export function DrawingModal({
               onClick={save}
               disabled={saving}
             >
-              {saving ? "Сохраняем..." : "Сохранить"}
+              {saving ? tr("Сақталуда...", "Сохраняем...", "Saving...") : tr("Сақтау", "Сохранить", "Save")}
             </button>
           </div>
         </div>

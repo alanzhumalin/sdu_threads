@@ -83,6 +83,13 @@ WITH n AS (
     WHERE f.followee_id = ?
 
     UNION ALL
+    SELECT p.id AS row_id, 'new_post' AS type, p.user_id AS actor_id, p.id AS post_id, NULL::uuid AS comment_id,
+           p.content AS post_content, p.media_url AS post_media_url, NULL::text AS comment_body, p.created_at
+    FROM posts p
+    JOIN follows f ON f.followee_id = p.user_id
+    WHERE f.follower_id = ? AND p.user_id <> ? AND p.created_at >= f.created_at
+
+    UNION ALL
     SELECT p.id AS row_id, 'mention_post' AS type, p.user_id AS actor_id, p.id AS post_id, NULL::uuid AS comment_id,
            p.content AS post_content, p.media_url AS post_media_url, NULL::text AS comment_body, p.created_at
     FROM posts p
@@ -119,7 +126,8 @@ LIMIT ? OFFSET ?`
 		q,
 		userID, userID, // likes
 		userID, userID, // comments
-		userID,          // follows
+		userID,         // follows
+		userID, userID, // new posts by followees
 		pattern, userID, // mention posts
 		pattern, userID, userID, // mention comments excluding direct replies already captured
 		userID, userID, // reply to my comment
@@ -195,6 +203,12 @@ WITH n AS (
     WHERE f.followee_id = ?
 
     UNION ALL
+    SELECT p.id AS row_id, 'new_post' AS type, p.user_id AS actor_id, p.id AS post_id, NULL::uuid AS comment_id
+    FROM posts p
+    JOIN follows f ON f.followee_id = p.user_id
+    WHERE f.follower_id = ? AND p.user_id <> ? AND p.created_at >= f.created_at
+
+    UNION ALL
     SELECT p.id AS row_id, 'mention_post' AS type, p.user_id AS actor_id, p.id AS post_id, NULL::uuid AS comment_id
     FROM posts p
     WHERE p.content ILIKE ? AND p.user_id <> ?
@@ -221,7 +235,8 @@ ON CONFLICT DO NOTHING;`
 		q,
 		userID, userID, // likes
 		userID, userID, // comments
-		userID,          // follows
+		userID,         // follows
+		userID, userID, // new posts by followees
 		pattern, userID, // mention posts
 		pattern, userID, userID, // mention comments
 		userID, userID, // reply to my comment
@@ -257,6 +272,12 @@ WITH n AS (
     WHERE f.followee_id = ?
 
     UNION ALL
+    SELECT CONCAT('new_post', ':', p.id) AS nid, p.created_at
+    FROM posts p
+    JOIN follows f ON f.followee_id = p.user_id
+    WHERE f.follower_id = ? AND p.user_id <> ? AND p.created_at >= f.created_at
+
+    UNION ALL
     SELECT CONCAT('mention_post', ':', p.id) AS nid, p.created_at
     FROM posts p
     WHERE p.content ILIKE ? AND p.user_id <> ?
@@ -283,7 +304,8 @@ WHERE r.notification_id IS NULL;`
 		q,
 		userID, userID, // likes
 		userID, userID, // comments
-		userID,          // follows
+		userID,         // follows
+		userID, userID, // new posts by followees
 		pattern, userID, // mention posts
 		pattern, userID, userID, // mention comments
 		userID, userID, // replies

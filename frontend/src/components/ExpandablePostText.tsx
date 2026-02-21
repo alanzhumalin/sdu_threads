@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { useI18n } from "../i18n";
+
 type Props = {
   text: string;
   renderText: (text: string) => ReactNode;
@@ -15,6 +17,7 @@ export function ExpandablePostText({
   collapsedLines = 6,
   collapseAtChars = 340,
 }: Props) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
@@ -28,19 +31,28 @@ export function ExpandablePostText({
 
   const collapseClass =
     !expanded && shouldCollapse
-      ? `[display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:${collapsedLines}] overflow-hidden`
+      ? "[display:-webkit-box] [-webkit-box-orient:vertical] overflow-hidden"
       : "";
+
+  const collapseStyle =
+    !expanded && shouldCollapse
+      ? ({
+          WebkitLineClamp: collapsedLines,
+        } as const)
+      : undefined;
 
   return (
     <div className="mt-3">
-      <div className={`${className ?? ""} ${collapseClass}`.trim()}>{renderText(text)}</div>
+      <div className={`${className ?? ""} ${collapseClass}`.trim()} style={collapseStyle}>
+        {renderText(text)}
+      </div>
       {shouldCollapse ? (
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
           className="mt-2 text-sm font-medium text-white/70 hover:text-white transition"
         >
-          {expanded ? "Скрыть" : "Показать ещё"}
+          {expanded ? t("post.show_less") : t("post.show_more")}
         </button>
       ) : null}
     </div>

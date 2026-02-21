@@ -117,6 +117,7 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `TELEGRAM_BOT_POLL_TIMEOUT_SEC` (long-poll timeout для `getUpdates`)
   - `TELEGRAM_NOTIFY_PREVIEW_RUNES` (макс. длина превью текста в push)
   - `APP_PUBLIC_URL` (публичный URL сайта для ссылки “Открыть чат” внутри Telegram)
+- Translation (временно отключено): endpoint `/api/translate` и UI-кнопка перевода выключены.
 
 ## Логирование и rate limit
 - Каждый запрос логируется (method, path, status, длительность, ip, user-agent, user_id если есть токен).

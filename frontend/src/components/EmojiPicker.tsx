@@ -1,8 +1,9 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "../i18n";
 
 type EmojiGroup = {
-  label: string;
+  key: "faces" | "gestures" | "objects";
   items: string[];
 };
 
@@ -26,7 +27,7 @@ const ESTIMATED_TOTAL_HEIGHT = 338;
 
 const EMOJI_GROUPS: EmojiGroup[] = [
   {
-    label: "Лица",
+    key: "faces",
     items: [
       "😀",
       "😁",
@@ -51,7 +52,7 @@ const EMOJI_GROUPS: EmojiGroup[] = [
     ],
   },
   {
-    label: "Жесты и реакции",
+    key: "gestures",
     items: [
       "👍",
       "👎",
@@ -76,7 +77,7 @@ const EMOJI_GROUPS: EmojiGroup[] = [
     ],
   },
   {
-    label: "Объекты",
+    key: "objects",
     items: [
       "📌",
       "📣",
@@ -129,8 +130,15 @@ const getPickerPosition = (anchorRect: DOMRect): PickerPosition => {
 };
 
 export function EmojiPicker({ open, anchorRef, onClose, onSelect }: Props) {
+  const { pick } = useI18n();
+  const tr = (kk: string, ru: string, en: string) => pick({ kk, ru, en });
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<PickerPosition | null>(null);
+  const groupLabel = (key: EmojiGroup["key"]) => {
+    if (key === "faces") return tr("Жүздер", "Лица", "Faces");
+    if (key === "gestures") return tr("Жесттер", "Жесты и реакции", "Gestures");
+    return tr("Нысандар", "Объекты", "Objects");
+  };
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -186,32 +194,32 @@ export function EmojiPicker({ open, anchorRef, onClose, onSelect }: Props) {
         width: position.width,
       }}
       role="dialog"
-      aria-label="Выбор эмодзи"
+      aria-label={tr("Эмодзи таңдау", "Выбор эмодзи", "Emoji picker")}
     >
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-        <span className="text-sm font-semibold text-white/85">Эмодзи</span>
+        <span className="text-sm font-semibold text-white/85">{tr("Эмодзи", "Эмодзи", "Emoji")}</span>
         <button
           type="button"
           onClick={onClose}
           className="rounded-full border border-white/15 px-2 py-0.5 text-xs text-white/60 hover:text-white hover:border-white/30"
-          aria-label="Закрыть список эмодзи"
+          aria-label={tr("Эмодзи тізімін жабу", "Закрыть список эмодзи", "Close emoji list")}
         >
-          Закрыть
+          {tr("Жабу", "Закрыть", "Close")}
         </button>
       </div>
       <div className="space-y-3 overflow-y-auto px-3 py-3 scrollbar-hide" style={{ maxHeight: position.listMaxHeight }}>
         {EMOJI_GROUPS.map((group) => (
-          <section key={group.label} className="space-y-1.5">
-            <p className="text-[11px] uppercase tracking-wide text-white/45">{group.label}</p>
+          <section key={group.key} className="space-y-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-white/45">{groupLabel(group.key)}</p>
             <div className="grid grid-cols-7 gap-1.5 sm:grid-cols-8">
               {group.items.map((emoji) => (
                 <button
                   type="button"
-                  key={`${group.label}-${emoji}`}
+                  key={`${group.key}-${emoji}`}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onSelect(emoji)}
                   className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 bg-black/25 text-[20px] leading-none transition hover:border-white/25 hover:bg-white/10 sm:h-10 sm:w-10"
-                  aria-label={`Вставить ${emoji}`}
+                  aria-label={tr(`Қою ${emoji}`, `Вставить ${emoji}`, `Insert ${emoji}`)}
                 >
                   {emoji}
                 </button>

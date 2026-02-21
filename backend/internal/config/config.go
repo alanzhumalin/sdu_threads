@@ -55,6 +55,13 @@ type Config struct {
 	TelegramBotPollTimeoutSec    int
 	TelegramNotifyPreviewRunes   int
 	AppPublicURL                 string
+
+	// Translation (LibreTranslate-backed).
+	TranslationEnabled     bool
+	TranslationLibreURL    string
+	TranslationLibreAPIKey string
+	TranslationTimeoutMS   int
+	TranslationMaxChars    int
 }
 
 func Load() Config {
@@ -103,6 +110,12 @@ func Load() Config {
 		TelegramBotPollTimeoutSec:    getEnvInt("TELEGRAM_BOT_POLL_TIMEOUT_SEC", 45),
 		TelegramNotifyPreviewRunes:   getEnvInt("TELEGRAM_NOTIFY_PREVIEW_RUNES", 180),
 		AppPublicURL:                 getEnv("APP_PUBLIC_URL", ""),
+
+		TranslationEnabled:     getEnvBool("TRANSLATION_ENABLED", false),
+		TranslationLibreURL:    getEnv("TRANSLATION_LIBRE_URL", "http://libretranslate:5000"),
+		TranslationLibreAPIKey: getEnv("TRANSLATION_LIBRE_API_KEY", ""),
+		TranslationTimeoutMS:   getEnvInt("TRANSLATION_TIMEOUT_MS", 12000),
+		TranslationMaxChars:    getEnvInt("TRANSLATION_MAX_CHARS", 4000),
 	}
 }
 
