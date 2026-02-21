@@ -14,6 +14,7 @@ import { MusicClipEditor } from "./MusicClipEditor";
 import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
 import { insertTextAtSelection } from "../utils/textarea";
 import {
+  getPostContainerColorClass,
   normalizePostContainerColor,
   POST_CONTAINER_COLOR_OPTIONS,
 } from "../utils/postColors";
@@ -1145,11 +1146,13 @@ export default function PostComposer({ onCreated }: Props) {
   const hasMusicPending = music?.uploadStatus === "uploading";
   const hasMusicError = music?.uploadStatus === "error";
   const musicPreviewSrc = music ? (music.localPreviewUrl || music.audioUrl || "") : "";
+  const composerColorClass =
+    isVerifiedUser && containerColor ? getPostContainerColorClass(containerColor) : "";
 
   return (
     <form
       onSubmit={submit}
-      className="card p-4 md:p-4 space-y-3"
+      className={`card p-4 md:p-4 space-y-3 transition-colors ${composerColorClass}`}
     >
       <div className="flex items-center justify-between text-sm text-white/70">
         <div className="flex items-center gap-2">
