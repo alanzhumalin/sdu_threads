@@ -16,18 +16,28 @@ func NewFollowService(f *repository.FollowRepository, u *repository.UserReposito
 	return &FollowService{follows: f, users: u}
 }
 
-func (s *FollowService) Follow(ctx context.Context, followerID, followeeID string) error {
+func (s *FollowService) Follow(ctx context.Context, followerID, followeeID string) (bool, error) {
 	if followerID == "" || followeeID == "" {
-		return errors.New("user ids required")
+		return false, errors.New("user ids required")
 	}
 	if followerID == followeeID {
-		return errors.New("cannot follow yourself")
+		return false, errors.New("cannot follow yourself")
 	}
 	// ensure target exists
 	if _, err := s.users.GetByID(ctx, followeeID); err != nil {
-		return err
+		return false, err
 	}
-	return s.follows.Follow(ctx, followerID, followeeID)
+	alreadyFollowing, err := s.follows.IsFollowing(ctx, followerID, followeeID)
+	if err != nil {
+		return false, err
+	}
+	if alreadyFollowing {
+		return false, nil
+	}
+	if err := s.follows.Follow(ctx, followerID, followeeID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *FollowService) Unfollow(ctx context.Context, followerID, followeeID string) error {

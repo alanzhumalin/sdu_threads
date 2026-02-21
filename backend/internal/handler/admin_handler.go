@@ -178,14 +178,15 @@ func (h *AdminHandler) usersList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(items))
 	for _, u := range items {
 		out = append(out, map[string]any{
-			"id":          u.ID,
-			"email":       u.Email,
-			"username":    u.Username,
-			"full_name":   u.FullName,
-			"is_verified": u.IsVerified,
-			"avatar_url":  u.AvatarURL,
-			"role":        u.Role,
-			"created_at":  u.CreatedAt.Format(time.RFC3339),
+			"id":            u.ID,
+			"email":         u.Email,
+			"username":      u.Username,
+			"full_name":     u.FullName,
+			"is_verified":   u.IsVerified,
+			"is_root_admin": u.IsRootAdmin,
+			"avatar_url":    u.AvatarURL,
+			"role":          u.Role,
+			"created_at":    u.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -202,6 +203,32 @@ func (h *AdminHandler) resolveUser(ctx context.Context, idOrUsername string) (*m
 		return u, nil
 	}
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (h *AdminHandler) deleteUserAndRelatedDataTx(ctx context.Context, tx *gorm.DB, userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return gorm.ErrRecordNotFound
+	}
+
+	// Explicitly remove direct chats where the target user participated.
+	// This also cascades messages/message_attachments/chat_user_settings for those chats.
+	if err := tx.WithContext(ctx).Exec(
+		`DELETE FROM chats WHERE id IN (SELECT chat_id FROM chat_participants WHERE user_id = ?)`,
+		userID,
+	).Error; err != nil {
+		return err
+	}
+
+	// Then remove the user; the rest of related records are cleaned by FK cascades.
+	res := tx.WithContext(ctx).Delete(&models.User{}, "id = ?", userID)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
@@ -240,26 +267,81 @@ func (h *AdminHandler) usersDynamic(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodDelete {
-			// Root admin is protected from deletion (even by self/root).
-			if target.IsRootAdmin {
-				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "PROTECTED_USER", Message: "cannot delete root admin"})
+			var req struct {
+				TransferRootTo string `json:"transfer_root_to"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
 				return
 			}
-			// Avoid deleting yourself by accident.
+			transferRootTo := strings.TrimSpace(req.TransferRootTo)
+
+			// Root admin deletion is allowed only with explicit transfer to another account.
+			if target.IsRootAdmin {
+				if transferRootTo == "" {
+					writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+						Code:    "ROOT_TRANSFER_REQUIRED",
+						Message: "root admin deletion requires transfer_root_to",
+					})
+					return
+				}
+				successor, err := h.resolveUser(r.Context(), transferRootTo)
+				if err != nil {
+					writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+						Code:    "INVALID_ROOT_TRANSFER_TARGET",
+						Message: "transfer_root_to user not found",
+					})
+					return
+				}
+				if successor.ID == target.ID {
+					writeErrorPayload(w, http.StatusBadRequest, errorPayload{
+						Code:    "INVALID_ROOT_TRANSFER_TARGET",
+						Message: "transfer_root_to must point to another user",
+					})
+					return
+				}
+
+				err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+					updates := map[string]any{"is_root_admin": true}
+					if strings.ToLower(strings.TrimSpace(successor.Role)) != "admin" {
+						updates["role"] = "admin"
+					}
+					if err := tx.Model(&models.User{}).Where("id = ?", successor.ID).Updates(updates).Error; err != nil {
+						return err
+					}
+					return h.deleteUserAndRelatedDataTx(r.Context(), tx, target.ID)
+				})
+				if err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						writeError(w, http.StatusNotFound, "not found")
+						return
+					}
+					writeError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status":                 "deleted",
+					"root_transferred_to":    successor.Username,
+					"root_transferred_to_id": successor.ID,
+				})
+				return
+			}
+
+			// Avoid deleting yourself by accident for non-root users.
 			if target.ID == reqUser.ID {
 				writeErrorPayload(w, http.StatusForbidden, errorPayload{Code: "PROTECTED_USER", Message: "cannot delete yourself"})
 				return
 			}
 
-			// Hard-delete user. DB constraints are configured with ON DELETE CASCADE,
-			// so posts/comments/likes/follows/etc will be removed automatically.
-			res := h.db.WithContext(r.Context()).Delete(&models.User{}, "id = ?", target.ID)
-			if res.Error != nil {
-				writeError(w, http.StatusInternalServerError, res.Error.Error())
-				return
-			}
-			if res.RowsAffected == 0 {
-				writeError(w, http.StatusNotFound, "not found")
+			err = h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+				return h.deleteUserAndRelatedDataTx(r.Context(), tx, target.ID)
+			})
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					writeError(w, http.StatusNotFound, "not found")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})

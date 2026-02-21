@@ -58,6 +58,16 @@ type TelegramNewPostNotification struct {
 	PostPreview     string
 }
 
+type TelegramSiteNotification struct {
+	RecipientUserID string
+	Type            string
+	PostID          string
+	ActorFullName   string
+	ActorUsername   string
+	PostPreview     string
+	CommentPreview  string
+}
+
 type telegramURLButton struct {
 	Text string
 	URL  string
@@ -327,6 +337,87 @@ func (s *TelegramService) NotifyNewPost(ctx context.Context, req TelegramNewPost
 	return s.sendMessage(ctx, link.TelegramChatID, text)
 }
 
+func (s *TelegramService) NotifySiteNotification(ctx context.Context, req TelegramSiteNotification) error {
+	if !s.Enabled() {
+		return nil
+	}
+	recipientID := strings.TrimSpace(req.RecipientUserID)
+	if recipientID == "" {
+		return nil
+	}
+	link, err := s.repo.GetLinkByUserID(ctx, recipientID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !link.Enabled || link.TelegramChatID == 0 {
+		return nil
+	}
+
+	actor := strings.TrimSpace(req.ActorFullName)
+	if actor == "" {
+		username := strings.TrimSpace(req.ActorUsername)
+		if username != "" {
+			actor = "@" + strings.TrimPrefix(username, "@")
+		} else {
+			actor = "Пользователь"
+		}
+	}
+	postPreview := truncateRunes(strings.TrimSpace(req.PostPreview), s.notifyTextMaxRunes)
+	commentPreview := truncateRunes(strings.TrimSpace(req.CommentPreview), s.notifyTextMaxRunes)
+
+	var text string
+	switch strings.TrimSpace(req.Type) {
+	case "like":
+		text = fmt.Sprintf("❤️ %s лайкнул(а) ваш пост", actor)
+		if postPreview != "" {
+			text += "\n\n" + postPreview
+		}
+	case "like_comment":
+		text = fmt.Sprintf("❤️ %s лайкнул(а) ваш комментарий", actor)
+		if commentPreview != "" {
+			text += "\n\n" + commentPreview
+		}
+	case "comment":
+		text = fmt.Sprintf("💬 %s прокомментировал(а) ваш пост", actor)
+		if commentPreview != "" {
+			text += "\n\n" + commentPreview
+		}
+	case "follow":
+		text = fmt.Sprintf("👤 %s подписался(лась) на вас", actor)
+	case "mention_post":
+		text = fmt.Sprintf("#️⃣ %s упомянул(а) вас в посте", actor)
+		if postPreview != "" {
+			text += "\n\n" + postPreview
+		}
+	case "mention_comment":
+		text = fmt.Sprintf("#️⃣ %s упомянул(а) вас в комментарии", actor)
+		if commentPreview != "" {
+			text += "\n\n" + commentPreview
+		}
+	case "reply_comment":
+		text = fmt.Sprintf("↩️ %s ответил(а) на ваш комментарий", actor)
+		if commentPreview != "" {
+			text += "\n\n" + commentPreview
+		}
+	default:
+		text = fmt.Sprintf("🔔 Новое уведомление от %s", actor)
+	}
+
+	var buttons []telegramURLButton
+	if strings.TrimSpace(req.PostID) != "" {
+		buttons = s.buildAppPostButtons(req.PostID)
+	} else {
+		buttons = s.buildAppNotificationsButtons()
+	}
+	if len(buttons) > 0 {
+		return s.sendMessageWithURLButtons(ctx, link.TelegramChatID, text, buttons)
+	}
+	return s.sendMessage(ctx, link.TelegramChatID, text)
+}
+
 func (s *TelegramService) pollLoop(ctx context.Context) {
 	if !s.Enabled() {
 		return
@@ -521,6 +612,10 @@ func (s *TelegramService) buildAppPostButtons(postID string) []telegramURLButton
 		return buildAppURLButtons(s.appPublicURL, "/", "Открыть ленту")
 	}
 	return buildAppURLButtons(s.appPublicURL, "/p/"+url.PathEscape(postID), "Открыть пост")
+}
+
+func (s *TelegramService) buildAppNotificationsButtons() []telegramURLButton {
+	return buildAppURLButtons(s.appPublicURL, "/notifications", "Открыть уведомления")
 }
 
 func (s *TelegramService) callTelegram(ctx context.Context, method string, req any, out any) error {

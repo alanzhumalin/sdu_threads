@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -16,15 +18,16 @@ import (
 )
 
 type FollowHandler struct {
-	follows *service.FollowService
-	profile *service.ProfileService
-	posts   *service.PostService
-	jwt     *auth.JWTManager
-	cache   *cache.QueryCache
+	follows  *service.FollowService
+	profile  *service.ProfileService
+	posts    *service.PostService
+	telegram *service.TelegramService
+	jwt      *auth.JWTManager
+	cache    *cache.QueryCache
 }
 
-func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts *service.PostService, jwt *auth.JWTManager, c *cache.QueryCache) *FollowHandler {
-	return &FollowHandler{follows: f, profile: p, posts: posts, jwt: jwt, cache: c}
+func NewFollowHandler(f *service.FollowService, p *service.ProfileService, posts *service.PostService, tg *service.TelegramService, jwt *auth.JWTManager, c *cache.QueryCache) *FollowHandler {
+	return &FollowHandler{follows: f, profile: p, posts: posts, telegram: tg, jwt: jwt, cache: c}
 }
 
 func (h *FollowHandler) Register(mux *http.ServeMux) {
@@ -117,9 +120,13 @@ func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, tar
 
 	switch r.Method {
 	case http.MethodPost:
-		if err := h.follows.Follow(r.Context(), userID, targetID); err != nil {
+		inserted, err := h.follows.Follow(r.Context(), userID, targetID)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		if inserted {
+			go h.notifyTelegramFollow(userID, targetID)
 		}
 		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixTopUsers)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "followed"})
@@ -132,6 +139,26 @@ func (h *FollowHandler) handleFollow(w http.ResponseWriter, r *http.Request, tar
 		writeJSON(w, http.StatusOK, map[string]string{"status": "unfollowed"})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *FollowHandler) notifyTelegramFollow(actorID, targetID string) {
+	if h.telegram == nil || !h.telegram.Enabled() {
+		return
+	}
+	actorID = strings.TrimSpace(actorID)
+	targetID = strings.TrimSpace(targetID)
+	if actorID == "" || targetID == "" || actorID == targetID {
+		return
+	}
+	actorFullName, actorUsername := h.posts.UserIdentity(context.Background(), actorID)
+	if err := h.telegram.NotifySiteNotification(context.Background(), service.TelegramSiteNotification{
+		RecipientUserID: targetID,
+		Type:            "follow",
+		ActorFullName:   actorFullName,
+		ActorUsername:   actorUsername,
+	}); err != nil {
+		log.Printf("follow telegram notify failed: actor_id=%s recipient_id=%s err=%v", actorID, targetID, err)
 	}
 }
 

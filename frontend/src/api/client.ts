@@ -121,6 +121,22 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
     return tr("Бұл әрекетке құқық жеткіліксіз.", "Недостаточно прав для этого действия.", "Not enough permissions for this action.");
   }
 
+  if (code === "ROOT_TRANSFER_REQUIRED") {
+    return tr(
+      "Root әкімшіні жою үшін transfer_root_to көрсету керек.",
+      "Чтобы удалить root-админа, нужно указать transfer_root_to.",
+      "To delete a root admin, transfer_root_to is required."
+    );
+  }
+
+  if (code === "INVALID_ROOT_TRANSFER_TARGET") {
+    return tr(
+      "Жаңа root әкімші табылмады немесе қате таңдалды.",
+      "Новый root-админ не найден или выбран неверно.",
+      "New root admin was not found or is invalid."
+    );
+  }
+
   if (status === 429 || code === "RATE_LIMIT") {
     return tr("Тым жиі. Кейінірек қайталаңыз.", "Слишком часто. Попробуйте позже.", "Too many requests. Try again later.");
   }
@@ -983,6 +999,7 @@ export const api = {
         username: string;
         full_name: string;
         is_verified?: boolean;
+        is_root_admin?: boolean;
         avatar_url?: string;
         role: string;
         created_at: string;
@@ -1036,11 +1053,11 @@ export const api = {
       { ttl_minutes },
       token
     ),
-  adminDeleteUser: (idOrUsername: string, token: string) =>
+  adminDeleteUser: (idOrUsername: string, token: string, transfer_root_to?: string) =>
     request<{ status: string }>(
       `/admin/users/${encodeURIComponent(idOrUsername)}`,
       "DELETE",
-      undefined,
+      transfer_root_to ? { transfer_root_to } : undefined,
       token
     ),
   adminRemovePost: (postId: string, reason: string | undefined, token: string) =>

@@ -1107,18 +1107,28 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 	return resp, nil
 }
 
-func (s *PostService) Like(ctx context.Context, postID, userID string) error {
+func (s *PostService) Like(ctx context.Context, postID, userID string) (bool, error) {
 	if userID == "" || postID == "" {
-		return errors.New("post_id and user_id are required")
+		return false, errors.New("post_id and user_id are required")
 	}
 	exists, err := s.posts.Exists(ctx, postID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !exists {
-		return errors.New("post not found")
+		return false, errors.New("post not found")
 	}
-	return s.likes.Add(ctx, postID, userID)
+	alreadyLiked, err := s.likes.IsLiked(ctx, postID, userID)
+	if err != nil {
+		return false, err
+	}
+	if alreadyLiked {
+		return false, nil
+	}
+	if err := s.likes.Add(ctx, postID, userID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PostService) Unlike(ctx context.Context, postID, userID string) error {
@@ -1216,6 +1226,18 @@ func (s *PostService) UserIdentity(ctx context.Context, userID string) (fullName
 		return "", ""
 	}
 	return strings.TrimSpace(u.FullName), strings.TrimSpace(u.Username)
+}
+
+func (s *PostService) MetaByID(ctx context.Context, postID string) (*repository.PostMeta, error) {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return nil, errors.New("post_id is required")
+	}
+	return s.posts.MetaByID(ctx, postID)
+}
+
+func (s *PostService) ResolveMentionRecipients(ctx context.Context, text string, excludeUserID string) ([]MentionRecipient, error) {
+	return resolveMentionRecipients(ctx, s.users, text, excludeUserID)
 }
 
 func normalizeTags(raw []string) []string {

@@ -42,12 +42,12 @@ func normalizeTagsLocal(raw []string) []string {
 	return out
 }
 
-func (s *CommentService) Create(ctx context.Context, postID, userID string, body string, replyTo *string, hashtags []string) error {
+func (s *CommentService) Create(ctx context.Context, postID, userID string, body string, replyTo *string, hashtags []string) (*models.Comment, error) {
 	if postID == "" || userID == "" {
-		return errors.New("post_id and user_id are required")
+		return nil, errors.New("post_id and user_id are required")
 	}
 	if len(body) == 0 {
-		return errors.New("content is required")
+		return nil, errors.New("content is required")
 	}
 	preview := strings.TrimSpace(body)
 	if len(preview) > 160 {
@@ -62,14 +62,14 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 			"content_preview": preview,
 		},
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	exists, err := s.posts.Exists(ctx, postID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !exists {
-		return errors.New("post not found")
+		return nil, errors.New("post not found")
 	}
 	comment := models.Comment{
 		PostID:           postID,
@@ -78,7 +78,7 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 		ReplyToCommentID: replyTo,
 	}
 	if err := s.comments.Create(ctx, &comment); err != nil {
-		return err
+		return nil, err
 	}
 	// upsert hashtags mentioned in comment text
 	if s.tags != nil {
@@ -91,7 +91,7 @@ func (s *CommentService) Create(ctx context.Context, postID, userID string, body
 			return err
 		}()
 	}
-	return nil
+	return &comment, nil
 }
 
 func (s *CommentService) List(ctx context.Context, postID string, limit, offset int, viewerID string) ([]dto.CommentResponse, error) {
@@ -202,11 +202,21 @@ func (s *CommentService) Delete(ctx context.Context, commentID, userID string) e
 	return nil
 }
 
-func (s *CommentService) Like(ctx context.Context, commentID, userID string) error {
+func (s *CommentService) Like(ctx context.Context, commentID, userID string) (bool, error) {
 	if commentID == "" || userID == "" {
-		return errors.New("comment_id and user_id are required")
+		return false, errors.New("comment_id and user_id are required")
 	}
-	return s.likes.AddComment(ctx, commentID, userID)
+	alreadyLiked, err := s.likes.CommentLikedBy(ctx, commentID, userID)
+	if err != nil {
+		return false, err
+	}
+	if alreadyLiked {
+		return false, nil
+	}
+	if err := s.likes.AddComment(ctx, commentID, userID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *CommentService) Unlike(ctx context.Context, commentID, userID string) error {
@@ -214,4 +224,49 @@ func (s *CommentService) Unlike(ctx context.Context, commentID, userID string) e
 		return errors.New("comment_id and user_id are required")
 	}
 	return s.likes.RemoveComment(ctx, commentID, userID)
+}
+
+type CommentNotificationMeta struct {
+	CommentID        string
+	PostID           string
+	AuthorID         string
+	Body             string
+	ReplyToCommentID *string
+}
+
+func (s *CommentService) MetaByID(ctx context.Context, commentID string) (*CommentNotificationMeta, error) {
+	row, err := s.comments.MetaByID(ctx, commentID)
+	if err != nil {
+		return nil, err
+	}
+	return &CommentNotificationMeta{
+		CommentID:        row.ID,
+		PostID:           row.PostID,
+		AuthorID:         row.UserID,
+		Body:             row.Body,
+		ReplyToCommentID: row.ReplyToCommentID,
+	}, nil
+}
+
+func (s *CommentService) PostMetaByID(ctx context.Context, postID string) (*repository.PostMeta, error) {
+	if strings.TrimSpace(postID) == "" {
+		return nil, errors.New("post_id is required")
+	}
+	return s.posts.MetaByID(ctx, postID)
+}
+
+func (s *CommentService) UserIdentity(ctx context.Context, userID string) (fullName string, username string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || s.users == nil {
+		return "", ""
+	}
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(u.FullName), strings.TrimSpace(u.Username)
+}
+
+func (s *CommentService) ResolveMentionRecipients(ctx context.Context, text string, excludeUserID string) ([]MentionRecipient, error) {
+	return resolveMentionRecipients(ctx, s.users, text, excludeUserID)
 }

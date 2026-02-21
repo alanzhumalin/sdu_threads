@@ -10,14 +10,14 @@ const ruPlural = (n: number, one: string, few: string, many: string) => {
 
 export function formatTimeAgo(iso: string, language: AppLanguage): string {
   const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
+  const diffMs = Math.max(0, Date.now() - date.getTime());
   const sec = Math.floor(diffMs / 1000);
   const min = Math.floor(sec / 60);
   const hour = Math.floor(min / 60);
   const day = Math.floor(hour / 24);
 
   if (language === "en") {
-    if (sec < 45) return "just now";
+    if (min < 1) return "just now";
     if (min < 60) return `${min} min ago`;
     if (hour < 24) return `${hour} h ago`;
     if (day === 1) return "yesterday";
@@ -26,7 +26,7 @@ export function formatTimeAgo(iso: string, language: AppLanguage): string {
   }
 
   if (language === "kk") {
-    if (sec < 45) return "дәл қазір";
+    if (min < 1) return "жаңа ғана";
     if (min < 60) return `${min} мин бұрын`;
     if (hour < 24) return `${hour} сағ бұрын`;
     if (day === 1) return "кеше";
@@ -34,7 +34,7 @@ export function formatTimeAgo(iso: string, language: AppLanguage): string {
     return date.toLocaleString("kk-KZ");
   }
 
-  if (sec < 45) return "только что";
+  if (min < 1) return "только что";
   if (min < 60) return `${min} ${ruPlural(min, "минуту назад", "минуты назад", "мин назад")}`;
   if (hour < 24) return `${hour} ${ruPlural(hour, "час назад", "часа назад", "ч назад")}`;
   if (day === 1) return "вчера";

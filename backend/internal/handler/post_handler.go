@@ -99,6 +99,7 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 		}
 		if createdPost != nil {
 			go h.notifyTelegramFollowersAboutPost(userID, createdPost.ID, createdPost.Content)
+			go h.notifyTelegramMentionPost(userID, createdPost.ID, createdPost.Content)
 		}
 		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
@@ -150,6 +151,71 @@ func (h *PostHandler) notifyTelegramFollowersAboutPost(authorID, postID, content
 	}
 }
 
+func (h *PostHandler) notifyTelegramMentionPost(authorID, postID, content string) {
+	if h.telegram == nil || !h.telegram.Enabled() {
+		return
+	}
+	authorID = strings.TrimSpace(authorID)
+	postID = strings.TrimSpace(postID)
+	if authorID == "" || postID == "" {
+		return
+	}
+	recipients, err := h.service.ResolveMentionRecipients(context.Background(), content, authorID)
+	if err != nil {
+		log.Printf("post mention telegram notify failed: author_id=%s post_id=%s err=%v", authorID, postID, err)
+		return
+	}
+	if len(recipients) == 0 {
+		return
+	}
+	authorFullName, authorUsername := h.service.UserIdentity(context.Background(), authorID)
+	for _, recipient := range recipients {
+		if strings.TrimSpace(recipient.UserID) == "" {
+			continue
+		}
+		if err := h.telegram.NotifySiteNotification(context.Background(), service.TelegramSiteNotification{
+			RecipientUserID: recipient.UserID,
+			Type:            "mention_post",
+			PostID:          postID,
+			ActorFullName:   authorFullName,
+			ActorUsername:   authorUsername,
+			PostPreview:     content,
+		}); err != nil {
+			log.Printf("post mention telegram notify send failed: recipient_id=%s post_id=%s err=%v", recipient.UserID, postID, err)
+		}
+	}
+}
+
+func (h *PostHandler) notifyTelegramPostLike(actorID, postID string) {
+	if h.telegram == nil || !h.telegram.Enabled() {
+		return
+	}
+	postID = strings.TrimSpace(postID)
+	actorID = strings.TrimSpace(actorID)
+	if postID == "" || actorID == "" {
+		return
+	}
+	postMeta, err := h.service.MetaByID(context.Background(), postID)
+	if err != nil || postMeta == nil {
+		return
+	}
+	recipientID := strings.TrimSpace(postMeta.UserID)
+	if recipientID == "" || recipientID == actorID {
+		return
+	}
+	actorFullName, actorUsername := h.service.UserIdentity(context.Background(), actorID)
+	if err := h.telegram.NotifySiteNotification(context.Background(), service.TelegramSiteNotification{
+		RecipientUserID: recipientID,
+		Type:            "like",
+		PostID:          postID,
+		ActorFullName:   actorFullName,
+		ActorUsername:   actorUsername,
+		PostPreview:     postMeta.Content,
+	}); err != nil {
+		log.Printf("post like telegram notify failed: actor_id=%s recipient_id=%s post_id=%s err=%v", actorID, recipientID, postID, err)
+	}
+}
+
 func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) {
 	// Paths: /api/posts/{id}, /api/posts/{id}/like, /api/posts/{id}/view, /api/posts/{id}/reactions
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/posts/")
@@ -189,9 +255,13 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 				writeError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
-			if err := h.service.Like(r.Context(), postID, userID); err != nil {
+			inserted, err := h.service.Like(r.Context(), postID, userID)
+			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
+			}
+			if inserted {
+				go h.notifyTelegramPostLike(userID, postID)
 			}
 			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixFeedPublic)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})

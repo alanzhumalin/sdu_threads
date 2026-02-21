@@ -19,6 +19,26 @@ func (r *CommentRepository) Create(ctx context.Context, c *models.Comment) error
 	return r.db.WithContext(ctx).Create(c).Error
 }
 
+type CommentMeta struct {
+	ID               string
+	PostID           string
+	UserID           string
+	Body             string
+	ReplyToCommentID *string
+}
+
+func (r *CommentRepository) MetaByID(ctx context.Context, commentID string) (*CommentMeta, error) {
+	var row CommentMeta
+	if err := r.db.WithContext(ctx).
+		Model(&models.Comment{}).
+		Select("id, post_id, user_id, body, reply_to_comment_id").
+		Where("id = ?", commentID).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 type CommentWithUser struct {
 	ID               string
 	PostID           string

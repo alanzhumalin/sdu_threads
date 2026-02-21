@@ -32,6 +32,24 @@ func (r *PostRepository) Create(ctx context.Context, post *models.Post) error {
 	return r.db.WithContext(ctx).Create(post).Error
 }
 
+type PostMeta struct {
+	ID      string
+	UserID  string
+	Content string
+}
+
+func (r *PostRepository) MetaByID(ctx context.Context, postID string) (*PostMeta, error) {
+	var row PostMeta
+	if err := r.db.WithContext(ctx).
+		Model(&models.Post{}).
+		Select("id, user_id, content").
+		Where("id = ? AND removed_at IS NULL", postID).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 type FeedItem struct {
 	ID             string
 	UserID         string

@@ -21,6 +21,7 @@ type AdminUser = {
   username: string;
   full_name: string;
   is_verified?: boolean;
+  is_root_admin?: boolean;
   avatar_url?: string;
   role: string;
   created_at: string;
@@ -41,11 +42,29 @@ type AdminPost = {
   view_count?: number;
 };
 
+function getJwtUserID(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((base64Url.length + 3) % 4);
+    const json = atob(base64);
+    const payload = JSON.parse(json) as { user_id?: string };
+    return typeof payload.user_id === "string" && payload.user_id ? payload.user_id : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function AdminPage() {
   const token = useAuthStore((s) => s.token);
+  const setToken = useAuthStore((s) => s.setToken);
   const navigate = useNavigate();
+  const myUserID = useMemo(() => getJwtUserID(token), [token]);
 
   const [myRole, setMyRole] = useState<string | null>(null);
+  const [myIsRootAdmin, setMyIsRootAdmin] = useState(false);
   const isAdmin = myRole === "admin";
 
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -90,11 +109,13 @@ export default function AdminPage() {
     setStatsLoading(true);
     setStatsError(null);
     setMyRole(null);
+    setMyIsRootAdmin(false);
     api
       .adminMe(token)
       .then((me) => {
         if (cancelled) return;
         setMyRole(String(me?.role || "").trim().toLowerCase() || null);
+        setMyIsRootAdmin(Boolean(me?.is_root_admin));
       })
       .catch((e: any) => {
         if (cancelled) return;
@@ -148,17 +169,39 @@ export default function AdminPage() {
   const deleteUser = async (u: AdminUser) => {
     if (!token) return;
     if (deletingUserId) return;
+    const isRootUser = Boolean(u.is_root_admin);
     const ok = window.confirm(
-      `Удалить пользователя @${u.username}?\n\nЭто удалит его профиль, посты, комментарии, лайки и подписки.`
+      isRootUser
+        ? `Удалить ROOT-админа @${u.username}?\n\nЭто удалит профиль, посты, комментарии, лайки, подписки и все связанные данные.\nПеред удалением нужно передать root-права другому пользователю.`
+        : `Удалить пользователя @${u.username}?\n\nЭто удалит его профиль, посты, комментарии, лайки и подписки.`
     );
     if (!ok) return;
+    let transferRootTo: string | undefined;
+    if (isRootUser) {
+      const raw = window.prompt(
+        "Укажите username или ID пользователя, которому передать root-права перед удалением:",
+        ""
+      );
+      if (raw === null) return;
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        alert("Нужно указать username или ID нового root-админа.");
+        return;
+      }
+      transferRootTo = trimmed;
+    }
     setDeletingUserId(u.id);
     setUsersError(null);
     try {
-      await api.adminDeleteUser(u.id, token);
+      await api.adminDeleteUser(u.id, token, transferRootTo);
       setUsers((prev) => prev.filter((x) => x.id !== u.id));
       setSelected((prev) => (prev?.id === u.id ? null : prev));
       setTempPasswordResult((prev) => (prev?.user_id === u.id ? null : prev));
+      if (u.id === myUserID) {
+        setToken(null);
+        navigate("/login", { replace: true });
+        return;
+      }
     } catch (e: any) {
       setUsersError(e?.message || "Не удалось удалить пользователя");
     } finally {
@@ -322,6 +365,7 @@ export default function AdminPage() {
             <h1 className="text-lg font-semibold">Admin Dashboard</h1>
             <p className="text-xs text-white/60 mt-1">
               Ваша роль: {myRole || "unknown"}
+              {myIsRootAdmin ? " · root" : ""}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -458,16 +502,30 @@ export default function AdminPage() {
                   right={
                     <div className="flex items-center gap-2">
                       <div className="hidden sm:flex flex-col items-end">
-                        <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
-                          {u.role}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                            {u.role}
+                          </span>
+                          {u.is_root_admin ? (
+                            <span className="text-xs text-amber-100 rounded-full border border-amber-300/35 bg-amber-300/10 px-2 py-1">
+                              root
+                            </span>
+                          ) : null}
+                        </div>
                         <span className="mt-1 max-w-[200px] truncate text-[11px] text-white/45" title={u.email || ""}>
                           {u.email || "—"}
                         </span>
                       </div>
-                      <span className="sm:hidden text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
-                        {u.role}
-                      </span>
+                      <div className="sm:hidden flex items-center gap-1">
+                        <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
+                          {u.role}
+                        </span>
+                        {u.is_root_admin ? (
+                          <span className="text-xs text-amber-100 rounded-full border border-amber-300/35 bg-amber-300/10 px-2 py-1">
+                            root
+                          </span>
+                        ) : null}
+                      </div>
                       {isAdmin ? (
                         <>
                           <button
@@ -574,6 +632,11 @@ export default function AdminPage() {
                   <span className="text-xs text-white/60 rounded-full border border-white/10 px-2 py-1">
                     {selected.role}
                   </span>
+                  {selected.is_root_admin ? (
+                    <span className="text-xs text-amber-100 rounded-full border border-amber-300/35 bg-amber-300/10 px-2 py-1">
+                      root
+                    </span>
+                  ) : null}
                   <span className="text-xs text-amber-200/80 rounded-full border border-amber-300/30 px-2 py-1">
                     Галочку выдает только admin
                   </span>

@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
 
+	"gorm.io/gorm"
 	"sduthreads/internal/repository"
 )
 
@@ -75,4 +77,56 @@ func filterExistingUsernames(ctx context.Context, users *repository.UserReposito
 		return map[string]struct{}{}, nil
 	}
 	return users.ExistingUsernames(ctx, usernames)
+}
+
+type MentionRecipient struct {
+	UserID   string
+	Username string
+	FullName string
+}
+
+func resolveMentionRecipients(ctx context.Context, users *repository.UserRepository, text string, excludeUserID string) ([]MentionRecipient, error) {
+	if users == nil {
+		return []MentionRecipient{}, nil
+	}
+	candidates := extractMentionCandidates(text)
+	if len(candidates) == 0 {
+		return []MentionRecipient{}, nil
+	}
+	existing, err := filterExistingUsernames(ctx, users, candidates)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MentionRecipient, 0, len(candidates))
+	seenIDs := make(map[string]struct{}, len(candidates))
+	excludeUserID = strings.TrimSpace(excludeUserID)
+	for _, username := range candidates {
+		if _, ok := existing[username]; !ok {
+			continue
+		}
+		u, err := users.GetByUsername(ctx, username)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if u == nil {
+			continue
+		}
+		id := strings.TrimSpace(u.ID)
+		if id == "" || id == excludeUserID {
+			continue
+		}
+		if _, ok := seenIDs[id]; ok {
+			continue
+		}
+		seenIDs[id] = struct{}{}
+		out = append(out, MentionRecipient{
+			UserID:   id,
+			Username: strings.TrimSpace(u.Username),
+			FullName: strings.TrimSpace(u.FullName),
+		})
+	}
+	return out, nil
 }
