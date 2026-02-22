@@ -660,10 +660,10 @@ export default function RoomCallPage() {
       }
       const encoding = params.encodings[0];
       if (isScreenShare) {
-        // Slightly softer quality for smoother screen-share on weaker clients.
-        encoding.maxFramerate = 24;
-        encoding.maxBitrate = 3_600_000;
-        encoding.scaleResolutionDownBy = 1.1;
+        // Prefer smoother motion for screen-share (anime/video playback).
+        encoding.maxFramerate = 30;
+        encoding.maxBitrate = 3_200_000;
+        encoding.scaleResolutionDownBy = 1.2;
       } else {
         encoding.maxFramerate = 24;
         encoding.maxBitrate = 1_800_000;
@@ -671,7 +671,7 @@ export default function RoomCallPage() {
           encoding.scaleResolutionDownBy = 1;
         }
       }
-      params.degradationPreference = "balanced";
+      params.degradationPreference = isScreenShare ? "maintain-framerate" : "balanced";
       await sender.setParameters(params);
     } catch {
       // Some browsers ignore/limit sender parameter changes.
@@ -1522,14 +1522,9 @@ export default function RoomCallPage() {
     try {
       const displayOptions: any = {
         video: {
-          frameRate: { ideal: 24, max: 27 },
-          width: { ideal: 1792, max: 2048 },
-          height: { ideal: 1008, max: 1152 },
-          // Browser-specific hints (ignored where unsupported).
-          displaySurface: "browser",
-          selfBrowserSurface: "exclude",
-          surfaceSwitching: "include",
-          monitorTypeSurfaces: "include",
+          frameRate: { ideal: 30, max: 30 },
+          width: { ideal: 1600, max: 1920 },
+          height: { ideal: 900, max: 1080 },
         },
         audio: {
           echoCancellation: false,
@@ -1537,9 +1532,9 @@ export default function RoomCallPage() {
           autoGainControl: false,
           suppressLocalAudioPlayback: false,
         },
-        // Browser-specific hints (ignored where unsupported).
+        // Keep audio hint, but do not force tab surface:
+        // browser picker should still allow choosing tab/window/screen.
         systemAudio: "include",
-        preferCurrentTab: true,
       };
 
       const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
@@ -1552,15 +1547,15 @@ export default function RoomCallPage() {
         screenAudioTrack.enabled = true;
       }
       try {
-        track.contentHint = "detail";
+        track.contentHint = "motion";
       } catch {
         // contentHint is optional across browsers.
       }
       try {
         await track.applyConstraints({
-          frameRate: { ideal: 24, max: 27 },
-          width: { ideal: 1792, max: 2048 },
-          height: { ideal: 1008, max: 1152 },
+          frameRate: { ideal: 30, max: 30 },
+          width: { ideal: 1600, max: 1920 },
+          height: { ideal: 900, max: 1080 },
         });
       } catch {
         // Some browsers ignore advanced frame-rate constraints.
