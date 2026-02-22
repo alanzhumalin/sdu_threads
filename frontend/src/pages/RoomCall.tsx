@@ -950,10 +950,27 @@ export default function RoomCallPage() {
   }, [makeOffer]);
 
   const leaveRoom = useCallback(() => {
-    void exitLandscapeMode();
+    if (landscapeSessionRef.current) {
+      landscapeSessionRef.current = false;
+      try {
+        const orientation: any = (window.screen as any)?.orientation;
+        if (orientation && typeof orientation.unlock === "function") {
+          orientation.unlock();
+        }
+      } catch {
+        // noop
+      }
+      try {
+        if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
+          void document.exitFullscreen();
+        }
+      } catch {
+        // noop
+      }
+    }
     leaveRoomSocket("leave-button");
     navigate("/rooms");
-  }, [exitLandscapeMode, leaveRoomSocket, navigate]);
+  }, [leaveRoomSocket, navigate]);
 
   const copyInvite = useCallback(async () => {
     const link = `${window.location.origin}/rooms/${encodeURIComponent(roomIDRef.current)}`;
