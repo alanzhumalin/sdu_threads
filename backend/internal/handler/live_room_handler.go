@@ -94,11 +94,27 @@ func (h *LiveRoomHandler) handleRooms(w http.ResponseWriter, r *http.Request) {
 			h.writeRoomError(w, err)
 			return
 		}
+		visible := make([]service.LiveRoom, 0, len(items))
+		now := time.Now()
 		for i := range items {
-			items[i].ParticipantCount = h.ws.roomSize(items[i].ID)
+			roomID := strings.TrimSpace(items[i].ID)
+			if roomID == "" {
+				continue
+			}
+			items[i].ParticipantCount = h.ws.roomSize(roomID)
+			if items[i].ParticipantCount == 0 {
+				createdAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(items[i].CreatedAt))
+				if parseErr == nil && now.Sub(createdAt) >= liveRoomCleanupDelay {
+					if err := h.service.End(r.Context(), roomID); err != nil {
+						log.Printf("live-room stale cleanup failed room=%s err=%v", roomID, err)
+					}
+					continue
+				}
+			}
+			visible = append(visible, items[i])
 		}
-		setNextOffset(w, offset, limit, len(items))
-		writeJSON(w, http.StatusOK, items)
+		setNextOffset(w, offset, limit, len(visible))
+		writeJSON(w, http.StatusOK, visible)
 	case http.MethodPost:
 		var req dto.CreateLiveRoomRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -111,6 +127,7 @@ func (h *LiveRoomHandler) handleRooms(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.ParticipantCount = h.ws.roomSize(item.ID)
+		h.scheduleCleanup(item.ID)
 		writeJSON(w, http.StatusCreated, item)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

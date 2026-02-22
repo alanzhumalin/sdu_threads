@@ -11,3 +11,5 @@ db.dump
 nginx/certs/*
 logs.txt
 load
+dist
+index.html

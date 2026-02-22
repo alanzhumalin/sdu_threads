@@ -217,7 +217,7 @@ export default function RoomsPage() {
                   <div className="shrink-0 text-right">
                     <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-xs font-semibold text-white">
                       <Users className="w-3.5 h-3.5" />
-                      <span>{Math.max(1, room.participant_count || 0)}</span>
+                      <span>{Math.max(0, room.participant_count || 0)}</span>
                     </span>
                     <p className="mt-1 text-xs text-white/50">{formatTimeAgo(room.created_at, language)}</p>
                   </div>
