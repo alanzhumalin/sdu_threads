@@ -64,6 +64,48 @@ type PeerTransceivers = {
   video: RTCRtpTransceiver | null;
 };
 
+type StreamQualityTier = "low" | "high";
+
+type BrowserNetworkInformation = {
+  effectiveType?: string;
+  downlink?: number;
+  rtt?: number;
+  saveData?: boolean;
+  addEventListener?: (type: "change", listener: () => void) => void;
+  removeEventListener?: (type: "change", listener: () => void) => void;
+};
+
+const getBrowserNetworkInformation = (): BrowserNetworkInformation | null => {
+  const nav = navigator as Navigator & {
+    connection?: BrowserNetworkInformation;
+    mozConnection?: BrowserNetworkInformation;
+    webkitConnection?: BrowserNetworkInformation;
+  };
+  return nav.connection || nav.mozConnection || nav.webkitConnection || null;
+};
+
+const resolveStreamQualityTier = (
+  connection: BrowserNetworkInformation | null
+): StreamQualityTier => {
+  if (!connection) return "low";
+
+  const effectiveType = String(connection.effectiveType || "").toLowerCase();
+  const downlink = Number(connection.downlink || 0);
+  const rtt = Number(connection.rtt || 0);
+
+  if (connection.saveData) return "low";
+  if (effectiveType === "slow-2g" || effectiveType === "2g" || effectiveType === "3g") return "low";
+  if (Number.isFinite(downlink) && downlink > 0 && downlink < 3) return "low";
+  if (Number.isFinite(rtt) && rtt > 0 && rtt > 250) return "low";
+
+  const fastType = effectiveType === "4g" || effectiveType === "5g";
+  const goodDownlink = Number.isFinite(downlink) && downlink >= 8;
+  const goodRtt = !Number.isFinite(rtt) || rtt <= 120;
+  if ((fastType || goodDownlink) && goodRtt) return "high";
+
+  return "low";
+};
+
 const roomWSURL = (roomID: string) => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocol}://${window.location.host}/api/rooms/${encodeURIComponent(roomID)}/ws`;
@@ -185,6 +227,9 @@ export default function RoomCallPage() {
   const [screenBusy, setScreenBusy] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
+  const [streamQualityTier, setStreamQualityTier] = useState<StreamQualityTier>(() =>
+    resolveStreamQualityTier(getBrowserNetworkInformation())
+  );
   const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
@@ -227,6 +272,7 @@ export default function RoomCallPage() {
   const fullscreenPanRef = useRef({ x: 0, y: 0 });
   const suppressNextViewportTapCloseRef = useRef(false);
   const landscapeSessionRef = useRef(false);
+  const streamQualityTierRef = useRef<StreamQualityTier>(streamQualityTier);
   const touchStateRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startPanX: number;
@@ -284,6 +330,30 @@ export default function RoomCallPage() {
     if (!rtcDebugRef.current) return;
     console.debug("[rtc]", roomIDRef.current, ...args);
   }, []);
+
+  useEffect(() => {
+    streamQualityTierRef.current = streamQualityTier;
+    rtcLog("stream-quality-tier", streamQualityTier);
+  }, [streamQualityTier, rtcLog]);
+
+  useEffect(() => {
+    const connection = getBrowserNetworkInformation();
+    if (!connection) return;
+
+    const syncTier = () => {
+      setStreamQualityTier(resolveStreamQualityTier(connection));
+    };
+
+    syncTier();
+    if (typeof connection.addEventListener === "function") {
+      const onChange = () => syncTier();
+      connection.addEventListener("change", onChange);
+      return () => {
+        connection.removeEventListener?.("change", onChange);
+      };
+    }
+  }, []);
+
   const mediaSupportError = useCallback(() => {
     if (!window.isSecureContext) {
       return t("rooms.media_https_required");
@@ -651,11 +721,30 @@ export default function RoomCallPage() {
     []
   );
 
+  const getScreenVideoConstraints = useCallback(() => {
+    const highQuality = streamQualityTierRef.current === "high";
+    return {
+      frameRate: { ideal: 30, max: 30 },
+      width: { ideal: highQuality ? 1920 : 1728, max: 1920 },
+      height: { ideal: highQuality ? 1080 : 972, max: 1080 },
+    };
+  }, []);
+
+  const getCameraVideoConstraints = useCallback(() => {
+    const highQuality = streamQualityTierRef.current === "high";
+    return {
+      frameRate: { ideal: 24, max: 24 },
+      width: { ideal: highQuality ? 1280 : 960, max: 1280 },
+      height: { ideal: highQuality ? 720 : 540, max: 720 },
+    };
+  }, []);
+
   const tuneVideoSender = useCallback(async (peerID: string, isScreenShare: boolean) => {
     const transceiver = peerTransceiversRef.current.get(peerID)?.video;
     const sender = transceiver?.sender;
     if (!sender) return;
     try {
+      const highQuality = streamQualityTierRef.current === "high";
       const params = sender.getParameters();
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}];
@@ -664,11 +753,11 @@ export default function RoomCallPage() {
       if (isScreenShare) {
         // Prefer smoother motion for screen-share (anime/video playback).
         encoding.maxFramerate = 30;
-        encoding.maxBitrate = 3_600_000;
-        encoding.scaleResolutionDownBy = 1.1;
+        encoding.maxBitrate = highQuality ? 4_800_000 : 3_600_000;
+        encoding.scaleResolutionDownBy = highQuality ? 1 : 1.1;
       } else {
         encoding.maxFramerate = 24;
-        encoding.maxBitrate = 2_000_000;
+        encoding.maxBitrate = highQuality ? 2_600_000 : 2_000_000;
         if (typeof encoding.scaleResolutionDownBy === "number" && encoding.scaleResolutionDownBy < 1) {
           encoding.scaleResolutionDownBy = 1;
         }
@@ -699,6 +788,25 @@ export default function RoomCallPage() {
     },
     [attachTrackToPeer]
   );
+
+  useEffect(() => {
+    const isScreenShareTrackActive = Boolean(
+      screenEnabled && screenTrackRef.current?.readyState !== "ended"
+    );
+    for (const peerID of pcsRef.current.keys()) {
+      void tuneVideoSender(peerID, isScreenShareTrackActive);
+    }
+
+    const screenTrack = screenTrackRef.current;
+    if (screenTrack && screenTrack.readyState !== "ended") {
+      void screenTrack.applyConstraints(getScreenVideoConstraints()).catch(() => {});
+    }
+
+    const cameraTrack = cameraTrackRef.current;
+    if (cameraTrack && cameraTrack.readyState !== "ended") {
+      void cameraTrack.applyConstraints(getCameraVideoConstraints()).catch(() => {});
+    }
+  }, [getCameraVideoConstraints, getScreenVideoConstraints, screenEnabled, streamQualityTier, tuneVideoSender]);
 
   const flushPendingIce = useCallback((peerID: string) => {
     const pc = pcsRef.current.get(peerID);
@@ -1481,6 +1589,11 @@ export default function RoomCallPage() {
         if (!newTrack) {
           throw new Error("camera_not_available");
         }
+        try {
+          await newTrack.applyConstraints(getCameraVideoConstraints());
+        } catch {
+          // Some cameras ignore detailed constraints.
+        }
         local.addTrack(newTrack);
         cameraTrackRef.current = newTrack;
         cameraTrack = newTrack;
@@ -1589,11 +1702,7 @@ export default function RoomCallPage() {
     setScreenBusy(true);
     try {
       const displayOptions: any = {
-        video: {
-          frameRate: { ideal: 30, max: 30 },
-          width: { ideal: 1728, max: 1920 },
-          height: { ideal: 972, max: 1080 },
-        },
+        video: getScreenVideoConstraints(),
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
@@ -1620,11 +1729,7 @@ export default function RoomCallPage() {
         // contentHint is optional across browsers.
       }
       try {
-        await track.applyConstraints({
-          frameRate: { ideal: 30, max: 30 },
-          width: { ideal: 1728, max: 1920 },
-          height: { ideal: 972, max: 1080 },
-        });
+        await track.applyConstraints(getScreenVideoConstraints());
       } catch {
         // Some browsers ignore advanced frame-rate constraints.
       }
@@ -1680,6 +1785,7 @@ export default function RoomCallPage() {
       setScreenBusy(false);
     }
   }, [
+    getScreenVideoConstraints,
     applyOutgoingVideoTrack,
     applyOutgoingAudioTrack,
     audioEnabled,
@@ -2100,25 +2206,14 @@ export default function RoomCallPage() {
               <MonitorUp className="w-4 h-4 text-sky-300" />
               <span className="truncate">{expandedScreenShare.ownerName}</span>
             </p>
-            <div className="inline-flex items-center gap-2">
-              <button
-                type="button"
-                onClick={openLandscapeMode}
-                className="w-10 h-10 rounded-full border border-indigo-300/35 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30 grid place-items-center"
-                aria-label={t("rooms.landscape_mode")}
-                title={t("rooms.landscape_mode")}
-              >
-                <Smartphone className="w-5 h-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setExpandedScreenOwner(null)}
-                className="w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/90 grid place-items-center"
-                aria-label={t("rooms.screen_close")}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setExpandedScreenOwner(null)}
+              className="w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/90 grid place-items-center"
+              aria-label={t("rooms.screen_close")}
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
           <div
             ref={fullscreenViewportRef}
@@ -2138,6 +2233,18 @@ export default function RoomCallPage() {
             onTouchEnd={handleFullscreenTouchEnd}
             onTouchCancel={handleFullscreenTouchEnd}
           >
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                void openLandscapeMode();
+              }}
+              className="absolute top-2 right-2 z-20 w-10 h-10 rounded-full border border-indigo-300/35 bg-indigo-500/25 text-indigo-100 hover:bg-indigo-500/35 grid place-items-center"
+              aria-label={t("rooms.landscape_mode")}
+              title={t("rooms.landscape_mode")}
+            >
+              <Smartphone className="w-5 h-5" />
+            </button>
             <div
               className="absolute inset-0 will-change-transform"
               style={{
