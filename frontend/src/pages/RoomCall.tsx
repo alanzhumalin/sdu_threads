@@ -1087,6 +1087,24 @@ export default function RoomCallPage() {
       } catch {
         // noop
       }
+      try {
+        const docAny = document as any;
+        if (typeof docAny.webkitExitFullscreen === "function") {
+          docAny.webkitExitFullscreen();
+        } else if (typeof docAny.webkitCancelFullScreen === "function") {
+          docAny.webkitCancelFullScreen();
+        }
+        const videoEl = fullscreenViewportRef.current?.querySelector("video") as any;
+        if (videoEl) {
+          if (typeof videoEl.webkitExitFullscreen === "function") {
+            videoEl.webkitExitFullscreen();
+          } else if (typeof videoEl.webkitExitFullScreen === "function") {
+            videoEl.webkitExitFullScreen();
+          }
+        }
+      } catch {
+        // noop
+      }
     }
     leaveRoomSocket("leave-button");
     navigate("/rooms");
@@ -1513,6 +1531,24 @@ export default function RoomCallPage() {
     } catch {
       // noop
     }
+    try {
+      const docAny = document as any;
+      if (typeof docAny.webkitExitFullscreen === "function") {
+        docAny.webkitExitFullscreen();
+      } else if (typeof docAny.webkitCancelFullScreen === "function") {
+        docAny.webkitCancelFullScreen();
+      }
+      const videoEl = fullscreenViewportRef.current?.querySelector("video") as any;
+      if (videoEl) {
+        if (typeof videoEl.webkitExitFullscreen === "function") {
+          videoEl.webkitExitFullscreen();
+        } else if (typeof videoEl.webkitExitFullScreen === "function") {
+          videoEl.webkitExitFullScreen();
+        }
+      }
+    } catch {
+      // noop
+    }
   }, []);
 
   useEffect(() => {
@@ -1523,6 +1559,36 @@ export default function RoomCallPage() {
 
   const openLandscapeMode = useCallback(async () => {
     landscapeSessionRef.current = true;
+    const videoEl = fullscreenViewportRef.current?.querySelector("video") as any;
+    if (videoEl) {
+      try {
+        if (typeof videoEl.play === "function") {
+          await videoEl.play();
+        }
+      } catch {
+        // noop
+      }
+      try {
+        if (typeof videoEl.webkitEnterFullscreen === "function") {
+          videoEl.webkitEnterFullscreen();
+          return;
+        }
+        if (typeof videoEl.webkitEnterFullScreen === "function") {
+          videoEl.webkitEnterFullScreen();
+          return;
+        }
+      } catch {
+        // noop
+      }
+      try {
+        if (!document.fullscreenElement && typeof videoEl.requestFullscreen === "function") {
+          await videoEl.requestFullscreen();
+          return;
+        }
+      } catch {
+        // noop
+      }
+    }
     const root: any = document.documentElement;
 
     try {
