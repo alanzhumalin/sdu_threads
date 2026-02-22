@@ -87,6 +87,7 @@ export type LiveRoomHost = {
 export type LiveRoom = {
   id: string;
   title: string;
+  is_private?: boolean;
   created_at: string;
   participant_count: number;
   host: LiveRoomHost;
@@ -845,8 +846,10 @@ export const api = {
     })),
   liveRoomById: (roomId: string, token?: string | null) =>
     request<LiveRoom>(`/rooms/${encodeURIComponent(roomId)}`, "GET", undefined, token),
-  createLiveRoom: (title: string, token: string) =>
-    request<LiveRoom>("/rooms", "POST", { title }, token),
+  createLiveRoom: (
+    payload: { title: string; is_private?: boolean; password?: string },
+    token: string
+  ) => request<LiveRoom>("/rooms", "POST", payload, token),
   notificationsUnread: (token?: string | null) =>
     request<{ unread_count: number }>(`/notifications-unread`, "GET", undefined, token),
   notifications: (filter: "all" | "mentions" = "all", limit = 20, offset = 0, token?: string | null) =>

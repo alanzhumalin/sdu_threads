@@ -11,6 +11,8 @@ import SearchPage from "./Search";
 import NotificationsPage from "./Notifications";
 import ChatsPage from "./Chats";
 import ChatConversationPage from "./ChatConversation";
+import RoomsPage from "./Rooms";
+import RoomCallPage from "./RoomCall";
 import PostPermalinkPage from "./PostPermalink";
 import AdminPage from "./Admin";
 import ModerationPage from "./Moderation";
@@ -56,11 +58,13 @@ export default function App() {
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
   const isChatConversationPage = /^\/chats\/[^/]+$/.test(location.pathname);
+  const isRoomCallPage = /^\/rooms\/[^/]+$/.test(location.pathname);
+  const isFullscreenMobilePage = isChatConversationPage || isRoomCallPage;
   const [chatViewportHeight, setChatViewportHeight] = useState<number | null>(null);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
 
   useLayoutEffect(() => {
-    if (!isChatConversationPage) {
+    if (!isFullscreenMobilePage) {
       setChatViewportHeight(null);
       return;
     }
@@ -203,10 +207,10 @@ export default function App() {
       if (burstRafID !== null) window.cancelAnimationFrame(burstRafID);
       clearDismissTimers();
     };
-  }, [isChatConversationPage]);
+  }, [isFullscreenMobilePage]);
 
   const chatViewportStyle: CSSProperties | undefined =
-    isChatConversationPage && chatViewportHeight
+    isFullscreenMobilePage && chatViewportHeight
       ? ({ "--chat-mobile-vh": `${chatViewportHeight}px` } as CSSProperties)
       : undefined;
 
@@ -360,6 +364,7 @@ export default function App() {
     { label: t("nav.feed"), path: "/" , icon: "feed"},
     { label: t("nav.search"), path: "/search", icon: "search"},
     { label: t("nav.chats"), path: "/chats", icon: "messages"},
+    { label: t("nav.rooms"), path: "/rooms", icon: "radio"},
     { label: t("nav.notifications"), path: "/notifications", icon: "bell"},
     { label: t("nav.telegram"), path: telegramChannelUrl, icon: "telegram" },
     { label: t("nav.profile"), path: "/profile", icon: "user"},
@@ -393,7 +398,7 @@ export default function App() {
           items={items}
           onClick={handleTabClick}
           activePath={location.pathname}
-          hideMobileBottomBar={isChatConversationPage}
+          hideMobileBottomBar={isFullscreenMobilePage}
         />
       )}
       <AuthGateModal />
@@ -402,7 +407,7 @@ export default function App() {
           key={location.pathname}
           style={chatViewportStyle}
           className={
-            isChatConversationPage
+            isFullscreenMobilePage
               ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
               : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
           }
@@ -471,6 +476,42 @@ export default function App() {
               element={
                 isAuthed ? (
                   <ChatConversationPage />
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title={t("auth.required_title")}
+                    message={t("auth.chats_message")}
+                    ctaLabel={t("auth.cta_login")}
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <NotificationsSkeleton />
+                  </AuthGateOverlay>
+                )
+              }
+            />
+            <Route
+              path="/rooms"
+              element={
+                isAuthed ? (
+                  <RoomsPage />
+                ) : (
+                  <AuthGateOverlay
+                    mode="page"
+                    title={t("auth.required_title")}
+                    message={t("auth.chats_message")}
+                    ctaLabel={t("auth.cta_login")}
+                    className="min-h-[calc(100vh-9rem)]"
+                  >
+                    <NotificationsSkeleton />
+                  </AuthGateOverlay>
+                )
+              }
+            />
+            <Route
+              path="/rooms/:roomId"
+              element={
+                isAuthed ? (
+                  <RoomCallPage />
                 ) : (
                   <AuthGateOverlay
                     mode="page"

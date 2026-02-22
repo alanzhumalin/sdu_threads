@@ -4,6 +4,7 @@ import {
   LogIn,
   LogOut,
   MessagesSquare,
+  Radio,
   Plus,
   Search,
   User,
@@ -27,6 +28,7 @@ const icons: Record<string, JSX.Element> = {
   search: <Search size={22} strokeWidth={1.7} />,
   bell: <Bell size={22} strokeWidth={1.7} />,
   messages: <MessagesSquare size={22} strokeWidth={1.7} />,
+  radio: <Radio size={22} strokeWidth={1.7} />,
   telegram: (
     <img
       src={telegramIconUrl}
