@@ -213,6 +213,11 @@ export default function App() {
     isFullscreenMobilePage && chatViewportHeight
       ? ({ "--chat-mobile-vh": `${chatViewportHeight}px` } as CSSProperties)
       : undefined;
+  const pageContainerClass = isRoomCallPage
+    ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0"
+    : isFullscreenMobilePage
+      ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
+      : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
   // We still rely on backend 401/403 for security.
@@ -406,11 +411,7 @@ export default function App() {
         <div
           key={location.pathname}
           style={chatViewportStyle}
-          className={
-            isFullscreenMobilePage
-              ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
-              : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6"
-          }
+          className={pageContainerClass}
         >
           <Routes location={location}>
             <Route

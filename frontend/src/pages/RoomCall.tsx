@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -6,10 +6,12 @@ import {
   Loader2,
   Mic,
   MicOff,
+  MonitorUp,
   PhoneOff,
   Users,
   Video,
   VideoOff,
+  X,
 } from "lucide-react";
 
 import { api, type LiveRoom, type LiveRoomParticipant } from "../api/client";
@@ -42,6 +44,7 @@ type RoomSocketEvent =
       user_id: string;
       audio_enabled: boolean;
       video_enabled: boolean;
+      screen_enabled: boolean;
     }
   | {
       type: "signal";
@@ -51,7 +54,9 @@ type RoomSocketEvent =
       payload: any;
     }
   | { type: "error"; message?: string }
-  | { type: "room_ended"; room_id: string };
+  | { type: "room_ended"; room_id: string }
+  | { type: "ping"; ts?: number }
+  | { type: "pong"; ts?: number };
 
 type PeerTransceivers = {
   audio: RTCRtpTransceiver | null;
@@ -70,9 +75,13 @@ const ICE_SERVERS: RTCIceServer[] = [
 function VideoView({
   stream,
   muted,
+  mirror = true,
+  fitClassName = "object-cover",
 }: {
   stream: MediaStream;
   muted?: boolean;
+  mirror?: boolean;
+  fitClassName?: string;
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
@@ -104,8 +113,8 @@ function VideoView({
       autoPlay
       playsInline
       muted={Boolean(muted)}
-      className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
-      style={{ transform: "scaleX(-1)" }}
+      className={`absolute inset-0 w-full h-full ${fitClassName} ${mirror ? "scale-x-[-1]" : ""}`}
+      style={mirror ? { transform: "scaleX(-1)" } : undefined}
     />
   );
 }
@@ -170,12 +179,21 @@ export default function RoomCallPage() {
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
+  const [screenEnabled, setScreenEnabled] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
+  const [screenBusy, setScreenBusy] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
+  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
+  const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
+  const [fullscreenZoom, setFullscreenZoom] = useState(1);
+  const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
 
   const wsRef = useRef<WebSocket | null>(null);
   const selfIDRef = useRef<string>("");
   const localStreamRef = useRef<MediaStream | null>(null);
+  const localScreenStreamRef = useRef<MediaStream | null>(null);
+  const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
+  const screenTrackRef = useRef<MediaStreamTrack | null>(null);
   const participantsRef = useRef<Record<string, LiveRoomParticipant>>({});
   const remoteStreamsRef = useRef<Record<string, MediaStream>>({});
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -191,6 +209,41 @@ export default function RoomCallPage() {
   const makeOfferFnRef = useRef<(peerID: string) => Promise<void>>(async () => {});
   const rtcDebugRef = useRef(false);
   const roomIDRef = useRef(roomId);
+  const updateSelfMediaStateRef = useRef<(audio: boolean, video: boolean, screen: boolean) => void>(
+    () => {}
+  );
+  const startPeerNegotiationRef = useRef<(peerID: string) => void>(() => {});
+  const requestAudioSyncRef = useRef<(peerID: string) => void>(() => {});
+  const requestVideoSyncRef = useRef<(peerID: string) => void>(() => {});
+  const clearAudioSyncRetriesRef = useRef<(peerID: string) => void>(() => {});
+  const clearSyncRetriesRef = useRef<(peerID: string) => void>(() => {});
+  const queueSignalRef = useRef<(peerID: string, signalType: string, payload: any) => void>(() => {});
+  const removePeerRef = useRef<(peerID: string) => void>(() => {});
+  const fullscreenViewportRef = useRef<HTMLDivElement | null>(null);
+  const fullscreenZoomRef = useRef(1);
+  const fullscreenPanRef = useRef({ x: 0, y: 0 });
+  const suppressNextViewportTapCloseRef = useRef(false);
+  const touchStateRef = useRef<{
+    mode: "none" | "pan" | "pinch";
+    startPanX: number;
+    startPanY: number;
+    startX: number;
+    startY: number;
+    startDistance: number;
+    startZoom: number;
+    startCenterX: number;
+    startCenterY: number;
+  }>({
+    mode: "none",
+    startPanX: 0,
+    startPanY: 0,
+    startX: 0,
+    startY: 0,
+    startDistance: 0,
+    startZoom: 1,
+    startCenterX: 0,
+    startCenterY: 0,
+  });
   roomIDRef.current = roomId;
 
   useEffect(() => {
@@ -200,6 +253,18 @@ export default function RoomCallPage() {
   useEffect(() => {
     remoteStreamsRef.current = remoteStreams;
   }, [remoteStreams]);
+
+  useEffect(() => {
+    fullscreenZoomRef.current = fullscreenZoom;
+  }, [fullscreenZoom]);
+
+  useEffect(() => {
+    fullscreenPanRef.current = fullscreenPan;
+  }, [fullscreenPan]);
+
+  useEffect(() => {
+    localScreenStreamRef.current = localScreenStream;
+  }, [localScreenStream]);
 
   useEffect(() => {
     try {
@@ -239,6 +304,17 @@ export default function RoomCallPage() {
     return Math.max(1, others + (selfParticipant ? 1 : 0));
   }, [participants, selfParticipant]);
 
+  const clampFullscreenPan = useCallback((x: number, y: number, zoom: number) => {
+    if (zoom <= 1) return { x: 0, y: 0 };
+    const viewport = fullscreenViewportRef.current;
+    if (!viewport) return { x, y };
+    const maxX = ((zoom - 1) * viewport.clientWidth) / 2;
+    const maxY = ((zoom - 1) * viewport.clientHeight) / 2;
+    const nextX = Math.max(-maxX, Math.min(maxX, x));
+    const nextY = Math.max(-maxY, Math.min(maxY, y));
+    return { x: nextX, y: nextY };
+  }, []);
+
   const sendWS = useCallback((payload: any) => {
     const socket = wsRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -250,15 +326,36 @@ export default function RoomCallPage() {
     socket.send(JSON.stringify(payload));
   }, [rtcLog]);
 
-  const updateSelfMediaState = useCallback((audio: boolean, video: boolean) => {
+  const leaveRoomSocket = useCallback((reason: string) => {
+    const socket = wsRef.current;
+    if (!socket) return;
+    if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) return;
+    rtcLog("ws-leave", reason);
+    try {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "leave", reason }));
+      }
+    } catch {
+      // noop
+    }
+    try {
+      socket.close();
+    } catch {
+      // noop
+    }
+  }, [rtcLog]);
+
+  const updateSelfMediaState = useCallback((audio: boolean, video: boolean, screen: boolean) => {
     setAudioEnabled(audio);
     setVideoEnabled(video);
+    setScreenEnabled(screen);
     setSelfParticipant((prev) =>
       prev
         ? {
             ...prev,
             audio_enabled: audio,
             video_enabled: video,
+            screen_enabled: screen,
           }
         : prev
     );
@@ -401,9 +498,10 @@ export default function RoomCallPage() {
         if (localAudio) {
           void audioTransceiver.sender.replaceTrack(localAudio).catch(() => {});
         }
-        const localVideo = local.getVideoTracks()[0];
-        if (localVideo) {
-          void videoTransceiver.sender.replaceTrack(localVideo).catch(() => {});
+        const outgoingVideoTrack =
+          screenTrackRef.current || (videoEnabled ? cameraTrackRef.current : null);
+        if (outgoingVideoTrack) {
+          void videoTransceiver.sender.replaceTrack(outgoingVideoTrack).catch(() => {});
         }
       }
 
@@ -498,13 +596,25 @@ export default function RoomCallPage() {
 
       return pc;
     },
-    [clearAudioSyncRetries, clearSyncRetries, preferH264ForVideo, removePeer, resumeRemoteAudioPlayback, rtcLog, sendWS]
+    [
+      clearAudioSyncRetries,
+      clearSyncRetries,
+      preferH264ForVideo,
+      removePeer,
+      resumeRemoteAudioPlayback,
+      rtcLog,
+      sendWS,
+      videoEnabled,
+    ]
   );
 
   const attachTrackToPeer = useCallback(
-    async (peerID: string, track: MediaStreamTrack) => {
+    async (peerID: string, track: MediaStreamTrack | null) => {
       const transceivers = peerTransceiversRef.current.get(peerID);
-      const transceiver = track.kind === "audio" ? transceivers?.audio : transceivers?.video;
+      const transceiver =
+        track?.kind === "audio"
+          ? transceivers?.audio
+          : transceivers?.video;
       if (transceiver) {
         if (transceiver.direction === "recvonly" || transceiver.direction === "inactive") {
           transceiver.direction = "sendrecv";
@@ -513,12 +623,52 @@ export default function RoomCallPage() {
         return;
       }
 
+      if (!track) return;
       const pc = pcsRef.current.get(peerID);
       const local = localStreamRef.current;
       if (!pc || !local) return;
       pc.addTrack(track, local);
     },
     []
+  );
+
+  const tuneVideoSender = useCallback(async (peerID: string, isScreenShare: boolean) => {
+    const transceiver = peerTransceiversRef.current.get(peerID)?.video;
+    const sender = transceiver?.sender;
+    if (!sender) return;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      const encoding = params.encodings[0];
+      if (isScreenShare) {
+        encoding.maxFramerate = 26;
+        encoding.maxBitrate = 5_000_000;
+        encoding.scaleResolutionDownBy = 1;
+      } else {
+        encoding.maxFramerate = 24;
+        encoding.maxBitrate = 1_800_000;
+        if (typeof encoding.scaleResolutionDownBy === "number" && encoding.scaleResolutionDownBy < 1) {
+          encoding.scaleResolutionDownBy = 1;
+        }
+      }
+      params.degradationPreference = "balanced";
+      await sender.setParameters(params);
+    } catch {
+      // Some browsers ignore/limit sender parameter changes.
+    }
+  }, []);
+
+  const applyOutgoingVideoTrack = useCallback(
+    async (track: MediaStreamTrack | null, options?: { isScreenShare?: boolean }) => {
+      const isScreenShare = Boolean(options?.isScreenShare);
+      for (const peerID of pcsRef.current.keys()) {
+        await attachTrackToPeer(peerID, track);
+        await tuneVideoSender(peerID, isScreenShare);
+      }
+    },
+    [attachTrackToPeer, tuneVideoSender]
   );
 
   const flushPendingIce = useCallback((peerID: string) => {
@@ -737,6 +887,26 @@ export default function RoomCallPage() {
     [handleSignal, rtcLog]
   );
 
+  useEffect(() => {
+    updateSelfMediaStateRef.current = updateSelfMediaState;
+    startPeerNegotiationRef.current = startPeerNegotiation;
+    requestAudioSyncRef.current = requestAudioSync;
+    requestVideoSyncRef.current = requestVideoSync;
+    clearAudioSyncRetriesRef.current = clearAudioSyncRetries;
+    clearSyncRetriesRef.current = clearSyncRetries;
+    queueSignalRef.current = queueSignal;
+    removePeerRef.current = removePeer;
+  }, [
+    clearAudioSyncRetries,
+    clearSyncRetries,
+    queueSignal,
+    removePeer,
+    requestAudioSync,
+    requestVideoSync,
+    startPeerNegotiation,
+    updateSelfMediaState,
+  ]);
+
   const renegotiatePeersWithLocalOffer = useCallback(async () => {
     const peerIDs = Array.from(pcsRef.current.keys());
     for (const peerID of peerIDs) {
@@ -750,9 +920,9 @@ export default function RoomCallPage() {
   }, [makeOffer]);
 
   const leaveRoom = useCallback(() => {
-    wsRef.current?.close();
+    leaveRoomSocket("leave-button");
     navigate("/rooms");
-  }, [navigate]);
+  }, [leaveRoomSocket, navigate]);
 
   const copyInvite = useCallback(async () => {
     const link = `${window.location.origin}/rooms/${encodeURIComponent(roomIDRef.current)}`;
@@ -768,6 +938,14 @@ export default function RoomCallPage() {
     if (!token || !roomId) return;
     let cancelled = false;
     let socket: WebSocket | null = null;
+    let heartbeatTimer: number | null = null;
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
 
     const boot = async () => {
       setLoading(true);
@@ -804,7 +982,10 @@ export default function RoomCallPage() {
           t.enabled = false;
         });
         localStreamRef.current = local;
-        updateSelfMediaState(false, false);
+        cameraTrackRef.current = null;
+        screenTrackRef.current = null;
+        setLocalScreenStream(null);
+        updateSelfMediaStateRef.current(false, false, false);
 
         setJoining(true);
         socket = new WebSocket(roomWSURL(roomId));
@@ -818,6 +999,21 @@ export default function RoomCallPage() {
               room_password: roomPassword || undefined,
             })
           );
+          stopHeartbeat();
+          heartbeatTimer = window.setInterval(() => {
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "ping",
+                  ts: Date.now(),
+                })
+              );
+            } catch {
+              // noop
+            }
+          }, 20_000);
         };
 
         socket.onmessage = (event) => {
@@ -844,7 +1040,11 @@ export default function RoomCallPage() {
                   t.enabled = frame.self.video_enabled;
                 });
               }
-              updateSelfMediaState(frame.self.audio_enabled, frame.self.video_enabled);
+              updateSelfMediaStateRef.current(
+                frame.self.audio_enabled,
+                frame.self.video_enabled,
+                Boolean(frame.self.screen_enabled)
+              );
 
               const next: Record<string, LiveRoomParticipant> = {};
               for (const peer of frame.participants || []) {
@@ -856,12 +1056,12 @@ export default function RoomCallPage() {
               setLoading(false);
 
               Object.keys(next).forEach((peerID) => {
-                startPeerNegotiation(peerID);
+                startPeerNegotiationRef.current(peerID);
                 if (next[peerID]?.audio_enabled) {
-                  requestAudioSync(peerID);
+                  requestAudioSyncRef.current(peerID);
                 }
                 if (next[peerID]?.video_enabled) {
-                  requestVideoSync(peerID);
+                  requestVideoSyncRef.current(peerID);
                 }
               });
               break;
@@ -870,12 +1070,12 @@ export default function RoomCallPage() {
               const peer = frame.participant;
               if (!peer?.id || peer.id === selfIDRef.current) break;
               setParticipants((prev) => ({ ...prev, [peer.id]: peer }));
-              startPeerNegotiation(peer.id);
+              startPeerNegotiationRef.current(peer.id);
               if (peer.audio_enabled) {
-                requestAudioSync(peer.id);
+                requestAudioSyncRef.current(peer.id);
               }
               if (peer.video_enabled) {
-                requestVideoSync(peer.id);
+                requestVideoSyncRef.current(peer.id);
               }
               break;
             }
@@ -888,14 +1088,18 @@ export default function RoomCallPage() {
                 delete next[peerID];
                 return next;
               });
-              removePeer(peerID);
+              removePeerRef.current(peerID);
               break;
             }
             case "participant_state_updated": {
               const peerID = frame.user_id;
               if (!peerID) break;
               if (peerID === selfIDRef.current) {
-                updateSelfMediaState(frame.audio_enabled, frame.video_enabled);
+                updateSelfMediaStateRef.current(
+                  frame.audio_enabled,
+                  frame.video_enabled,
+                  Boolean(frame.screen_enabled)
+                );
                 break;
               }
               setParticipants((prev) =>
@@ -906,28 +1110,29 @@ export default function RoomCallPage() {
                         ...prev[peerID],
                         audio_enabled: frame.audio_enabled,
                         video_enabled: frame.video_enabled,
+                        screen_enabled: Boolean(frame.screen_enabled),
                       },
                     }
                   : prev
               );
               // Ensure remote stream appears immediately when peer toggles media on.
               if (frame.audio_enabled) {
-                requestAudioSync(peerID);
+                requestAudioSyncRef.current(peerID);
               } else {
-                clearAudioSyncRetries(peerID);
+                clearAudioSyncRetriesRef.current(peerID);
               }
               if (frame.video_enabled) {
-                requestVideoSync(peerID);
+                requestVideoSyncRef.current(peerID);
               } else if (frame.audio_enabled) {
-                startPeerNegotiation(peerID);
+                startPeerNegotiationRef.current(peerID);
               } else {
-                clearSyncRetries(peerID);
+                clearSyncRetriesRef.current(peerID);
               }
               break;
             }
             case "signal": {
               if (!frame.from_user_id) break;
-              queueSignal(frame.from_user_id, frame.signal_type, frame.payload);
+              queueSignalRef.current(frame.from_user_id, frame.signal_type, frame.payload);
               break;
             }
             case "room_ended": {
@@ -954,14 +1159,37 @@ export default function RoomCallPage() {
               if (frame.message) setError(frame.message);
               break;
             }
+            case "ping": {
+              const ws = wsRef.current;
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(
+                    JSON.stringify({
+                      type: "pong",
+                      ts: frame.ts ?? Date.now(),
+                    })
+                  );
+                } catch {
+                  // noop
+                }
+              }
+              break;
+            }
+            case "pong":
+              break;
           }
         };
 
         socket.onerror = () => {
+          stopHeartbeat();
           socket?.close();
         };
 
         socket.onclose = () => {
+          stopHeartbeat();
+          if (wsRef.current === socket) {
+            wsRef.current = null;
+          }
           if (cancelled) return;
           setJoining(false);
         };
@@ -980,12 +1208,22 @@ export default function RoomCallPage() {
 
     return () => {
       cancelled = true;
+      stopHeartbeat();
+      try {
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "leave", reason: "component-unmount" }));
+        }
+      } catch {
+        // noop
+      }
       try {
         socket?.close();
       } catch {
         // noop
       }
-      wsRef.current = null;
+      if (wsRef.current === socket) {
+        wsRef.current = null;
+      }
       for (const pc of pcsRef.current.values()) {
         try {
           pc.close();
@@ -1013,10 +1251,18 @@ export default function RoomCallPage() {
       ignoreOfferRef.current.clear();
       isSettingRemoteAnswerPendingRef.current.clear();
       signalQueueRef.current.clear();
+      if (screenTrackRef.current) {
+        screenTrackRef.current.onended = null;
+        screenTrackRef.current.stop();
+      }
+      screenTrackRef.current = null;
+      cameraTrackRef.current = null;
+      localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localScreenStreamRef.current = null;
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     };
-  }, [clearAudioSyncRetries, clearSyncRetries, mediaSupportError, navigate, queueSignal, removePeer, requestAudioSync, requestVideoSync, roomId, roomPassword, rtcLog, startPeerNegotiation, token, updateSelfMediaState]);
+  }, [mediaSupportError, navigate, roomId, roomPassword, rtcLog, t, token]);
 
   useEffect(() => {
     const onUserGesture = () => {
@@ -1035,6 +1281,39 @@ export default function RoomCallPage() {
   useEffect(() => {
     resumeRemoteAudioPlayback("streams-updated");
   }, [remoteStreams, resumeRemoteAudioPlayback]);
+
+  useEffect(() => {
+    const closeRoomSocket = (reason: string) => {
+      leaveRoomSocket(reason);
+    };
+
+    const onBeforeUnload = () => closeRoomSocket("beforeunload");
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [leaveRoomSocket]);
+
+  useEffect(() => {
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+    const prevBodyOverscroll = document.body.style.overscrollBehavior;
+
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overscrollBehavior = "none";
+    document.body.style.overscrollBehavior = "none";
+
+    return () => {
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overscrollBehavior = prevHtmlOverscroll;
+      document.body.style.overscrollBehavior = prevBodyOverscroll;
+    };
+  }, []);
 
   const toggleAudio = async () => {
     const local = localStreamRef.current;
@@ -1064,7 +1343,7 @@ export default function RoomCallPage() {
     const next = !audioEnabled;
     rtcLog("toggle-audio", next);
     track.enabled = next;
-    updateSelfMediaState(next, videoEnabled);
+    updateSelfMediaState(next, videoEnabled, screenEnabled);
     sendWS({ type: "media_state", audio_enabled: next });
 
     if (next) {
@@ -1082,29 +1361,31 @@ export default function RoomCallPage() {
     }
     setVideoBusy(true);
     try {
-      const existing = local.getVideoTracks()[0];
-      if (existing) {
-        const next = !existing.enabled;
-        rtcLog("toggle-video-existing", next);
-        existing.enabled = next;
-        updateSelfMediaState(audioEnabled, next);
-        sendWS({ type: "media_state", video_enabled: next });
-        if (next) {
-          await renegotiatePeersWithLocalOffer();
-        }
-      } else {
+      let cameraTrack = cameraTrackRef.current;
+      if (!cameraTrack || cameraTrack.readyState === "ended") {
         rtcLog("toggle-video-new-track");
         const cam = await navigator.mediaDevices.getUserMedia({ video: true });
-        const videoTrack = cam.getVideoTracks()[0];
-        if (!videoTrack) {
+        const newTrack = cam.getVideoTracks()[0];
+        if (!newTrack) {
           throw new Error("camera_not_available");
         }
-        local.addTrack(videoTrack);
-        for (const peerID of pcsRef.current.keys()) {
-          await attachTrackToPeer(peerID, videoTrack);
-        }
-        updateSelfMediaState(audioEnabled, true);
-        sendWS({ type: "media_state", video_enabled: true });
+        local.addTrack(newTrack);
+        cameraTrackRef.current = newTrack;
+        cameraTrack = newTrack;
+      }
+
+      if (!cameraTrack) {
+        throw new Error("camera_not_available");
+      }
+
+      const next = !videoEnabled;
+      rtcLog("toggle-video", next);
+      cameraTrack.enabled = next;
+      updateSelfMediaState(audioEnabled, next, screenEnabled);
+      sendWS({ type: "media_state", video_enabled: next });
+
+      if (!screenEnabled) {
+        await applyOutgoingVideoTrack(next ? cameraTrack : null, { isScreenShare: false });
         await renegotiatePeersWithLocalOffer();
       }
     } catch (e: any) {
@@ -1114,13 +1395,318 @@ export default function RoomCallPage() {
     }
   };
 
+  const stopScreenShare = useCallback(
+    async (reason: "manual" | "ended" = "manual") => {
+      const screenTrack = screenTrackRef.current;
+      const active = screenEnabled || Boolean(screenTrack);
+      if (!active) return;
+
+      if (screenTrack) {
+        screenTrack.onended = null;
+        try {
+          screenTrack.stop();
+        } catch {
+          // noop
+        }
+      }
+      screenTrackRef.current = null;
+      setLocalScreenStream((prev) => {
+        if (prev) {
+          prev.getTracks().forEach((track) => {
+            try {
+              track.stop();
+            } catch {
+              // noop
+            }
+          });
+        }
+        return null;
+      });
+
+      const fallbackCamera = videoEnabled ? cameraTrackRef.current : null;
+      await applyOutgoingVideoTrack(fallbackCamera, { isScreenShare: false });
+      updateSelfMediaState(audioEnabled, videoEnabled, false);
+      sendWS({ type: "media_state", screen_enabled: false });
+      if (reason !== "ended" || fallbackCamera) {
+        await renegotiatePeersWithLocalOffer();
+      }
+    },
+    [
+      applyOutgoingVideoTrack,
+      audioEnabled,
+      renegotiatePeersWithLocalOffer,
+      screenEnabled,
+      sendWS,
+      updateSelfMediaState,
+      videoEnabled,
+    ]
+  );
+
+  const toggleScreenShare = useCallback(async () => {
+    if (screenBusy) return;
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setError(t("rooms.screen_not_supported"));
+      return;
+    }
+
+    if (screenEnabled) {
+      await stopScreenShare("manual");
+      return;
+    }
+
+    setScreenBusy(true);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          frameRate: { ideal: 26, max: 30 },
+          width: { ideal: 2240, max: 2880 },
+          height: { ideal: 1260, max: 1620 },
+        },
+        audio: false,
+      });
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        throw new Error(t("rooms.screen_error"));
+      }
+      try {
+        track.contentHint = "detail";
+      } catch {
+        // contentHint is optional across browsers.
+      }
+      try {
+        await track.applyConstraints({
+          frameRate: { ideal: 26, max: 30 },
+          width: { ideal: 2240, max: 2880 },
+          height: { ideal: 1260, max: 1620 },
+        });
+      } catch {
+        // Some browsers ignore advanced frame-rate constraints.
+      }
+
+      screenTrackRef.current = track;
+      setLocalScreenStream(new MediaStream([track]));
+      track.onended = () => {
+        void stopScreenShare("ended");
+      };
+
+      await applyOutgoingVideoTrack(track, { isScreenShare: true });
+      updateSelfMediaState(audioEnabled, videoEnabled, true);
+      sendWS({ type: "media_state", screen_enabled: true });
+      await renegotiatePeersWithLocalOffer();
+    } catch (err: any) {
+      setError(err?.message || t("rooms.screen_error"));
+    } finally {
+      setScreenBusy(false);
+    }
+  }, [
+    applyOutgoingVideoTrack,
+    audioEnabled,
+    renegotiatePeersWithLocalOffer,
+    screenBusy,
+    screenEnabled,
+    sendWS,
+    stopScreenShare,
+    t,
+    updateSelfMediaState,
+    videoEnabled,
+  ]);
+
   const localStream = localStreamRef.current;
   const peerList = Object.values(participants);
+  const localVideoTrack = cameraTrackRef.current;
+  const showLocalCamera =
+    Boolean(localStream) &&
+    videoEnabled &&
+    !screenEnabled &&
+    Boolean(localVideoTrack && localVideoTrack.enabled && localVideoTrack.readyState !== "ended");
+
+  const activeScreenShares = useMemo(() => {
+    const shares: Array<{ ownerID: string; ownerName: string; stream: MediaStream; isLocal: boolean }> = [];
+    if (screenEnabled && localScreenStream) {
+      shares.push({
+        ownerID: selfParticipant?.id || "local",
+        ownerName: selfParticipant?.full_name || t("rooms.you"),
+        stream: localScreenStream,
+        isLocal: true,
+      });
+    }
+    for (const peer of peerList) {
+      const stream = remoteStreams[peer.id];
+      if (!stream || !peer.screen_enabled) continue;
+      const hasVideo = stream.getVideoTracks().some((track) => track.readyState !== "ended");
+      if (!hasVideo) continue;
+      shares.push({
+        ownerID: peer.id,
+        ownerName: peer.full_name || peer.username,
+        stream,
+        isLocal: false,
+      });
+    }
+    return shares;
+  }, [localScreenStream, peerList, remoteStreams, screenEnabled, selfParticipant?.full_name, selfParticipant?.id, t]);
+
+  const expandedScreenShare = useMemo(() => {
+    if (!expandedScreenOwner) return null;
+    return activeScreenShares.find((item) => item.ownerID === expandedScreenOwner) || null;
+  }, [activeScreenShares, expandedScreenOwner]);
+
+  useEffect(() => {
+    if (!expandedScreenOwner) return;
+    if (expandedScreenShare) return;
+    setExpandedScreenOwner(null);
+  }, [expandedScreenOwner, expandedScreenShare]);
+
+  useEffect(() => {
+    if (!expandedScreenOwner) {
+      setFullscreenZoom(1);
+      setFullscreenPan({ x: 0, y: 0 });
+      touchStateRef.current.mode = "none";
+      suppressNextViewportTapCloseRef.current = false;
+      return;
+    }
+    setFullscreenZoom(1);
+    setFullscreenPan({ x: 0, y: 0 });
+    touchStateRef.current.mode = "none";
+    suppressNextViewportTapCloseRef.current = false;
+  }, [expandedScreenOwner]);
+
+  const handleFullscreenTouchStart = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+      const touches = event.touches;
+      if (touches.length === 2) {
+        event.preventDefault();
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        touchStateRef.current = {
+          mode: "pinch",
+          startPanX: fullscreenPanRef.current.x,
+          startPanY: fullscreenPanRef.current.y,
+          startX: 0,
+          startY: 0,
+          startDistance: Math.hypot(dx, dy),
+          startZoom: fullscreenZoomRef.current,
+          startCenterX: (touches[0].clientX + touches[1].clientX) / 2,
+          startCenterY: (touches[0].clientY + touches[1].clientY) / 2,
+        };
+        return;
+      }
+      if (touches.length === 1 && fullscreenZoomRef.current > 1.001) {
+        event.preventDefault();
+        touchStateRef.current = {
+          mode: "pan",
+          startPanX: fullscreenPanRef.current.x,
+          startPanY: fullscreenPanRef.current.y,
+          startX: touches[0].clientX,
+          startY: touches[0].clientY,
+          startDistance: 0,
+          startZoom: fullscreenZoomRef.current,
+          startCenterX: 0,
+          startCenterY: 0,
+        };
+      }
+    },
+    []
+  );
+
+  const handleFullscreenTouchMove = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      let state = touchStateRef.current;
+      const touches = event.touches;
+      if (touches.length === 2 && state.mode !== "pinch") {
+        event.preventDefault();
+        event.stopPropagation();
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        touchStateRef.current = {
+          mode: "pinch",
+          startPanX: fullscreenPanRef.current.x,
+          startPanY: fullscreenPanRef.current.y,
+          startX: 0,
+          startY: 0,
+          startDistance: Math.hypot(dx, dy),
+          startZoom: fullscreenZoomRef.current,
+          startCenterX: (touches[0].clientX + touches[1].clientX) / 2,
+          startCenterY: (touches[0].clientY + touches[1].clientY) / 2,
+        };
+        state = touchStateRef.current;
+      }
+      if (state.mode === "pinch" && touches.length === 2) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextViewportTapCloseRef.current = true;
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        const distance = Math.hypot(dx, dy);
+        const ratio = state.startDistance > 0 ? distance / state.startDistance : 1;
+        const nextZoom = Math.max(1, Math.min(4, state.startZoom * ratio));
+        const centerX = (touches[0].clientX + touches[1].clientX) / 2;
+        const centerY = (touches[0].clientY + touches[1].clientY) / 2;
+        const viewport = fullscreenViewportRef.current;
+        let nextPan = { x: 0, y: 0 };
+        if (viewport) {
+          const rect = viewport.getBoundingClientRect();
+          const centerScreenX = rect.left + rect.width / 2;
+          const centerScreenY = rect.top + rect.height / 2;
+          const safeStartZoom = Math.max(0.001, state.startZoom);
+          const contentX = (state.startCenterX - centerScreenX - state.startPanX) / safeStartZoom;
+          const contentY = (state.startCenterY - centerScreenY - state.startPanY) / safeStartZoom;
+          const targetPanX = centerX - centerScreenX - contentX * nextZoom;
+          const targetPanY = centerY - centerScreenY - contentY * nextZoom;
+          nextPan = clampFullscreenPan(targetPanX, targetPanY, nextZoom);
+        } else {
+          const dragX = centerX - state.startCenterX;
+          const dragY = centerY - state.startCenterY;
+          nextPan = clampFullscreenPan(
+            state.startPanX + dragX,
+            state.startPanY + dragY,
+            nextZoom
+          );
+        }
+        setFullscreenZoom(nextZoom);
+        setFullscreenPan(nextPan);
+        return;
+      }
+      if (state.mode === "pan" && touches.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextViewportTapCloseRef.current = true;
+        const dx = touches[0].clientX - state.startX;
+        const dy = touches[0].clientY - state.startY;
+        const nextPan = clampFullscreenPan(
+          state.startPanX + dx,
+          state.startPanY + dy,
+          fullscreenZoomRef.current
+        );
+        setFullscreenPan(nextPan);
+      }
+    },
+    [clampFullscreenPan]
+  );
+
+  const handleFullscreenTouchEnd = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const touches = event.touches;
+    if (touches.length === 1 && fullscreenZoomRef.current > 1.001) {
+      touchStateRef.current = {
+        mode: "pan",
+        startPanX: fullscreenPanRef.current.x,
+        startPanY: fullscreenPanRef.current.y,
+        startX: touches[0].clientX,
+        startY: touches[0].clientY,
+        startDistance: 0,
+        startZoom: fullscreenZoomRef.current,
+        startCenterX: 0,
+        startCenterY: 0,
+      };
+      return;
+    }
+    touchStateRef.current.mode = "none";
+  }, []);
 
   return (
     <main
       data-page-root
-      className="max-w-[672px] w-full mx-auto h-[var(--chat-mobile-vh,100dvh)] min-[871px]:h-auto py-3 min-[871px]:py-6 flex flex-col gap-3 page-fade"
+      className="max-w-[672px] w-full mx-auto h-[var(--chat-mobile-vh,100dvh)] py-3 flex min-h-0 flex-col gap-3 overflow-hidden page-fade"
     >
       <div className="card p-3 flex items-center gap-3">
         <button
@@ -1159,9 +1745,36 @@ export default function RoomCallPage() {
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+        {activeScreenShares.length > 0 ? (
+          <div className="mb-2 space-y-2">
+            <p className="text-[11px] uppercase tracking-wide text-white/55">{t("rooms.screen_share_active")}</p>
+            <div className="grid grid-cols-1 gap-2">
+              {activeScreenShares.map((share) => (
+                <button
+                  key={share.ownerID}
+                  type="button"
+                  onClick={() => setExpandedScreenOwner(share.ownerID)}
+                  className="relative h-[180px] sm:h-[240px] overflow-hidden rounded-2xl border border-sky-300/35 bg-black/40 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60"
+                >
+                  <VideoView stream={share.stream} muted mirror={false} fitClassName="object-contain" />
+                  <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-sky-500/20 px-2 py-0.5 text-xs text-sky-100">
+                      <MonitorUp className="w-3 h-3" />
+                      <span className="truncate">{share.ownerName}</span>
+                    </span>
+                    <span className="rounded-full bg-black/55 px-2 py-0.5 text-[11px] text-white/80">
+                      {t("rooms.screen_open_full")}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-2 gap-2 auto-rows-[150px] sm:auto-rows-[180px]">
           <div className="relative rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
-            {localStream && videoEnabled && localStream.getVideoTracks().some((t) => t.enabled) ? (
+            {showLocalCamera && localStream ? (
               <VideoView stream={localStream} muted />
             ) : (
               <div className="absolute inset-0 grid place-items-center">
@@ -1180,13 +1793,19 @@ export default function RoomCallPage() {
               <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
                 {audioEnabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
                 {videoEnabled ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
+                {screenEnabled ? <MonitorUp className="w-3 h-3" /> : null}
               </span>
             </div>
           </div>
 
           {peerList.map((peer) => {
             const stream = remoteStreams[peer.id];
-            const showVideo = Boolean(stream && peer.video_enabled && stream.getVideoTracks().length > 0);
+            const showVideo = Boolean(
+              stream &&
+                peer.video_enabled &&
+                !peer.screen_enabled &&
+                stream.getVideoTracks().some((track) => track.readyState !== "ended")
+            );
             return (
               <div
                 key={peer.id}
@@ -1212,6 +1831,7 @@ export default function RoomCallPage() {
                   <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
                     {peer.audio_enabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
                     {peer.video_enabled ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
+                    {peer.screen_enabled ? <MonitorUp className="w-3 h-3" /> : null}
                   </span>
                 </div>
               </div>
@@ -1264,6 +1884,21 @@ export default function RoomCallPage() {
 
         <button
           type="button"
+          onClick={toggleScreenShare}
+          disabled={screenBusy}
+          className={`w-11 h-11 rounded-full border grid place-items-center transition disabled:opacity-60 ${
+            screenEnabled
+              ? "border-sky-300/35 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30"
+              : "border-white/15 bg-white/5 text-white/85 hover:bg-white/10"
+          }`}
+          aria-label={screenEnabled ? t("rooms.screen_off") : t("rooms.screen_on")}
+          title={screenEnabled ? t("rooms.screen_off") : t("rooms.screen_on")}
+        >
+          <MonitorUp className="w-5 h-5" />
+        </button>
+
+        <button
+          type="button"
           onClick={leaveRoom}
           className="w-11 h-11 rounded-full border border-red-400/45 bg-red-500/20 text-red-100 hover:bg-red-500/30 grid place-items-center"
           aria-label={t("rooms.leave")}
@@ -1272,6 +1907,61 @@ export default function RoomCallPage() {
           <PhoneOff className="w-5 h-5" />
         </button>
       </div>
+
+      {expandedScreenShare ? (
+        <div
+          className="fixed inset-0 z-[90] bg-black/95 p-3 sm:p-5 flex flex-col gap-3"
+          onClick={() => setExpandedScreenOwner(null)}
+        >
+          <div className="flex items-center justify-between" onClick={(event) => event.stopPropagation()}>
+            <p className="text-white/90 text-sm inline-flex items-center gap-2">
+              <MonitorUp className="w-4 h-4 text-sky-300" />
+              <span className="truncate">{expandedScreenShare.ownerName}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setExpandedScreenOwner(null)}
+              className="w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/90 grid place-items-center"
+              aria-label={t("rooms.screen_close")}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div
+            ref={fullscreenViewportRef}
+            className="relative min-h-0 flex-1 rounded-2xl border border-white/15 overflow-hidden bg-black touch-none"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (suppressNextViewportTapCloseRef.current) {
+                suppressNextViewportTapCloseRef.current = false;
+                return;
+              }
+              if (fullscreenZoom <= 1.01) {
+                setExpandedScreenOwner(null);
+              }
+            }}
+            onTouchStart={handleFullscreenTouchStart}
+            onTouchMove={handleFullscreenTouchMove}
+            onTouchEnd={handleFullscreenTouchEnd}
+            onTouchCancel={handleFullscreenTouchEnd}
+          >
+            <div
+              className="absolute inset-0 will-change-transform"
+              style={{
+                transform: `translate3d(${fullscreenPan.x}px, ${fullscreenPan.y}px, 0) scale(${fullscreenZoom})`,
+                transformOrigin: "center center",
+              }}
+            >
+              <VideoView
+                stream={expandedScreenShare.stream}
+                muted
+                mirror={false}
+                fitClassName="object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -118,7 +118,7 @@ func (h *liveRoomWSHub) listParticipants(roomID string, excludeUserID string) []
 	return out
 }
 
-func (h *liveRoomWSHub) updateMediaState(client *liveRoomWSClient, audioEnabled, videoEnabled *bool) service.LiveRoomParticipant {
+func (h *liveRoomWSHub) updateMediaState(client *liveRoomWSClient, audioEnabled, videoEnabled, screenEnabled *bool) service.LiveRoomParticipant {
 	if client == nil {
 		return service.LiveRoomParticipant{}
 	}
@@ -129,6 +129,9 @@ func (h *liveRoomWSHub) updateMediaState(client *liveRoomWSClient, audioEnabled,
 	}
 	if videoEnabled != nil {
 		client.user.VideoEnabled = *videoEnabled
+	}
+	if screenEnabled != nil {
+		client.user.ScreenEnabled = *screenEnabled
 	}
 	return client.user
 }

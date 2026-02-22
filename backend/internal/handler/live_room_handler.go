@@ -201,6 +201,27 @@ func (h *LiveRoomHandler) handleRoomWS(w http.ResponseWriter, r *http.Request, r
 		h.cancelCleanup(roomID)
 		log.Printf("live-room ws joined room=%s user=%s online=%d", roomID, userID, h.ws.roomSize(roomID))
 
+		heartbeatStop := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(25 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					if err := client.send(map[string]any{
+						"type": "ping",
+						"ts":   time.Now().UnixMilli(),
+					}); err != nil {
+						log.Printf("live-room ws heartbeat failed room=%s user=%s err=%v", roomID, userID, err)
+						client.close()
+						return
+					}
+				}
+			}
+		}()
+
 		others := h.ws.listParticipants(roomID, userID)
 		room.ParticipantCount = h.ws.roomSize(roomID)
 		_ = client.send(map[string]any{
@@ -217,6 +238,7 @@ func (h *LiveRoomHandler) handleRoomWS(w http.ResponseWriter, r *http.Request, r
 		})
 
 		defer func() {
+			close(heartbeatStop)
 			h.ws.unregister(client)
 			h.ws.broadcast(roomID, map[string]any{
 				"type":    "user_left",
@@ -235,18 +257,28 @@ func (h *LiveRoomHandler) handleRoomWS(w http.ResponseWriter, r *http.Request, r
 				return
 			}
 			var frame struct {
-				Type         string          `json:"type"`
-				TargetUserID string          `json:"target_user_id"`
-				SignalType   string          `json:"signal_type"`
-				Payload      json.RawMessage `json:"payload"`
-				AudioEnabled *bool           `json:"audio_enabled"`
-				VideoEnabled *bool           `json:"video_enabled"`
+				Type          string          `json:"type"`
+				TargetUserID  string          `json:"target_user_id"`
+				SignalType    string          `json:"signal_type"`
+				Payload       json.RawMessage `json:"payload"`
+				AudioEnabled  *bool           `json:"audio_enabled"`
+				VideoEnabled  *bool           `json:"video_enabled"`
+				ScreenEnabled *bool           `json:"screen_enabled"`
 			}
 			if err := json.Unmarshal([]byte(raw), &frame); err != nil {
 				continue
 			}
 
 			switch strings.ToLower(strings.TrimSpace(frame.Type)) {
+			case "leave":
+				return
+			case "ping":
+				_ = client.send(map[string]any{
+					"type": "pong",
+					"ts":   time.Now().UnixMilli(),
+				})
+			case "pong":
+				continue
 			case "signal":
 				targetUserID := strings.TrimSpace(frame.TargetUserID)
 				if targetUserID == "" || targetUserID == userID {
@@ -268,20 +300,22 @@ func (h *LiveRoomHandler) handleRoomWS(w http.ResponseWriter, r *http.Request, r
 					delivered,
 				)
 			case "media_state":
-				updated := h.ws.updateMediaState(client, frame.AudioEnabled, frame.VideoEnabled)
+				updated := h.ws.updateMediaState(client, frame.AudioEnabled, frame.VideoEnabled, frame.ScreenEnabled)
 				log.Printf(
-					"live-room ws media_state room=%s user=%s audio=%t video=%t",
+					"live-room ws media_state room=%s user=%s audio=%t video=%t screen=%t",
 					roomID,
 					userID,
 					updated.AudioEnabled,
 					updated.VideoEnabled,
+					updated.ScreenEnabled,
 				)
 				h.ws.broadcastExcept(roomID, userID, map[string]any{
-					"type":          "participant_state_updated",
-					"room_id":       roomID,
-					"user_id":       userID,
-					"audio_enabled": updated.AudioEnabled,
-					"video_enabled": updated.VideoEnabled,
+					"type":           "participant_state_updated",
+					"room_id":        roomID,
+					"user_id":        userID,
+					"audio_enabled":  updated.AudioEnabled,
+					"video_enabled":  updated.VideoEnabled,
+					"screen_enabled": updated.ScreenEnabled,
 				})
 			}
 		}

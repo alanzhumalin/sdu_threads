@@ -101,6 +101,7 @@ export type LiveRoomParticipant = {
   avatar_url?: string;
   audio_enabled: boolean;
   video_enabled: boolean;
+  screen_enabled: boolean;
 };
 
 export type TelegramStatus = {

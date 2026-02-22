@@ -48,13 +48,14 @@ type LiveRoom struct {
 }
 
 type LiveRoomParticipant struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	FullName     string `json:"full_name"`
-	IsVerified   bool   `json:"is_verified"`
-	AvatarURL    string `json:"avatar_url,omitempty"`
-	AudioEnabled bool   `json:"audio_enabled"`
-	VideoEnabled bool   `json:"video_enabled"`
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	FullName      string `json:"full_name"`
+	IsVerified    bool   `json:"is_verified"`
+	AvatarURL     string `json:"avatar_url,omitempty"`
+	AudioEnabled  bool   `json:"audio_enabled"`
+	VideoEnabled  bool   `json:"video_enabled"`
+	ScreenEnabled bool   `json:"screen_enabled"`
 }
 
 func normalizeLiveRoomTitle(value string) (string, error) {
@@ -193,12 +194,13 @@ func (s *LiveRoomService) Participant(ctx context.Context, userID string) (*Live
 		return nil, err
 	}
 	return &LiveRoomParticipant{
-		ID:           u.ID,
-		Username:     u.Username,
-		FullName:     u.FullName,
-		IsVerified:   u.IsVerified,
-		AvatarURL:    strings.TrimSpace(u.AvatarURL),
-		AudioEnabled: false,
-		VideoEnabled: false,
+		ID:            u.ID,
+		Username:      u.Username,
+		FullName:      u.FullName,
+		IsVerified:    u.IsVerified,
+		AvatarURL:     strings.TrimSpace(u.AvatarURL),
+		AudioEnabled:  false,
+		VideoEnabled:  false,
+		ScreenEnabled: false,
 	}, nil
 }
