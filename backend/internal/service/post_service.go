@@ -99,6 +99,11 @@ var postContainerColorAllowed = map[string]struct{}{
 	"violet":  {},
 }
 
+var (
+	ErrPostNotFound  = errors.New("post not found")
+	ErrPostForbidden = errors.New("forbidden")
+)
+
 func normalizePostContainerColor(raw string) (string, error) {
 	key := strings.TrimSpace(strings.ToLower(raw))
 	if _, ok := postContainerColorAllowed[key]; !ok {
@@ -1206,6 +1211,156 @@ func (s *PostService) CreateWithTags(ctx context.Context, userID string, content
 		return nil, err
 	}
 	return post, nil
+}
+
+func (s *PostService) UpdateOwnWithTags(
+	ctx context.Context,
+	postID string,
+	userID string,
+	content string,
+	media []dto.MediaItem,
+	tags []string,
+) (*dto.FeedResponseItem, error) {
+	postID = strings.TrimSpace(postID)
+	userID = strings.TrimSpace(userID)
+	if postID == "" || userID == "" {
+		return nil, errors.New("post_id and user_id are required")
+	}
+
+	meta, err := s.posts.MetaByID(ctx, postID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPostNotFound
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(meta.UserID) != userID {
+		return nil, ErrPostForbidden
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return nil, errors.New("content is required")
+	}
+
+	preview := strings.TrimSpace(content)
+	if len(preview) > 160 {
+		preview = preview[:160] + "..."
+	}
+	if err := s.mod.CheckText(ctx, content, "post_text", &moderation.AuditMeta{
+		ActorUserID: userID,
+		Action:      "update_post",
+		TargetType:  "post",
+		TargetID:    postID,
+		Payload: map[string]any{
+			"content_preview": preview,
+			"media_count":     len(media),
+		},
+	}); err != nil {
+		return nil, err
+	}
+
+	clean := make([]dto.MediaItem, 0, len(media))
+	for _, m := range media {
+		m.URL = strings.TrimSpace(m.URL)
+		if m.URL == "" {
+			continue
+		}
+		if m.Width < 0 {
+			m.Width = 0
+		}
+		if m.Height < 0 {
+			m.Height = 0
+		}
+		clean = append(clean, m)
+	}
+
+	if s.uploader != nil && len(clean) > 0 {
+		verified, err := s.verifyPostMedia(ctx, userID, clean)
+		if err != nil {
+			return nil, err
+		}
+		clean = verified
+	}
+	for _, m := range clean {
+		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
+			ActorUserID: userID,
+			Action:      "update_post",
+			TargetType:  "post",
+			TargetID:    postID,
+			Payload: map[string]any{
+				"media_url": m.URL,
+			},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if len(clean) > 5 {
+		return nil, errors.New("too many media files (max 5)")
+	}
+
+	mediaURL := ""
+	if len(clean) > 0 {
+		mediaURL = clean[0].URL
+	}
+	rows := make([]models.PostMedia, 0, len(clean))
+	for i, m := range clean {
+		rows = append(rows, models.PostMedia{
+			URL:       m.URL,
+			Width:     m.Width,
+			Height:    m.Height,
+			SortOrder: i,
+		})
+	}
+	if err := s.posts.UpdateContentAndMedia(ctx, postID, content, mediaURL, rows); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrPostNotFound
+		}
+		return nil, err
+	}
+
+	if s.tags != nil {
+		normalized := normalizeTags(tags)
+		if len(normalized) == 0 {
+			normalized = normalizeTags(extractHashtagCandidates(content))
+		}
+		idMap, err := s.tags.Upsert(ctx, normalized)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.tags.ReplaceForPost(ctx, postID, idMap); err != nil {
+			return nil, err
+		}
+	}
+
+	viewer := userID
+	return s.Get(ctx, postID, &viewer)
+}
+
+func (s *PostService) DeleteOwn(ctx context.Context, postID string, userID string) error {
+	postID = strings.TrimSpace(postID)
+	userID = strings.TrimSpace(userID)
+	if postID == "" || userID == "" {
+		return errors.New("post_id and user_id are required")
+	}
+
+	meta, err := s.posts.MetaByID(ctx, postID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrPostNotFound
+		}
+		return err
+	}
+	if strings.TrimSpace(meta.UserID) != userID {
+		return ErrPostForbidden
+	}
+
+	if err := s.posts.Remove(ctx, postID, userID, "user_deleted"); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrPostNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *PostService) FollowerIDs(ctx context.Context, userID string) ([]string, error) {

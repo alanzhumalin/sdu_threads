@@ -185,7 +185,6 @@ export default function RoomCallPage() {
   const [screenBusy, setScreenBusy] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
-  const [showLandscapeButton, setShowLandscapeButton] = useState(false);
   const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
@@ -1375,20 +1374,6 @@ export default function RoomCallPage() {
     };
   }, []);
 
-  useEffect(() => {
-    const compute = () => {
-      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-      const compactWidth = window.matchMedia("(max-width: 1180px)").matches;
-      setShowLandscapeButton(coarsePointer || compactWidth);
-    };
-
-    compute();
-    window.addEventListener("resize", compute);
-    return () => {
-      window.removeEventListener("resize", compute);
-    };
-  }, []);
-
   const exitLandscapeMode = useCallback(async () => {
     if (!landscapeSessionRef.current) return;
     landscapeSessionRef.current = false;
@@ -2094,18 +2079,6 @@ export default function RoomCallPage() {
           <MonitorUp className="w-5 h-5" />
         </button>
 
-        {showLandscapeButton ? (
-          <button
-            type="button"
-            onClick={openLandscapeMode}
-            className="w-11 h-11 rounded-full border border-indigo-300/35 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30 grid place-items-center"
-            aria-label={t("rooms.landscape_mode")}
-            title={t("rooms.landscape_mode")}
-          >
-            <Smartphone className="w-5 h-5" />
-          </button>
-        ) : null}
-
         <button
           type="button"
           onClick={leaveRoom}
@@ -2127,14 +2100,25 @@ export default function RoomCallPage() {
               <MonitorUp className="w-4 h-4 text-sky-300" />
               <span className="truncate">{expandedScreenShare.ownerName}</span>
             </p>
-            <button
-              type="button"
-              onClick={() => setExpandedScreenOwner(null)}
-              className="w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/90 grid place-items-center"
-              aria-label={t("rooms.screen_close")}
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="inline-flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openLandscapeMode}
+                className="w-10 h-10 rounded-full border border-indigo-300/35 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30 grid place-items-center"
+                aria-label={t("rooms.landscape_mode")}
+                title={t("rooms.landscape_mode")}
+              >
+                <Smartphone className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpandedScreenOwner(null)}
+                className="w-10 h-10 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/90 grid place-items-center"
+                aria-label={t("rooms.screen_close")}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
           <div
             ref={fullscreenViewportRef}

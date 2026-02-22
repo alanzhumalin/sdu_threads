@@ -746,3 +746,64 @@ func (r *PostRepository) Remove(ctx context.Context, postID, removedBy, reason s
 	}
 	return nil
 }
+
+func (r *PostRepository) UpdateContentAndMedia(
+	ctx context.Context,
+	postID string,
+	content string,
+	mediaURL string,
+	media []models.PostMedia,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.Post{}).
+			Where("id = ? AND removed_at IS NULL", postID).
+			Updates(map[string]any{
+				"content":    content,
+				"media_url":  strings.TrimSpace(mediaURL),
+				"updated_at": gorm.Expr("now()"),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		if err := tx.Where("post_id = ?", postID).Delete(&models.PostMedia{}).Error; err != nil {
+			return err
+		}
+
+		if len(media) == 0 {
+			return nil
+		}
+		if len(media) > 5 {
+			media = media[:5]
+		}
+		rows := make([]models.PostMedia, 0, len(media))
+		for idx, m := range media {
+			u := strings.TrimSpace(m.URL)
+			if u == "" {
+				continue
+			}
+			w := m.Width
+			h := m.Height
+			if w < 0 {
+				w = 0
+			}
+			if h < 0 {
+				h = 0
+			}
+			rows = append(rows, models.PostMedia{
+				PostID:    postID,
+				URL:       u,
+				Width:     w,
+				Height:    h,
+				SortOrder: idx,
+			})
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		return tx.Create(&rows).Error
+	})
+}

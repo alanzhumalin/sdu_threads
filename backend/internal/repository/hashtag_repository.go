@@ -51,6 +51,22 @@ func (r *HashtagRepository) AttachToPost(ctx context.Context, postID string, has
 	return nil
 }
 
+func (r *HashtagRepository) ReplaceForPost(ctx context.Context, postID string, hashtagIDs map[string]string) error {
+	tx := r.db.WithContext(ctx)
+	if err := tx.Exec(`DELETE FROM post_hashtags WHERE post_id = ?`, postID).Error; err != nil {
+		return err
+	}
+	if len(hashtagIDs) == 0 {
+		return nil
+	}
+	for _, id := range hashtagIDs {
+		if err := tx.Exec(`INSERT INTO post_hashtags (post_id, hashtag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, postID, id).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type Hashtag struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`

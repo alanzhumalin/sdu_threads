@@ -10,6 +10,14 @@ type CreatePostRequest struct {
 	Hashtags       []string    `json:"hashtags,omitempty"`
 }
 
+type UpdatePostRequest struct {
+	Content   string      `json:"content"`
+	Media     []MediaItem `json:"media,omitempty"`      // preferred: urls + dimensions
+	MediaURL  string      `json:"media_url,omitempty"`  // legacy: first media url
+	MediaURLs []string    `json:"media_urls,omitempty"` // legacy: urls only
+	Hashtags  []string    `json:"hashtags,omitempty"`
+}
+
 type MediaItem struct {
 	URL    string `json:"url"`
 	Width  int    `json:"width"`

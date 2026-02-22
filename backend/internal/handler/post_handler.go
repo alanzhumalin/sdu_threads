@@ -222,23 +222,104 @@ func (h *PostHandler) handlePostActions(w http.ResponseWriter, r *http.Request) 
 	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
 
 	postID := parts[0]
+	if strings.TrimSpace(postID) == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
 
 	if len(parts) == 1 {
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			var viewerID *string
+			if id, err := tryGetUserID(r, h.jwt); err == nil {
+				viewerID = &id
+			}
+			post, err := h.service.Get(r.Context(), postID, viewerID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, post)
+			return
+		case http.MethodPatch:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			var req dto.UpdatePostRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+			media := req.Media
+			if len(media) == 0 {
+				urls := req.MediaURLs
+				if len(urls) == 0 && strings.TrimSpace(req.MediaURL) != "" {
+					urls = []string{req.MediaURL}
+				}
+				for _, u := range urls {
+					u = strings.TrimSpace(u)
+					if u == "" {
+						continue
+					}
+					media = append(media, dto.MediaItem{URL: u})
+				}
+			}
+			updated, err := h.service.UpdateOwnWithTags(r.Context(), postID, userID, req.Content, media, req.Hashtags)
+			if err != nil {
+				switch {
+				case errors.Is(err, service.ErrPostNotFound):
+					writeError(w, http.StatusNotFound, err.Error())
+					return
+				case errors.Is(err, service.ErrPostForbidden):
+					writeError(w, http.StatusForbidden, err.Error())
+					return
+				}
+				var viol *moderation.ViolationError
+				if errors.As(err, &viol) {
+					writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+					return
+				}
+				if moderation.IsUnavailable(err) {
+					writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+						Code:    "MODERATION_UNAVAILABLE",
+						Message: "Сервис модерации временно недоступен",
+					})
+					return
+				}
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
+			writeJSON(w, http.StatusOK, updated)
+			return
+		case http.MethodDelete:
+			userID, err := requireUserID(r, h.jwt)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+			if err := h.service.DeleteOwn(r.Context(), postID, userID); err != nil {
+				switch {
+				case errors.Is(err, service.ErrPostNotFound):
+					writeError(w, http.StatusNotFound, err.Error())
+					return
+				case errors.Is(err, service.ErrPostForbidden):
+					writeError(w, http.StatusForbidden, err.Error())
+					return
+				default:
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+			invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+			return
+		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		var viewerID *string
-		if id, err := tryGetUserID(r, h.jwt); err == nil {
-			viewerID = &id
-		}
-		post, err := h.service.Get(r.Context(), postID, viewerID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, post)
-		return
 	}
 
 	if len(parts) != 2 || (parts[1] != "like" && parts[1] != "view" && parts[1] != "reactions") {

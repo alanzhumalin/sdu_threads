@@ -622,6 +622,41 @@ export const api = {
     token: string
   ) =>
     request<{ status: string }>("/posts", "POST", payload, token),
+  updatePost: (
+    postId: string,
+    payload: {
+      content: string;
+      media?: MediaItem[];
+      media_url?: string;
+      media_urls?: string[];
+      hashtags?: string[];
+    },
+    token: string
+  ) =>
+    request<{
+      id: string;
+      user_id: string;
+      username: string;
+      full_name: string;
+      is_verified?: boolean;
+      avatar_url?: string;
+      content: string;
+      container_color?: string;
+      media?: MediaItem[];
+      music?: PostMusic;
+      created_at: string;
+      updated_at: string;
+      like_count: number;
+      liked_by_me: boolean;
+      view_count: number;
+      comment_count?: number;
+      mentions?: string[];
+      hashtags?: string[];
+      is_subscribed?: boolean;
+      is_me?: boolean;
+    }>(`/posts/${encodeURIComponent(postId)}`, "PATCH", payload, token),
+  deletePost: (postId: string, token: string) =>
+    request<{ status: string }>(`/posts/${encodeURIComponent(postId)}`, "DELETE", undefined, token),
   uploadMedia: async (files: File[], purpose: string, token: string) => {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));

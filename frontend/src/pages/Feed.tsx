@@ -13,10 +13,13 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
+import { EditPostModal } from "../components/EditPostModal";
+import { ConfirmModal } from "../components/ConfirmModal";
 import { ExpandablePostText } from "../components/ExpandablePostText";
 import { AuthGateOverlay } from "../components/AuthGateOverlay";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { highlightHashtags } from "../utils/text";
+import { extractHashtags } from "../utils/hashtags";
 import { getPostContainerColorClass } from "../utils/postColors";
 import { MentionPreview } from "../components/MentionPreview";
 import { EmojiPicker } from "../components/EmojiPicker";
@@ -32,6 +35,8 @@ import {
   MessageCircle,
   Share2,
   Flag,
+  Edit3,
+  Trash2,
   Eye,
   Smile,
 } from "lucide-react";
@@ -46,6 +51,7 @@ type FeedItem = {
   is_verified?: boolean;
   avatar_url?: string;
   created_at: string;
+  updated_at?: string;
   media?: MediaItem[];
   music?: PostMusicItem;
   like_count: number;
@@ -145,6 +151,11 @@ export default function FeedPage() {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<FeedItem | null>(null);
   const [reportPost, setReportPost] = useState<FeedItem | null>(null);
+  const [editPost, setEditPost] = useState<FeedItem | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [deletePost, setDeletePost] = useState<FeedItem | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [postReactionPickerPostId, setPostReactionPickerPostId] = useState<string | null>(null);
@@ -187,6 +198,7 @@ export default function FeedPage() {
     setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     setFollowingFeed((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     updateCacheItem(id, patch);
+    patchPost(id, patch);
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
   };
 
@@ -545,6 +557,71 @@ export default function FeedPage() {
     }
   };
 
+  const removePostFromLists = (postId: string) => {
+    const nextPopular = feed.filter((p) => p.id !== postId);
+    const nextFollowing = followingFeed.filter((p) => p.id !== postId);
+    setFeed(nextPopular);
+    setFollowingFeed(nextFollowing);
+    setCache(nextPopular, popularNextOffset);
+    setFollowingCache(nextFollowing, followingNextOffset);
+    setCommentsPost((prev) => (prev?.id === postId ? null : prev));
+    setMenuOpenId((prev) => (prev === postId ? null : prev));
+    setPostReactionPickerPostId((prev) => (prev === postId ? null : prev));
+  };
+
+  const handleEditSubmit = async (payload: { content: string; media: MediaItem[] }) => {
+    if (!token || !editPost) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const hashtags = extractHashtags(payload.content);
+      const updated = await api.updatePost(
+        editPost.id,
+        {
+          content: payload.content,
+          media: payload.media,
+          media_url: payload.media[0]?.url || "",
+          media_urls: payload.media.map((m) => m.url),
+          hashtags,
+        },
+        token
+      );
+      updatePost(editPost.id, {
+        content: updated.content,
+        media: updated.media || [],
+        updated_at: updated.updated_at,
+        hashtags: updated.hashtags || [],
+        mentions: updated.mentions || [],
+      });
+      patchPost(editPost.id, {
+        content: updated.content,
+        media: updated.media || [],
+        updated_at: updated.updated_at,
+        hashtags: updated.hashtags || [],
+        mentions: updated.mentions || [],
+      });
+      setEditPost(null);
+    } catch (e: any) {
+      setEditError(e?.message || t("feed.load_error"));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeletePost = async () => {
+    if (!token || !deletePost) return;
+    setDeleteLoading(true);
+    try {
+      await api.deletePost(deletePost.id, token);
+      removePostFromLists(deletePost.id);
+      setDeletePost(null);
+    } catch (e: any) {
+      setActiveError(e?.message || t("feed.load_error"));
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const activeError = tab === "popular" ? popularError : followingError;
   const activeLoading = tab === "popular" ? popularLoading : followingLoading;
   const activeNextOffset = tab === "popular" ? popularNextOffset : followingNextOffset;
@@ -736,6 +813,35 @@ export default function FeedPage() {
 
               {menuOpenId === item.id && (
                 <div className="absolute right-3 top-10 bg-black/90 border border-white/10 rounded-xl shadow-2xl w-44 z-20 backdrop-blur">
+                  {isMe && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        setEditError("");
+                        setEditPost(p);
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                    >
+                      <Edit3 className="w-4 h-4" strokeWidth={1.7} />
+                      {t("feed.menu.edit")}
+                    </button>
+                  )}
+                  {isMe && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        setDeletePost(p);
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
+                    >
+                      <Trash2 className="w-4 h-4" strokeWidth={1.7} />
+                      {t("feed.menu.delete")}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -748,26 +854,28 @@ export default function FeedPage() {
                     <Share2 className="w-4 h-4" strokeWidth={1.7} />
                     {t("feed.menu.share")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpenId(null);
-                      if (!token) {
-                        showAuthGate({
-                          title: t("auth.required_title"),
-                          message: t("feed.auth.report_message"),
-                          ctaLabel: t("auth.cta_login"),
-                        });
-                        return;
-                      }
-                      setReportPost(item);
-                    }}
-                    className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
-                  >
-                    <Flag className="w-4 h-4" strokeWidth={1.7} />
-                    {t("feed.menu.report")}
-                  </button>
+                  {!isMe && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        if (!token) {
+                          showAuthGate({
+                            title: t("auth.required_title"),
+                            message: t("feed.auth.report_message"),
+                            ctaLabel: t("auth.cta_login"),
+                          });
+                          return;
+                        }
+                        setReportPost(item);
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
+                    >
+                      <Flag className="w-4 h-4" strokeWidth={1.7} />
+                      {t("feed.menu.report")}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -915,6 +1023,36 @@ export default function FeedPage() {
           setPostReactionPickerPostId(null);
           if (!targetPostID) return;
           void togglePostReaction(targetPostID, emoji);
+        }}
+      />
+      <EditPostModal
+        open={editPost !== null}
+        post={editPost}
+        loading={editSaving}
+        error={editError}
+        onClose={() => {
+          if (editSaving) return;
+          setEditPost(null);
+          setEditError("");
+        }}
+        onSubmit={(payload) => {
+          void handleEditSubmit(payload);
+        }}
+      />
+      <ConfirmModal
+        open={deletePost !== null}
+        title={t("feed.delete.title")}
+        description={t("feed.delete.body")}
+        confirmLabel={deleteLoading ? t("feed.delete.deleting") : t("feed.delete.confirm")}
+        cancelLabel={t("feed.edit.cancel")}
+        loading={deleteLoading}
+        danger
+        onClose={() => {
+          if (deleteLoading) return;
+          setDeletePost(null);
+        }}
+        onConfirm={() => {
+          void handleDeletePost();
         }}
       />
       <TopUsers />

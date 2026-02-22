@@ -13,7 +13,11 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
-import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2 } from "lucide-react";
+import { EditPostModal } from "../components/EditPostModal";
+import { ConfirmModal } from "../components/ConfirmModal";
+import { ReportModal } from "../components/ReportModal";
+import { extractHashtags } from "../utils/hashtags";
+import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2, Share2, Flag, Edit3, MoreHorizontal } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { getPostContainerColorClass } from "../utils/postColors";
 import { CommentsModal } from "../components/CommentsModal";
@@ -24,6 +28,7 @@ import FabricImageEditor from "../components/FabricImageEditor";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { useI18n } from "../i18n";
 import { formatTimeAgo } from "../utils/time";
+import type { MediaItem } from "../types/media";
 
 function formatDate(iso: string) {
   const d = new Date(iso);
@@ -60,6 +65,14 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<"posts" | "liked">("posts");
   const [loadingProfile, setLoadingProfile] = useState(!cachedProfile);
   const [commentsPost, setCommentsPost] = useState<any | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [reportPost, setReportPost] = useState<any | null>(null);
+  const [editPost, setEditPost] = useState<any | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [deletePost, setDeletePost] = useState<any | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editSection, setEditSection] = useState<"profile" | "password">("profile");
   const [followListMode, setFollowListMode] = useState<"followers" | "following" | null>(null);
@@ -160,6 +173,19 @@ export default function ProfilePage() {
   }));
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerTabRef = useRef<IntersectionObserver | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 1800);
+  };
 
   const fetchProfile = async () => {
     if (!token) return;
@@ -244,6 +270,10 @@ export default function ProfilePage() {
 
   useEffect(() => {
     return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
       if (telegramCopyTimerRef.current !== null) {
         window.clearTimeout(telegramCopyTimerRef.current);
         telegramCopyTimerRef.current = null;
@@ -897,10 +927,124 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, postsToShow]);
 
+  useEffect(() => {
+    const handler = () => setMenuOpenId(null);
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, []);
+
   const updatePost = (id: string, patch: Partial<any>) => {
     setMyPosts((prev) => ({ ...prev, items: prev.items.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
     setLikedPosts((prev) => ({ ...prev, items: prev.items.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
     setCommentsPost((prev) => (prev?.id === id ? { ...prev, ...patch } : prev));
+  };
+
+  const removePostEverywhere = (postId: string) => {
+    const nextMy = myPosts.items.filter((p) => p.id !== postId);
+    const nextLiked = likedPosts.items.filter((p) => p.id !== postId);
+    setMyPosts((prev) => ({ ...prev, items: nextMy }));
+    setLikedPosts((prev) => ({ ...prev, items: nextLiked }));
+    setCachedMyPosts(nextMy, myPosts.nextOffset, true);
+    setCachedLikedPosts(nextLiked, likedPosts.nextOffset, true);
+    setCommentsPost((prev) => (prev?.id === postId ? null : prev));
+    setMenuOpenId((prev) => (prev === postId ? null : prev));
+  };
+
+  const sharePost = async (postId: string) => {
+    const url = `${window.location.origin}/p/${postId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast(tr("Сілтеме көшірілді", "Ссылка скопирована", "Link copied"));
+      return;
+    } catch {
+      // fallback below
+    }
+    try {
+      const el = document.createElement("textarea");
+      el.value = url;
+      el.setAttribute("readonly", "true");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      el.style.top = "0";
+      document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(el);
+      showToast(
+        ok
+          ? tr("Сілтеме көшірілді", "Ссылка скопирована", "Link copied")
+          : tr(
+              "Сілтемені көшіру мүмкін болмады",
+              "Не удалось скопировать ссылку",
+              "Failed to copy link"
+            )
+      );
+    } catch {
+      showToast(
+        tr(
+          "Сілтемені көшіру мүмкін болмады",
+          "Не удалось скопировать ссылку",
+          "Failed to copy link"
+        )
+      );
+    }
+  };
+
+  const handleEditSubmit = async (payload: { content: string; media: MediaItem[] }) => {
+    if (!token || !editPost) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const hashtags = extractHashtags(payload.content);
+      const updated = await api.updatePost(
+        editPost.id,
+        {
+          content: payload.content,
+          media: payload.media,
+          media_url: payload.media[0]?.url || "",
+          media_urls: payload.media.map((m) => m.url),
+          hashtags,
+        },
+        token
+      );
+      updatePost(editPost.id, {
+        content: updated.content,
+        media: updated.media || [],
+        updated_at: updated.updated_at,
+        mentions: updated.mentions || [],
+        hashtags: updated.hashtags || [],
+      });
+      patchPost(editPost.id, {
+        content: updated.content,
+        media: updated.media || [],
+        updated_at: updated.updated_at,
+        mentions: updated.mentions || [],
+        hashtags: updated.hashtags || [],
+      });
+      setEditPost(null);
+    } catch (e: any) {
+      setEditError(
+        e?.message || tr("Постты сақтау мүмкін болмады", "Не удалось сохранить пост", "Failed to save post")
+      );
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeletePost = async () => {
+    if (!token || !deletePost) return;
+    setDeleteLoading(true);
+    try {
+      await api.deletePost(deletePost.id, token);
+      removePostEverywhere(deletePost.id);
+      setDeletePost(null);
+    } catch (e: any) {
+      setError(
+        e?.message || tr("Постты жою мүмкін болмады", "Не удалось удалить пост", "Failed to delete post")
+      );
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const toggleLike = async (id: string, liked: boolean) => {
@@ -1217,6 +1361,7 @@ export default function ProfilePage() {
               const patch = postPatches[p.id];
               const item = patch ? { ...p, ...patch } : p;
               const postColorClass = getPostContainerColorClass(item.container_color);
+              const isMe = item.is_me === true;
 
               return (
               <article
@@ -1260,13 +1405,85 @@ export default function ProfilePage() {
                       <p className="text-sm text-white/60">{formatTimeAgo(p.created_at, language)}</p>
                     </div>
                   </div>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId((prev) => (prev === item.id ? null : item.id));
+                      }}
+                      className="h-9 w-9 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white grid place-items-center"
+                      aria-label={tr("Пост мәзірі", "Меню поста", "Post menu")}
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                    {menuOpenId === item.id && (
+                      <div className="absolute right-0 top-10 bg-black/90 border border-white/10 rounded-xl shadow-2xl w-44 z-20 backdrop-blur">
+                        {isMe && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenId(null);
+                              setEditError("");
+                              setEditPost(item);
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                          >
+                            <Edit3 className="w-4 h-4" strokeWidth={1.7} />
+                            {tr("Өңдеу", "Редактировать", "Edit")}
+                          </button>
+                        )}
+                        {isMe && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenId(null);
+                              setDeletePost(item);
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
+                          >
+                            <Trash2 className="w-4 h-4" strokeWidth={1.7} />
+                            {tr("Жою", "Удалить", "Delete")}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenId(null);
+                            void sharePost(item.id);
+                          }}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                        >
+                          <Share2 className="w-4 h-4" strokeWidth={1.7} />
+                          {tr("Бөлісу", "Поделиться", "Share")}
+                        </button>
+                        {!isMe && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenId(null);
+                              setReportPost(item);
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-red-300"
+                          >
+                            <Flag className="w-4 h-4" strokeWidth={1.7} />
+                            {tr("Шағымдану", "Пожаловаться", "Report")}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <p className="mt-3 text-white leading-relaxed break-words">
                   {highlightHashtags(
-                    p.content,
-                    p.mentions ? new Set(p.mentions.map((m: string) => m.toLowerCase())) : undefined,
-                    p.hashtags ? new Set(p.hashtags.map((h: string) => h.toLowerCase())) : undefined
+                    item.content,
+                    item.mentions ? new Set(item.mentions.map((m: string) => m.toLowerCase())) : undefined,
+                    item.hashtags ? new Set(item.hashtags.map((h: string) => h.toLowerCase())) : undefined
                   )}
                 </p>
 
@@ -1335,6 +1552,61 @@ export default function ProfilePage() {
           onUpdatePost={updatePost}
           onClose={() => setCommentsPost(null)}
         />
+      )}
+      <EditPostModal
+        open={editPost !== null}
+        post={editPost}
+        loading={editSaving}
+        error={editError}
+        onClose={() => {
+          if (editSaving) return;
+          setEditPost(null);
+          setEditError("");
+        }}
+        onSubmit={(payload) => {
+          void handleEditSubmit(payload);
+        }}
+      />
+      <ConfirmModal
+        open={deletePost !== null}
+        title={tr("Постты жою", "Удалить пост", "Delete post")}
+        description={tr(
+          "Бұл постты өшіргіңіз келетініне сенімдісіз бе?",
+          "Вы уверены, что хотите удалить этот пост?",
+          "Are you sure you want to delete this post?"
+        )}
+        confirmLabel={
+          deleteLoading
+            ? tr("Жойылуда...", "Удаляем...", "Deleting...")
+            : tr("Иә, жою", "Да, удалить", "Yes, delete")
+        }
+        cancelLabel={tr("Бас тарту", "Отмена", "Cancel")}
+        loading={deleteLoading}
+        danger
+        onClose={() => {
+          if (deleteLoading) return;
+          setDeletePost(null);
+        }}
+        onConfirm={() => {
+          void handleDeletePost();
+        }}
+      />
+      {reportPost && (
+        <ReportModal
+          postId={reportPost.id}
+          userId={reportPost.user_id}
+          onSuccess={() =>
+            showToast(tr("Шағым жіберілді", "Жалоба отправлена", "Report sent"))
+          }
+          onClose={() => setReportPost(null)}
+        />
+      )}
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200]">
+          <div className="rounded-full border border-white/10 bg-black/90 backdrop-blur px-4 py-2 text-sm text-white/80 shadow-2xl">
+            {toast}
+          </div>
+        </div>
       )}
 
       {editOpen &&
