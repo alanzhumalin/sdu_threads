@@ -3,12 +3,12 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Copy,
+  Maximize,
   Loader2,
   Mic,
   MicOff,
   MonitorUp,
   PhoneOff,
-  Smartphone,
   Users,
   Video,
   VideoOff,
@@ -740,9 +740,9 @@ export default function RoomCallPage() {
   const getCameraVideoConstraints = useCallback(() => {
     const highQuality = streamQualityTierRef.current === "high";
     return {
-      frameRate: { ideal: 24, max: 24 },
-      width: { ideal: highQuality ? 1280 : 960, max: 1280 },
-      height: { ideal: highQuality ? 720 : 540, max: 720 },
+      frameRate: { ideal: highQuality ? 30 : 24, max: highQuality ? 30 : 24 },
+      width: { ideal: highQuality ? 1920 : 960, max: 1920 },
+      height: { ideal: highQuality ? 1080 : 540, max: 1080 },
     };
   }, []);
 
@@ -760,11 +760,11 @@ export default function RoomCallPage() {
       if (isScreenShare) {
         // Prefer smoother motion for screen-share (anime/video playback).
         encoding.maxFramerate = 30;
-        encoding.maxBitrate = highQuality ? 4_800_000 : 3_600_000;
+        encoding.maxBitrate = highQuality ? 7_500_000 : 3_600_000;
         encoding.scaleResolutionDownBy = highQuality ? 1 : 1.1;
       } else {
-        encoding.maxFramerate = 24;
-        encoding.maxBitrate = highQuality ? 2_600_000 : 2_000_000;
+        encoding.maxFramerate = highQuality ? 30 : 24;
+        encoding.maxBitrate = highQuality ? 4_500_000 : 2_000_000;
         if (typeof encoding.scaleResolutionDownBy === "number" && encoding.scaleResolutionDownBy < 1) {
           encoding.scaleResolutionDownBy = 1;
         }
@@ -1068,6 +1068,40 @@ export default function RoomCallPage() {
       }
     }
   }, [makeOffer]);
+
+  const applyQualityProfileNow = useCallback(
+    async (mode: StreamQualityMode) => {
+      const nextTier: StreamQualityTier = mode === "auto" ? autoStreamQualityTier : mode;
+      streamQualityTierRef.current = nextTier;
+
+      const isScreenShareTrackActive = Boolean(
+        screenEnabled && screenTrackRef.current?.readyState !== "ended"
+      );
+      for (const peerID of pcsRef.current.keys()) {
+        await tuneVideoSender(peerID, isScreenShareTrackActive);
+      }
+
+      const screenTrack = screenTrackRef.current;
+      if (screenTrack && screenTrack.readyState !== "ended") {
+        await screenTrack.applyConstraints(getScreenVideoConstraints()).catch(() => {});
+      }
+
+      const cameraTrack = cameraTrackRef.current;
+      if (cameraTrack && cameraTrack.readyState !== "ended") {
+        await cameraTrack.applyConstraints(getCameraVideoConstraints()).catch(() => {});
+      }
+
+      await renegotiatePeersWithLocalOffer();
+    },
+    [
+      autoStreamQualityTier,
+      getCameraVideoConstraints,
+      getScreenVideoConstraints,
+      renegotiatePeersWithLocalOffer,
+      screenEnabled,
+      tuneVideoSender,
+    ]
+  );
 
   const leaveRoom = useCallback(() => {
     if (landscapeSessionRef.current) {
@@ -2113,7 +2147,11 @@ export default function RoomCallPage() {
               <button
                 key={mode}
                 type="button"
-                onClick={() => setStreamQualityMode(mode)}
+                onClick={() => {
+                  if (streamQualityMode === mode) return;
+                  setStreamQualityMode(mode);
+                  void applyQualityProfileNow(mode);
+                }}
                 className={`px-2.5 py-1 text-xs rounded-lg transition ${
                   active
                     ? "bg-sky-500/25 text-sky-100 border border-sky-300/35"
@@ -2351,10 +2389,10 @@ export default function RoomCallPage() {
                 void openLandscapeMode();
               }}
               className="absolute top-2 right-2 z-20 w-10 h-10 rounded-full border border-indigo-300/35 bg-indigo-500/25 text-indigo-100 hover:bg-indigo-500/35 grid place-items-center"
-              aria-label={t("rooms.landscape_mode")}
-              title={t("rooms.landscape_mode")}
+              aria-label={t("rooms.screen_open_full")}
+              title={t("rooms.screen_open_full")}
             >
-              <Smartphone className="w-5 h-5" />
+              <Maximize className="w-5 h-5" />
             </button>
             <div
               className="absolute inset-0 will-change-transform"
