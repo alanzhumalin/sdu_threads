@@ -192,8 +192,10 @@ export default function RoomCallPage() {
   const selfIDRef = useRef<string>("");
   const localStreamRef = useRef<MediaStream | null>(null);
   const localScreenStreamRef = useRef<MediaStream | null>(null);
+  const micTrackRef = useRef<MediaStreamTrack | null>(null);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
+  const screenAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const participantsRef = useRef<Record<string, LiveRoomParticipant>>({});
   const remoteStreamsRef = useRef<Record<string, MediaStream>>({});
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -494,14 +496,22 @@ export default function RoomCallPage() {
 
       const local = localStreamRef.current;
       if (local) {
-        const localAudio = local.getAudioTracks()[0];
-        if (localAudio) {
-          void audioTransceiver.sender.replaceTrack(localAudio).catch(() => {});
-        }
+        const screenAudio =
+          screenEnabled && screenAudioTrackRef.current?.readyState !== "ended"
+            ? screenAudioTrackRef.current
+            : null;
+        const micAudio =
+          audioEnabled && micTrackRef.current?.readyState !== "ended"
+            ? micTrackRef.current
+            : null;
+        const outgoingAudioTrack = screenAudio || micAudio || null;
+        void audioTransceiver.sender.replaceTrack(outgoingAudioTrack).catch(() => {});
         const outgoingVideoTrack =
           screenTrackRef.current || (videoEnabled ? cameraTrackRef.current : null);
         if (outgoingVideoTrack) {
           void videoTransceiver.sender.replaceTrack(outgoingVideoTrack).catch(() => {});
+        } else {
+          void videoTransceiver.sender.replaceTrack(null).catch(() => {});
         }
       }
 
@@ -604,15 +614,22 @@ export default function RoomCallPage() {
       resumeRemoteAudioPlayback,
       rtcLog,
       sendWS,
+      audioEnabled,
+      screenEnabled,
       videoEnabled,
     ]
   );
 
   const attachTrackToPeer = useCallback(
-    async (peerID: string, track: MediaStreamTrack | null) => {
+    async (
+      peerID: string,
+      track: MediaStreamTrack | null,
+      kindOverride?: "audio" | "video"
+    ) => {
       const transceivers = peerTransceiversRef.current.get(peerID);
+      const targetKind = kindOverride || track?.kind || "video";
       const transceiver =
-        track?.kind === "audio"
+        targetKind === "audio"
           ? transceivers?.audio
           : transceivers?.video;
       if (transceiver) {
@@ -643,9 +660,10 @@ export default function RoomCallPage() {
       }
       const encoding = params.encodings[0];
       if (isScreenShare) {
-        encoding.maxFramerate = 26;
-        encoding.maxBitrate = 5_000_000;
-        encoding.scaleResolutionDownBy = 1;
+        // Slightly softer quality for smoother screen-share on weaker clients.
+        encoding.maxFramerate = 24;
+        encoding.maxBitrate = 3_600_000;
+        encoding.scaleResolutionDownBy = 1.1;
       } else {
         encoding.maxFramerate = 24;
         encoding.maxBitrate = 1_800_000;
@@ -669,6 +687,15 @@ export default function RoomCallPage() {
       }
     },
     [attachTrackToPeer, tuneVideoSender]
+  );
+
+  const applyOutgoingAudioTrack = useCallback(
+    async (track: MediaStreamTrack | null) => {
+      for (const peerID of pcsRef.current.keys()) {
+        await attachTrackToPeer(peerID, track, "audio");
+      }
+    },
+    [attachTrackToPeer]
   );
 
   const flushPendingIce = useCallback((peerID: string) => {
@@ -982,8 +1009,10 @@ export default function RoomCallPage() {
           t.enabled = false;
         });
         localStreamRef.current = local;
+        micTrackRef.current = local.getAudioTracks()[0] || null;
         cameraTrackRef.current = null;
         screenTrackRef.current = null;
+        screenAudioTrackRef.current = null;
         setLocalScreenStream(null);
         updateSelfMediaStateRef.current(false, false, false);
 
@@ -1256,6 +1285,16 @@ export default function RoomCallPage() {
         screenTrackRef.current.stop();
       }
       screenTrackRef.current = null;
+      if (screenAudioTrackRef.current) {
+        screenAudioTrackRef.current.onended = null;
+        try {
+          screenAudioTrackRef.current.stop();
+        } catch {
+          // noop
+        }
+      }
+      screenAudioTrackRef.current = null;
+      micTrackRef.current = null;
       cameraTrackRef.current = null;
       localScreenStreamRef.current?.getTracks().forEach((t) => t.stop());
       localScreenStreamRef.current = null;
@@ -1323,7 +1362,7 @@ export default function RoomCallPage() {
       return;
     }
 
-    let track = local.getAudioTracks()[0];
+    let track = micTrackRef.current;
     if (!track || track.readyState === "ended") {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -1331,22 +1370,27 @@ export default function RoomCallPage() {
         if (!newTrack) return;
         local.addTrack(newTrack);
         track = newTrack;
-        for (const peerID of pcsRef.current.keys()) {
-          await attachTrackToPeer(peerID, newTrack);
-        }
+        micTrackRef.current = newTrack;
       } catch {
         setError(t("rooms.load_error"));
         return;
       }
     }
 
+    if (!track) return;
     const next = !audioEnabled;
     rtcLog("toggle-audio", next);
     track.enabled = next;
     updateSelfMediaState(next, videoEnabled, screenEnabled);
-    sendWS({ type: "media_state", audio_enabled: next });
+    const screenAudio =
+      screenEnabled && screenAudioTrackRef.current?.readyState !== "ended"
+        ? screenAudioTrackRef.current
+        : null;
+    const outgoingAudioTrack = screenAudio || (next ? track : null);
+    await applyOutgoingAudioTrack(outgoingAudioTrack);
+    sendWS({ type: "media_state", audio_enabled: Boolean(outgoingAudioTrack) });
 
-    if (next) {
+    if (!screenAudio) {
       await renegotiatePeersWithLocalOffer();
     }
   };
@@ -1410,6 +1454,16 @@ export default function RoomCallPage() {
         }
       }
       screenTrackRef.current = null;
+      const screenAudioTrack = screenAudioTrackRef.current;
+      if (screenAudioTrack) {
+        screenAudioTrack.onended = null;
+        try {
+          screenAudioTrack.stop();
+        } catch {
+          // noop
+        }
+      }
+      screenAudioTrackRef.current = null;
       setLocalScreenStream((prev) => {
         if (prev) {
           prev.getTracks().forEach((track) => {
@@ -1423,16 +1477,26 @@ export default function RoomCallPage() {
         return null;
       });
 
+      const fallbackAudio =
+        audioEnabled && micTrackRef.current?.readyState !== "ended"
+          ? micTrackRef.current
+          : null;
+      await applyOutgoingAudioTrack(fallbackAudio);
       const fallbackCamera = videoEnabled ? cameraTrackRef.current : null;
       await applyOutgoingVideoTrack(fallbackCamera, { isScreenShare: false });
       updateSelfMediaState(audioEnabled, videoEnabled, false);
-      sendWS({ type: "media_state", screen_enabled: false });
+      sendWS({
+        type: "media_state",
+        screen_enabled: false,
+        audio_enabled: Boolean(fallbackAudio),
+      });
       if (reason !== "ended" || fallbackCamera) {
         await renegotiatePeersWithLocalOffer();
       }
     },
     [
       applyOutgoingVideoTrack,
+      applyOutgoingAudioTrack,
       audioEnabled,
       renegotiatePeersWithLocalOffer,
       screenEnabled,
@@ -1456,17 +1520,36 @@ export default function RoomCallPage() {
 
     setScreenBusy(true);
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const displayOptions: any = {
         video: {
-          frameRate: { ideal: 26, max: 30 },
-          width: { ideal: 2240, max: 2880 },
-          height: { ideal: 1260, max: 1620 },
+          frameRate: { ideal: 24, max: 27 },
+          width: { ideal: 1792, max: 2048 },
+          height: { ideal: 1008, max: 1152 },
+          // Browser-specific hints (ignored where unsupported).
+          displaySurface: "browser",
+          selfBrowserSurface: "exclude",
+          surfaceSwitching: "include",
+          monitorTypeSurfaces: "include",
         },
-        audio: false,
-      });
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          suppressLocalAudioPlayback: false,
+        },
+        // Browser-specific hints (ignored where unsupported).
+        systemAudio: "include",
+        preferCurrentTab: true,
+      };
+
+      const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
       const track = stream.getVideoTracks()[0];
       if (!track) {
         throw new Error(t("rooms.screen_error"));
+      }
+      const screenAudioTrack = stream.getAudioTracks()[0] || null;
+      if (screenAudioTrack) {
+        screenAudioTrack.enabled = true;
       }
       try {
         track.contentHint = "detail";
@@ -1475,23 +1558,58 @@ export default function RoomCallPage() {
       }
       try {
         await track.applyConstraints({
-          frameRate: { ideal: 26, max: 30 },
-          width: { ideal: 2240, max: 2880 },
-          height: { ideal: 1260, max: 1620 },
+          frameRate: { ideal: 24, max: 27 },
+          width: { ideal: 1792, max: 2048 },
+          height: { ideal: 1008, max: 1152 },
         });
       } catch {
         // Some browsers ignore advanced frame-rate constraints.
       }
+      if (screenAudioTrack) {
+        try {
+          screenAudioTrack.contentHint = "music";
+        } catch {
+          // Optional API.
+        }
+      }
 
       screenTrackRef.current = track;
+      screenAudioTrackRef.current = screenAudioTrack;
       setLocalScreenStream(new MediaStream([track]));
       track.onended = () => {
         void stopScreenShare("ended");
       };
+      if (screenAudioTrack) {
+        screenAudioTrack.onended = () => {
+          if (!screenEnabled) return;
+          if (screenAudioTrackRef.current?.id !== screenAudioTrack.id) return;
+          screenAudioTrackRef.current = null;
+          const fallbackAudio =
+            audioEnabled && micTrackRef.current?.readyState !== "ended"
+              ? micTrackRef.current
+              : null;
+          void applyOutgoingAudioTrack(fallbackAudio);
+          sendWS({
+            type: "media_state",
+            screen_enabled: true,
+            audio_enabled: Boolean(fallbackAudio),
+          });
+        };
+      }
 
       await applyOutgoingVideoTrack(track, { isScreenShare: true });
+      const outgoingAudioTrack = screenAudioTrack || (audioEnabled ? micTrackRef.current : null);
+      await applyOutgoingAudioTrack(
+        outgoingAudioTrack && outgoingAudioTrack.readyState !== "ended"
+          ? outgoingAudioTrack
+          : null
+      );
       updateSelfMediaState(audioEnabled, videoEnabled, true);
-      sendWS({ type: "media_state", screen_enabled: true });
+      sendWS({
+        type: "media_state",
+        screen_enabled: true,
+        audio_enabled: Boolean(outgoingAudioTrack && outgoingAudioTrack.readyState !== "ended"),
+      });
       await renegotiatePeersWithLocalOffer();
     } catch (err: any) {
       setError(err?.message || t("rooms.screen_error"));
@@ -1500,6 +1618,7 @@ export default function RoomCallPage() {
     }
   }, [
     applyOutgoingVideoTrack,
+    applyOutgoingAudioTrack,
     audioEnabled,
     renegotiatePeersWithLocalOffer,
     screenBusy,
