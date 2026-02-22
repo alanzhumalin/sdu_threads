@@ -65,6 +65,7 @@ type PeerTransceivers = {
 };
 
 type StreamQualityTier = "low" | "high";
+type StreamQualityMode = "auto" | StreamQualityTier;
 
 type BrowserNetworkInformation = {
   effectiveType?: string;
@@ -227,12 +228,15 @@ export default function RoomCallPage() {
   const [screenBusy, setScreenBusy] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
-  const [streamQualityTier, setStreamQualityTier] = useState<StreamQualityTier>(() =>
+  const [autoStreamQualityTier, setAutoStreamQualityTier] = useState<StreamQualityTier>(() =>
     resolveStreamQualityTier(getBrowserNetworkInformation())
   );
+  const [streamQualityMode, setStreamQualityMode] = useState<StreamQualityMode>("auto");
   const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
+  const effectiveStreamQualityTier: StreamQualityTier =
+    streamQualityMode === "auto" ? autoStreamQualityTier : streamQualityMode;
 
   const wsRef = useRef<WebSocket | null>(null);
   const selfIDRef = useRef<string>("");
@@ -272,7 +276,7 @@ export default function RoomCallPage() {
   const fullscreenPanRef = useRef({ x: 0, y: 0 });
   const suppressNextViewportTapCloseRef = useRef(false);
   const landscapeSessionRef = useRef(false);
-  const streamQualityTierRef = useRef<StreamQualityTier>(streamQualityTier);
+  const streamQualityTierRef = useRef<StreamQualityTier>(effectiveStreamQualityTier);
   const touchStateRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startPanX: number;
@@ -332,16 +336,19 @@ export default function RoomCallPage() {
   }, []);
 
   useEffect(() => {
-    streamQualityTierRef.current = streamQualityTier;
-    rtcLog("stream-quality-tier", streamQualityTier);
-  }, [streamQualityTier, rtcLog]);
+    streamQualityTierRef.current = effectiveStreamQualityTier;
+    rtcLog("stream-quality-tier", effectiveStreamQualityTier, {
+      mode: streamQualityMode,
+      auto: autoStreamQualityTier,
+    });
+  }, [autoStreamQualityTier, effectiveStreamQualityTier, rtcLog, streamQualityMode]);
 
   useEffect(() => {
     const connection = getBrowserNetworkInformation();
     if (!connection) return;
 
     const syncTier = () => {
-      setStreamQualityTier(resolveStreamQualityTier(connection));
+      setAutoStreamQualityTier(resolveStreamQualityTier(connection));
     };
 
     syncTier();
@@ -806,7 +813,13 @@ export default function RoomCallPage() {
     if (cameraTrack && cameraTrack.readyState !== "ended") {
       void cameraTrack.applyConstraints(getCameraVideoConstraints()).catch(() => {});
     }
-  }, [getCameraVideoConstraints, getScreenVideoConstraints, screenEnabled, streamQualityTier, tuneVideoSender]);
+  }, [
+    effectiveStreamQualityTier,
+    getCameraVideoConstraints,
+    getScreenVideoConstraints,
+    screenEnabled,
+    tuneVideoSender,
+  ]);
 
   const flushPendingIce = useCallback((peerID: string) => {
     const pc = pcsRef.current.get(peerID);
@@ -2022,6 +2035,38 @@ export default function RoomCallPage() {
           <Copy className="w-4 h-4" />
         </button>
       </div>
+
+      <div className="card p-2.5 flex items-center justify-between gap-2">
+        <span className="text-[11px] uppercase tracking-wide text-white/55">
+          {t("rooms.quality_label")}
+        </span>
+        <div className="inline-flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5">
+          {(["auto", "high", "low"] as StreamQualityMode[]).map((mode) => {
+            const active = streamQualityMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setStreamQualityMode(mode)}
+                className={`px-2.5 py-1 text-xs rounded-lg transition ${
+                  active
+                    ? "bg-sky-500/25 text-sky-100 border border-sky-300/35"
+                    : "text-white/70 hover:text-white hover:bg-white/5 border border-transparent"
+                }`}
+                aria-label={t(`rooms.quality_${mode}`)}
+                title={t(`rooms.quality_${mode}`)}
+              >
+                {t(`rooms.quality_${mode}`)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {streamQualityMode === "auto" ? (
+        <p className="px-1 text-[11px] text-white/50">
+          {t("rooms.quality_now")}: {t(`rooms.quality_${effectiveStreamQualityTier}`)}
+        </p>
+      ) : null}
 
       <ErrorMessage message={error} />
 
