@@ -8,6 +8,7 @@ import {
   MicOff,
   MonitorUp,
   PhoneOff,
+  Smartphone,
   Users,
   Video,
   VideoOff,
@@ -184,6 +185,7 @@ export default function RoomCallPage() {
   const [screenBusy, setScreenBusy] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
+  const [showLandscapeButton, setShowLandscapeButton] = useState(false);
   const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
@@ -225,6 +227,7 @@ export default function RoomCallPage() {
   const fullscreenZoomRef = useRef(1);
   const fullscreenPanRef = useRef({ x: 0, y: 0 });
   const suppressNextViewportTapCloseRef = useRef(false);
+  const landscapeSessionRef = useRef(false);
   const touchStateRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startPanX: number;
@@ -947,9 +950,10 @@ export default function RoomCallPage() {
   }, [makeOffer]);
 
   const leaveRoom = useCallback(() => {
+    void exitLandscapeMode();
     leaveRoomSocket("leave-button");
     navigate("/rooms");
-  }, [leaveRoomSocket, navigate]);
+  }, [exitLandscapeMode, leaveRoomSocket, navigate]);
 
   const copyInvite = useCallback(async () => {
     const link = `${window.location.origin}/rooms/${encodeURIComponent(roomIDRef.current)}`;
@@ -1352,6 +1356,68 @@ export default function RoomCallPage() {
       document.documentElement.style.overscrollBehavior = prevHtmlOverscroll;
       document.body.style.overscrollBehavior = prevBodyOverscroll;
     };
+  }, []);
+
+  useEffect(() => {
+    const compute = () => {
+      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+      const compactWidth = window.matchMedia("(max-width: 1180px)").matches;
+      setShowLandscapeButton(coarsePointer || compactWidth);
+    };
+
+    compute();
+    window.addEventListener("resize", compute);
+    return () => {
+      window.removeEventListener("resize", compute);
+    };
+  }, []);
+
+  const exitLandscapeMode = useCallback(async () => {
+    if (!landscapeSessionRef.current) return;
+    landscapeSessionRef.current = false;
+    try {
+      const orientation: any = (window.screen as any)?.orientation;
+      if (orientation && typeof orientation.unlock === "function") {
+        orientation.unlock();
+      }
+    } catch {
+      // noop
+    }
+    try {
+      if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
+        await document.exitFullscreen();
+      }
+    } catch {
+      // noop
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      void exitLandscapeMode();
+    };
+  }, [exitLandscapeMode]);
+
+  const openLandscapeMode = useCallback(async () => {
+    landscapeSessionRef.current = true;
+    const root: any = document.documentElement;
+
+    try {
+      if (!document.fullscreenElement && typeof root.requestFullscreen === "function") {
+        await root.requestFullscreen();
+      }
+    } catch {
+      // noop
+    }
+
+    try {
+      const orientation: any = (window.screen as any)?.orientation;
+      if (orientation && typeof orientation.lock === "function") {
+        await orientation.lock("landscape");
+      }
+    } catch {
+      // noop
+    }
   }, []);
 
   const toggleAudio = async () => {
@@ -2010,6 +2076,18 @@ export default function RoomCallPage() {
         >
           <MonitorUp className="w-5 h-5" />
         </button>
+
+        {showLandscapeButton ? (
+          <button
+            type="button"
+            onClick={openLandscapeMode}
+            className="w-11 h-11 rounded-full border border-indigo-300/35 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/30 grid place-items-center"
+            aria-label={t("rooms.landscape_mode")}
+            title={t("rooms.landscape_mode")}
+          >
+            <Smartphone className="w-5 h-5" />
+          </button>
+        ) : null}
 
         <button
           type="button"
