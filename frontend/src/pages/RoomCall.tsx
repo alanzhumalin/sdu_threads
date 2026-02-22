@@ -664,11 +664,11 @@ export default function RoomCallPage() {
       if (isScreenShare) {
         // Prefer smoother motion for screen-share (anime/video playback).
         encoding.maxFramerate = 30;
-        encoding.maxBitrate = 3_200_000;
-        encoding.scaleResolutionDownBy = 1.2;
+        encoding.maxBitrate = 3_600_000;
+        encoding.scaleResolutionDownBy = 1.1;
       } else {
         encoding.maxFramerate = 24;
-        encoding.maxBitrate = 1_800_000;
+        encoding.maxBitrate = 2_000_000;
         if (typeof encoding.scaleResolutionDownBy === "number" && encoding.scaleResolutionDownBy < 1) {
           encoding.scaleResolutionDownBy = 1;
         }
@@ -1591,8 +1591,8 @@ export default function RoomCallPage() {
       const displayOptions: any = {
         video: {
           frameRate: { ideal: 30, max: 30 },
-          width: { ideal: 1600, max: 1920 },
-          height: { ideal: 900, max: 1080 },
+          width: { ideal: 1728, max: 1920 },
+          height: { ideal: 972, max: 1080 },
         },
         audio: {
           echoCancellation: false,
@@ -1622,8 +1622,8 @@ export default function RoomCallPage() {
       try {
         await track.applyConstraints({
           frameRate: { ideal: 30, max: 30 },
-          width: { ideal: 1600, max: 1920 },
-          height: { ideal: 900, max: 1080 },
+          width: { ideal: 1728, max: 1920 },
+          height: { ideal: 972, max: 1080 },
         });
       } catch {
         // Some browsers ignore advanced frame-rate constraints.
