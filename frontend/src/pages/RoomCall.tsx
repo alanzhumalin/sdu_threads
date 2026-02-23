@@ -2067,6 +2067,7 @@ export default function RoomCallPage() {
     videoEnabled &&
     !screenEnabled &&
     Boolean(localVideoTrack && localVideoTrack.enabled && localVideoTrack.readyState !== "ended");
+  const mirrorLocalCamera = cameraFacingMode === "user";
 
   const activeScreenShares = useMemo(() => {
     const shares: Array<{ ownerID: string; ownerName: string; stream: MediaStream; isLocal: boolean }> = [];
@@ -2426,7 +2427,7 @@ export default function RoomCallPage() {
               <VideoView
                 stream={singleCameraFocus.stream}
                 muted={singleCameraFocus.isLocal}
-                mirror={false}
+                mirror={singleCameraFocus.isLocal ? mirrorLocalCamera : false}
                 fitClassName="object-contain"
               />
               <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
@@ -2443,7 +2444,7 @@ export default function RoomCallPage() {
           {!singleCameraFocus || !singleCameraFocus.isLocal ? (
             <div className="relative rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
               {showLocalCamera && localStream ? (
-                <VideoView stream={localStream} muted mirror={false} />
+                <VideoView stream={localStream} muted mirror={mirrorLocalCamera} />
               ) : (
                 <div className="absolute inset-0 grid place-items-center">
                   <AvatarCircle
