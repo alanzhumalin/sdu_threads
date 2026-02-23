@@ -9,6 +9,7 @@ import {
   MicOff,
   MonitorUp,
   PhoneOff,
+  RefreshCw,
   Users,
   Video,
   VideoOff,
@@ -226,6 +227,9 @@ export default function RoomCallPage() {
   const [screenEnabled, setScreenEnabled] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
   const [screenBusy, setScreenBusy] = useState(false);
+  const [cameraFlipBusy, setCameraFlipBusy] = useState(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("user");
+  const [canFlipCamera, setCanFlipCamera] = useState(false);
   const [audioUnlockRequired, setAudioUnlockRequired] = useState(false);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
   const [autoStreamQualityTier, setAutoStreamQualityTier] = useState<StreamQualityTier>(() =>
@@ -277,6 +281,7 @@ export default function RoomCallPage() {
   const suppressNextViewportTapCloseRef = useRef(false);
   const landscapeSessionRef = useRef(false);
   const streamQualityTierRef = useRef<StreamQualityTier>(effectiveStreamQualityTier);
+  const cameraFacingModeRef = useRef<"user" | "environment">(cameraFacingMode);
   const touchStateRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startPanX: number;
@@ -371,6 +376,45 @@ export default function RoomCallPage() {
     const ua = window.navigator.userAgent;
     return /safari/i.test(ua) && !/chrome|chromium|crios|edg|opr|android/i.test(ua);
   }, []);
+  const isMobileDevice = useMemo(() => {
+    const ua = window.navigator.userAgent;
+    return /android|iphone|ipad|ipod/i.test(ua);
+  }, []);
+
+  useEffect(() => {
+    cameraFacingModeRef.current = cameraFacingMode;
+  }, [cameraFacingMode]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    let cancelled = false;
+
+    const refreshDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) return;
+        const videoInputs = devices.filter((device) => device.kind === "videoinput");
+        setCanFlipCamera(videoInputs.length > 1);
+      } catch {
+        if (!cancelled) {
+          setCanFlipCamera(false);
+        }
+      }
+    };
+
+    void refreshDevices();
+    if (typeof navigator.mediaDevices.addEventListener === "function") {
+      navigator.mediaDevices.addEventListener("devicechange", refreshDevices);
+      return () => {
+        cancelled = true;
+        navigator.mediaDevices.removeEventListener("devicechange", refreshDevices);
+      };
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [videoEnabled]);
 
   useEffect(() => {
     const nextPassword =
@@ -737,12 +781,16 @@ export default function RoomCallPage() {
     };
   }, []);
 
-  const getCameraVideoConstraints = useCallback(() => {
+  const getCameraVideoConstraints = useCallback((
+    facingMode: "user" | "environment" = cameraFacingModeRef.current,
+    forceExactFacing = false
+  ) => {
     const highQuality = streamQualityTierRef.current === "high";
     return {
       frameRate: { ideal: highQuality ? 30 : 24, max: highQuality ? 30 : 24 },
       width: { ideal: highQuality ? 1920 : 960, max: 1920 },
       height: { ideal: highQuality ? 1080 : 540, max: 1080 },
+      facingMode: forceExactFacing ? { exact: facingMode } : facingMode,
     };
   }, []);
 
@@ -1697,7 +1745,9 @@ export default function RoomCallPage() {
       let cameraTrack = cameraTrackRef.current;
       if (!cameraTrack || cameraTrack.readyState === "ended") {
         rtcLog("toggle-video-new-track");
-        const cam = await navigator.mediaDevices.getUserMedia({ video: true });
+        const cam = await navigator.mediaDevices.getUserMedia({
+          video: getCameraVideoConstraints(cameraFacingModeRef.current, false),
+        });
         const newTrack = cam.getVideoTracks()[0];
         if (!newTrack) {
           throw new Error("camera_not_available");
@@ -1730,6 +1780,72 @@ export default function RoomCallPage() {
       setError(e?.message || t("rooms.camera_error"));
     } finally {
       setVideoBusy(false);
+    }
+  };
+
+  const switchCameraFacing = async () => {
+    if (cameraFlipBusy || videoBusy) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(mediaSupportError());
+      return;
+    }
+
+    const nextFacing: "user" | "environment" =
+      cameraFacingModeRef.current === "user" ? "environment" : "user";
+
+    if (!videoEnabled) {
+      setCameraFacingMode(nextFacing);
+      return;
+    }
+
+    const local = localStreamRef.current;
+    if (!local) return;
+
+    setCameraFlipBusy(true);
+    try {
+      let cam: MediaStream;
+      try {
+        cam = await navigator.mediaDevices.getUserMedia({
+          video: getCameraVideoConstraints(nextFacing, true),
+        });
+      } catch {
+        cam = await navigator.mediaDevices.getUserMedia({
+          video: getCameraVideoConstraints(nextFacing, false),
+        });
+      }
+
+      const newTrack = cam.getVideoTracks()[0];
+      if (!newTrack) {
+        throw new Error("camera_not_available");
+      }
+
+      const prevTrack = cameraTrackRef.current;
+      newTrack.enabled = videoEnabled;
+      local.addTrack(newTrack);
+      cameraTrackRef.current = newTrack;
+      setCameraFacingMode(nextFacing);
+
+      if (prevTrack) {
+        try {
+          local.removeTrack(prevTrack);
+        } catch {
+          // noop
+        }
+        try {
+          prevTrack.stop();
+        } catch {
+          // noop
+        }
+      }
+
+      if (!screenEnabled) {
+        await applyOutgoingVideoTrack(videoEnabled ? newTrack : null, { isScreenShare: false });
+        await renegotiatePeersWithLocalOffer();
+      }
+    } catch (e: any) {
+      setError(e?.message || t("rooms.camera_flip_error"));
+    } finally {
+      setCameraFlipBusy(false);
     }
   };
 
@@ -1802,7 +1918,20 @@ export default function RoomCallPage() {
 
   const toggleScreenShare = useCallback(async () => {
     if (screenBusy) return;
-    if (!navigator.mediaDevices?.getDisplayMedia) {
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
+    };
+    const legacyGetDisplayMedia = (navigator as Navigator & {
+      getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
+    }).getDisplayMedia;
+    const getDisplayMedia =
+      (typeof mediaDevices?.getDisplayMedia === "function"
+        ? mediaDevices.getDisplayMedia.bind(mediaDevices)
+        : typeof legacyGetDisplayMedia === "function"
+          ? legacyGetDisplayMedia.bind(navigator)
+          : null) as ((constraints?: MediaStreamConstraints) => Promise<MediaStream>) | null;
+
+    if (!getDisplayMedia) {
       setError(t("rooms.screen_not_supported"));
       return;
     }
@@ -1814,20 +1943,27 @@ export default function RoomCallPage() {
 
     setScreenBusy(true);
     try {
-      const displayOptions: any = {
-        video: getScreenVideoConstraints(),
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          suppressLocalAudioPlayback: false,
-        },
-        // Keep audio hint, but do not force tab surface:
-        // browser picker should still allow choosing tab/window/screen.
-        systemAudio: "include",
-      };
+      const displayOptions: any = isMobileDevice
+        ? {
+            video: {
+              frameRate: { ideal: 30, max: 30 },
+            },
+            audio: false,
+          }
+        : {
+            video: getScreenVideoConstraints(),
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              suppressLocalAudioPlayback: false,
+            },
+            // Keep audio hint, but do not force tab surface:
+            // browser picker should still allow choosing tab/window/screen.
+            systemAudio: "include",
+          };
 
-      const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
+      const stream = await getDisplayMedia(displayOptions);
       const track = stream.getVideoTracks()[0];
       if (!track) {
         throw new Error(t("rooms.screen_error"));
@@ -1902,6 +2038,7 @@ export default function RoomCallPage() {
     applyOutgoingVideoTrack,
     applyOutgoingAudioTrack,
     audioEnabled,
+    isMobileDevice,
     renegotiatePeersWithLocalOffer,
     screenBusy,
     screenEnabled,
@@ -2318,6 +2455,19 @@ export default function RoomCallPage() {
         >
           {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
         </button>
+
+        {canFlipCamera ? (
+          <button
+            type="button"
+            onClick={switchCameraFacing}
+            disabled={videoBusy || screenBusy || cameraFlipBusy}
+            className="w-11 h-11 rounded-full border border-white/15 bg-white/5 text-white/85 hover:bg-white/10 grid place-items-center transition disabled:opacity-60"
+            aria-label={t("rooms.camera_flip")}
+            title={t("rooms.camera_flip")}
+          >
+            <RefreshCw className={`w-5 h-5 ${cameraFlipBusy ? "animate-spin" : ""}`} />
+          </button>
+        ) : null}
 
         <button
           type="button"
