@@ -120,7 +120,7 @@ const ICE_SERVERS: RTCIceServer[] = [
 function VideoView({
   stream,
   muted,
-  mirror = true,
+  mirror = false,
   fitClassName = "object-cover",
 }: {
   stream: MediaStream;
@@ -237,6 +237,7 @@ export default function RoomCallPage() {
   );
   const [streamQualityMode, setStreamQualityMode] = useState<StreamQualityMode>("auto");
   const [expandedScreenOwner, setExpandedScreenOwner] = useState<string | null>(null);
+  const [singleCameraFocusVisible, setSingleCameraFocusVisible] = useState(false);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
   const effectiveStreamQualityTier: StreamQualityTier =
@@ -1924,14 +1925,23 @@ export default function RoomCallPage() {
     const legacyGetDisplayMedia = (navigator as Navigator & {
       getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
     }).getDisplayMedia;
+    const windowGetDisplayMedia = (window as Window & {
+      getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
+    }).getDisplayMedia;
     const getDisplayMedia =
       (typeof mediaDevices?.getDisplayMedia === "function"
         ? mediaDevices.getDisplayMedia.bind(mediaDevices)
         : typeof legacyGetDisplayMedia === "function"
           ? legacyGetDisplayMedia.bind(navigator)
+          : typeof windowGetDisplayMedia === "function"
+            ? windowGetDisplayMedia.bind(window)
           : null) as ((constraints?: MediaStreamConstraints) => Promise<MediaStream>) | null;
 
     if (!getDisplayMedia) {
+      if (!window.isSecureContext) {
+        setError(t("rooms.media_https_required"));
+        return;
+      }
       setError(t("rooms.screen_not_supported"));
       return;
     }
@@ -2082,6 +2092,64 @@ export default function RoomCallPage() {
     }
     return shares;
   }, [localScreenStream, peerList, remoteStreams, screenEnabled, selfParticipant?.full_name, selfParticipant?.id, t]);
+
+  const activeCameraFeeds = useMemo(() => {
+    const feeds: Array<{
+      ownerID: string;
+      ownerName: string;
+      stream: MediaStream;
+      isLocal: boolean;
+    }> = [];
+
+    if (showLocalCamera && localStream) {
+      feeds.push({
+        ownerID: selfParticipant?.id || "local",
+        ownerName: selfParticipant?.full_name || t("rooms.you"),
+        stream: localStream,
+        isLocal: true,
+      });
+    }
+
+    for (const peer of peerList) {
+      const stream = remoteStreams[peer.id];
+      if (!stream || !peer.video_enabled || peer.screen_enabled) continue;
+      const hasVideo = stream.getVideoTracks().some((track) => track.readyState !== "ended");
+      if (!hasVideo) continue;
+      feeds.push({
+        ownerID: peer.id,
+        ownerName: peer.full_name || peer.username,
+        stream,
+        isLocal: false,
+      });
+    }
+
+    return feeds;
+  }, [
+    cameraFacingMode,
+    localStream,
+    peerList,
+    remoteStreams,
+    selfParticipant?.full_name,
+    selfParticipant?.id,
+    showLocalCamera,
+    t,
+  ]);
+
+  const singleCameraFocus = useMemo(() => {
+    if (activeScreenShares.length > 0) return null;
+    if (activeCameraFeeds.length !== 1) return null;
+    return activeCameraFeeds[0];
+  }, [activeCameraFeeds, activeScreenShares.length]);
+
+  useEffect(() => {
+    if (!singleCameraFocus) {
+      setSingleCameraFocusVisible(false);
+      return;
+    }
+    setSingleCameraFocusVisible(false);
+    const rafID = window.requestAnimationFrame(() => setSingleCameraFocusVisible(true));
+    return () => window.cancelAnimationFrame(rafID);
+  }, [singleCameraFocus?.ownerID, singleCameraFocus?.isLocal]);
 
   const expandedScreenShare = useMemo(() => {
     if (!expandedScreenOwner) return null;
@@ -2346,33 +2414,63 @@ export default function RoomCallPage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-2 auto-rows-[150px] sm:auto-rows-[180px]">
-          <div className="relative rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
-            {showLocalCamera && localStream ? (
-              <VideoView stream={localStream} muted />
-            ) : (
-              <div className="absolute inset-0 grid place-items-center">
-                <AvatarCircle
-                  src={selfParticipant?.avatar_url}
-                  fallback={selfParticipant?.full_name || selfParticipant?.username || "You"}
-                  className="w-14 h-14 text-base font-semibold"
-                />
+        {singleCameraFocus ? (
+          <div className="mb-2">
+            <div
+              className={`relative mx-auto h-[220px] w-full max-w-[560px] sm:h-[290px] overflow-hidden rounded-2xl border border-sky-300/35 bg-black/40 transition-all duration-300 ease-out ${
+                singleCameraFocusVisible
+                  ? "opacity-100 translate-y-0 scale-100"
+                  : "opacity-0 translate-y-1 scale-[0.985]"
+              }`}
+            >
+              <VideoView
+                stream={singleCameraFocus.stream}
+                muted={singleCameraFocus.isLocal}
+                mirror={false}
+                fitClassName="object-contain"
+              />
+              <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full border border-sky-300/35 bg-sky-500/20 px-2 py-0.5 text-xs text-sky-100">
+                  <Video className="w-3 h-3" />
+                  <span className="truncate">{singleCameraFocus.ownerName}</span>
+                </span>
               </div>
-            )}
-            <div className="absolute left-2 right-2 bottom-2 flex items-center justify-between gap-2">
-              <p className="text-xs text-white truncate inline-flex items-center gap-[3px]">
-                <span>{selfParticipant?.full_name || t("rooms.you")}</span>
-                {selfParticipant?.is_verified ? <VerifiedBadge /> : null}
-              </p>
-              <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
-                {audioEnabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
-                {videoEnabled ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
-                {screenEnabled ? <MonitorUp className="w-3 h-3" /> : null}
-              </span>
             </div>
           </div>
+        ) : null}
+
+        <div className="grid grid-cols-2 gap-2 auto-rows-[150px] sm:auto-rows-[180px]">
+          {!singleCameraFocus || !singleCameraFocus.isLocal ? (
+            <div className="relative rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
+              {showLocalCamera && localStream ? (
+                <VideoView stream={localStream} muted mirror={false} />
+              ) : (
+                <div className="absolute inset-0 grid place-items-center">
+                  <AvatarCircle
+                    src={selfParticipant?.avatar_url}
+                    fallback={selfParticipant?.full_name || selfParticipant?.username || "You"}
+                    className="w-14 h-14 text-base font-semibold"
+                  />
+                </div>
+              )}
+              <div className="absolute left-2 right-2 bottom-2 flex items-center justify-between gap-2">
+                <p className="text-xs text-white truncate inline-flex items-center gap-[3px]">
+                  <span>{selfParticipant?.full_name || t("rooms.you")}</span>
+                  {selfParticipant?.is_verified ? <VerifiedBadge /> : null}
+                </p>
+                <span className="inline-flex items-center gap-1 text-[11px] text-white/70">
+                  {audioEnabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
+                  {videoEnabled ? <Video className="w-3 h-3" /> : <VideoOff className="w-3 h-3" />}
+                  {screenEnabled ? <MonitorUp className="w-3 h-3" /> : null}
+                </span>
+              </div>
+            </div>
+          ) : null}
 
           {peerList.map((peer) => {
+            if (singleCameraFocus && !singleCameraFocus.isLocal && singleCameraFocus.ownerID === peer.id) {
+              return null;
+            }
             const stream = remoteStreams[peer.id];
             const showVideo = Boolean(
               stream &&
@@ -2387,7 +2485,7 @@ export default function RoomCallPage() {
               >
                 {stream ? <AudioView stream={stream} /> : null}
                 {showVideo && stream ? (
-                  <VideoView stream={stream} muted />
+                  <VideoView stream={stream} muted mirror={false} />
                 ) : (
                   <div className="absolute inset-0 grid place-items-center">
                     <AvatarCircle
