@@ -22,6 +22,63 @@ import (
 	"gorm.io/gorm"
 )
 
+func normalizePostMediaType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "image":
+		return "image"
+	case "video":
+		return "video"
+	default:
+		return ""
+	}
+}
+
+func inferPostMediaTypeFromURL(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		raw = raw[:i]
+	}
+	switch {
+	case strings.HasSuffix(raw, ".mp4"),
+		strings.HasSuffix(raw, ".webm"),
+		strings.HasSuffix(raw, ".mov"),
+		strings.HasSuffix(raw, ".m4v"),
+		strings.HasSuffix(raw, ".avi"),
+		strings.HasSuffix(raw, ".mkv"),
+		strings.HasSuffix(raw, ".3gp"),
+		strings.HasSuffix(raw, ".ogv"):
+		return "video"
+	default:
+		return "image"
+	}
+}
+
+func postMediaTypeFromContentType(raw string) string {
+	ct := strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	switch {
+	case strings.HasPrefix(ct, "image/") && ct != "image/svg+xml":
+		return "image"
+	case strings.HasPrefix(ct, "video/"):
+		return "video"
+	default:
+		return ""
+	}
+}
+
+func annotatePostMediaItem(it dto.MediaItem) dto.MediaItem {
+	it.Type = normalizePostMediaType(it.Type)
+	if it.Type == "" {
+		it.Type = inferPostMediaTypeFromURL(it.URL)
+	}
+	return it
+}
+
 func decodeMediaURLs(raw []byte) []string {
 	if len(raw) == 0 {
 		return nil
@@ -67,7 +124,7 @@ func decodeMediaItems(raw []byte) []dto.MediaItem {
 		if it.URL == "" {
 			continue
 		}
-		out = append(out, it)
+		out = append(out, annotatePostMediaItem(it))
 	}
 	return out
 }
@@ -81,14 +138,30 @@ func effectiveMediaItems(raw []byte, legacy string) []dto.MediaItem {
 	if legacy == "" {
 		return nil
 	}
-	return []dto.MediaItem{{URL: legacy}}
+	return []dto.MediaItem{annotatePostMediaItem(dto.MediaItem{URL: legacy})}
 }
 
 const (
+	maxPostImageBytes       = 10 * 1024 * 1024
+	maxPostVideoBytes       = 40 * 1024 * 1024
 	maxPostMusicBytes       = 15 * 1024 * 1024
 	maxPostMusicClipSeconds = 30
 	maxPostMusicDurationSec = 30 * 60
 )
+
+func postMediaMaxBytes(mediaType string) int64 {
+	if mediaType == "video" {
+		return maxPostVideoBytes
+	}
+	return maxPostImageBytes
+}
+
+func postMediaMaxLabel(mediaType string) string {
+	if mediaType == "video" {
+		return "40MB"
+	}
+	return "10MB"
+}
 
 var postContainerColorAllowed = map[string]struct{}{
 	"":        {},
@@ -430,7 +503,6 @@ func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media 
 		return media, nil
 	}
 
-	const maxBytes = 5 * 1024 * 1024
 	prefix := s.uploader.KeyPrefix("post", userID) + "/"
 
 	out := make([]dto.MediaItem, 0, len(media))
@@ -444,13 +516,22 @@ func (s *PostService) verifyPostMedia(ctx context.Context, userID string, media 
 			// Object doesn't exist or can't be read.
 			return nil, errors.New("media not found")
 		}
+		mediaType := postMediaTypeFromContentType(st.ContentType)
+		if mediaType == "" {
+			mediaType = inferPostMediaTypeFromURL(m.URL)
+		}
+		if mediaType == "" {
+			return nil, errors.New("invalid media type")
+		}
+		maxBytes := postMediaMaxBytes(mediaType)
 		if st.Size <= 0 || st.Size > maxBytes {
 			// If client lied about size, clean up best-effort.
 			_ = s.uploader.Remove(ctx, key)
-			return nil, errors.New("file too large (max 5MB)")
+			return nil, errors.New("file too large (max " + postMediaMaxLabel(mediaType) + ")")
 		}
 
 		m.URL = s.uploader.PublicURL(key) // normalize
+		m.Type = mediaType
 		out = append(out, m)
 	}
 
@@ -607,7 +688,7 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 		if m.Height < 0 {
 			m.Height = 0
 		}
-		clean = append(clean, m)
+		clean = append(clean, annotatePostMediaItem(m))
 	}
 
 	// For direct-to-storage uploads we must verify the object properties on the backend,
@@ -620,6 +701,9 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 		clean = verified
 	}
 	for _, m := range clean {
+		if m.Type != "image" {
+			continue
+		}
 		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
 			ActorUserID: userID,
 			Action:      "create_post",
@@ -1271,7 +1355,7 @@ func (s *PostService) UpdateOwnWithTags(
 		if m.Height < 0 {
 			m.Height = 0
 		}
-		clean = append(clean, m)
+		clean = append(clean, annotatePostMediaItem(m))
 	}
 
 	if s.uploader != nil && len(clean) > 0 {
@@ -1282,6 +1366,9 @@ func (s *PostService) UpdateOwnWithTags(
 		clean = verified
 	}
 	for _, m := range clean {
+		if m.Type != "image" {
+			continue
+		}
 		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
 			ActorUserID: userID,
 			Action:      "update_post",

@@ -11,7 +11,7 @@ import FabricImageEditor from "./FabricImageEditor";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { EmojiPicker } from "./EmojiPicker";
 import { MusicClipEditor } from "./MusicClipEditor";
-import { fileToWebpIfNeeded, getImageDimensions } from "../utils/media";
+import { fileToWebpIfNeeded, getImageDimensions, getVideoDimensions } from "../utils/media";
 import { insertTextAtSelection } from "../utils/textarea";
 import {
   getPostContainerColorClass,
@@ -52,6 +52,7 @@ const emailLike = /@[^@\s]+\.[A-Za-z]{2,}$/;
 type MediaItem = {
   id: string;
   file: File;
+  mediaType: "image" | "video";
   previewUrl: string;
   status: "preparing" | "uploading" | "uploaded" | "error";
   width?: number;
@@ -82,6 +83,43 @@ const HEIC_MIME_SET = new Set([
   "image/heic-sequence",
   "image/heif-sequence",
 ]);
+const IMAGE_MIME_RE = /^image\//i;
+const VIDEO_MIME_RE = /^video\//i;
+const VIDEO_NAME_RE = /\.(mp4|webm|mov|m4v|avi|mkv|3gp|ogv)$/i;
+const IMAGE_NAME_RE = /\.(jpg|jpeg|png|webp|gif|bmp|tif|tiff|avif|heic|heif)$/i;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
+const POST_MEDIA_ACCEPT =
+  [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".avif",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".m4v",
+    ".avi",
+    ".mkv",
+    ".3gp",
+    ".ogv",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/avif",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/x-matroska",
+    "video/3gpp",
+    "video/ogg",
+  ].join(",");
 
 const MAX_MUSIC_BYTES = 15 * 1024 * 1024;
 const MAX_MUSIC_CLIP_SECONDS = 30;
@@ -93,6 +131,20 @@ const isHeicOrHeifFile = (file: File) => {
   if (type.includes("heic") || type.includes("heif")) return true;
   const name = String(file.name || "").trim().toLowerCase();
   return name.endsWith(".heic") || name.endsWith(".heif");
+};
+
+const isVideoFile = (file: File) => {
+  const type = String(file.type || "").toLowerCase();
+  if (VIDEO_MIME_RE.test(type)) return true;
+  const name = String(file.name || "").trim().toLowerCase();
+  return VIDEO_NAME_RE.test(name);
+};
+
+const isImageFile = (file: File) => {
+  const type = String(file.type || "").toLowerCase();
+  if (IMAGE_MIME_RE.test(type) && type !== "image/svg+xml") return true;
+  const name = String(file.name || "").trim().toLowerCase();
+  return IMAGE_NAME_RE.test(name);
 };
 
 const isAudioMimeType = (raw: string) => String(raw || "").toLowerCase().startsWith("audio/");
@@ -637,8 +689,6 @@ export default function PostComposer({ onCreated }: Props) {
       return;
     }
 
-    const MAX_BYTES = 5 * 1024 * 1024;
-
     // Abort any previous in-flight uploads for these items and mark them as preparing.
     const uploadTokenByID = new Map<string, string>();
     targets.forEach((t) => {
@@ -674,20 +724,51 @@ export default function PostComposer({ onCreated }: Props) {
         if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
 
         try {
-          const f = await fileToWebpIfNeeded(t.file);
-          if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
-          if (isHeicOrHeifFile(f)) throw new Error("unsupported_heic");
-          if (!f.type.startsWith("image/") || f.type === "image/svg+xml") {
-            throw new Error("unsupported_image_type");
+          const original = t.file;
+          if (isHeicOrHeifFile(original)) throw new Error("unsupported_heic");
+
+          const isVideo = isVideoFile(original);
+          const isImage = !isVideo && isImageFile(original);
+          if (!isVideo && !isImage) throw new Error("unsupported_media_type");
+
+          if (isVideo) {
+            if (original.size > MAX_VIDEO_BYTES) throw new Error("file_too_large_video");
+            const { width, height } = await withTimeout(
+              getVideoDimensions(original),
+              5000,
+              "video_decode_timeout"
+            );
+            if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
+            const contentType = String(original.type || "").trim().toLowerCase() || "video/mp4";
+            return {
+              id: t.id,
+              ok: true as const,
+              file: original,
+              width,
+              height,
+              oldKey: t.oldKey,
+              mediaType: "video" as const,
+              contentType,
+            };
           }
-          if (f.size > MAX_BYTES) throw new Error("file_too_large");
-          const { width, height } = await withTimeout(
-            getImageDimensions(f),
-            4000,
-            "image_decode_timeout"
-          );
+
+          const f = await fileToWebpIfNeeded(original);
           if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
-          return { id: t.id, ok: true as const, file: f, width, height, oldKey: t.oldKey };
+          if (!isImageFile(f) || f.type === "image/svg+xml") throw new Error("unsupported_image_type");
+          if (f.size > MAX_IMAGE_BYTES) throw new Error("file_too_large_image");
+          const { width, height } = await withTimeout(getImageDimensions(f), 4000, "image_decode_timeout");
+          if (entry.controller.signal.aborted) return { id: t.id, ok: false as const, reason: "canceled" };
+          const contentType = String(f.type || "").trim().toLowerCase() || "image/jpeg";
+          return {
+            id: t.id,
+            ok: true as const,
+            file: f,
+            width,
+            height,
+            oldKey: t.oldKey,
+            mediaType: "image" as const,
+            contentType,
+          };
         } catch (e: any) {
           const msg = e?.message || "prepare_failed";
           return { id: t.id, ok: false as const, reason: msg };
@@ -711,14 +792,20 @@ export default function PostComposer({ onCreated }: Props) {
             ...m,
             status: "error",
             error:
-              p.reason === "file_too_large"
-                ? "Файл слишком большой (максимум 5MB)"
+              p.reason === "file_too_large_image"
+                ? "Фото слишком большое (максимум 10MB)"
+                : p.reason === "file_too_large_video"
+                  ? "Видео слишком большое (максимум 40MB)"
                 : p.reason === "unsupported_heic"
                   ? "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF."
                 : p.reason === "image_decode_timeout" || p.reason === "image_load_failed"
                   ? "Формат изображения не поддерживается. Выберите JPG, PNG, WebP или GIF."
+                : p.reason === "video_decode_timeout" || p.reason === "video_load_failed" || p.reason === "video_metadata_failed"
+                  ? "Не удалось прочитать видео. Выберите другой файл."
                 : p.reason === "unsupported_image_type"
-                  ? "Поддерживаются только JPG, PNG, WebP или GIF."
+                  ? "Поддерживаются только JPG, PNG, WebP, GIF, BMP или AVIF."
+                  : p.reason === "unsupported_media_type"
+                    ? "Можно добавить только фото или видео."
                   : "Не удалось подготовить файл",
           };
         }
@@ -729,6 +816,7 @@ export default function PostComposer({ onCreated }: Props) {
         return {
           ...m,
           file: p.file,
+          mediaType: p.mediaType,
           width: p.width,
           height: p.height,
         };
@@ -741,7 +829,7 @@ export default function PostComposer({ onCreated }: Props) {
     let presigned: Awaited<ReturnType<typeof api.presignMedia>>;
     try {
       presigned = await api.presignMedia(
-        okPrepared.map((p) => ({ content_type: p.file.type, size_bytes: p.file.size })),
+        okPrepared.map((p) => ({ content_type: p.contentType, size_bytes: p.file.size })),
         "post",
         token
       );
@@ -839,44 +927,68 @@ export default function PostComposer({ onCreated }: Props) {
     if (!fileList) return;
     const incoming = Array.from(fileList);
     const valid: MediaItem[] = [];
-    const allowed = /^image\//i;
     const currentCount = media.length;
-    let rejected = false;
+    let reachedLimit = false;
     let rejectedHeic = false;
-    const MAX_BYTES = 5 * 1024 * 1024;
+    let rejectedType = false;
+    let rejectedImageSize = false;
+    let rejectedVideoSize = false;
 
     for (const f of incoming) {
+      if (currentCount + valid.length >= MAX_MEDIA) {
+        reachedLimit = true;
+        break;
+      }
       if (isHeicOrHeifFile(f)) {
-        rejected = true;
         rejectedHeic = true;
         continue;
       }
-      if (!allowed.test(f.type) || f.type === "image/svg+xml") {
-        rejected = true;
+      if (isVideoFile(f)) {
+        if (f.size > MAX_VIDEO_BYTES) {
+          rejectedVideoSize = true;
+          continue;
+        }
+        valid.push({
+          id: crypto.randomUUID(),
+          file: f,
+          mediaType: "video",
+          previewUrl: URL.createObjectURL(f),
+          status: "preparing",
+        });
         continue;
       }
-      if (f.size > MAX_BYTES) {
-        rejected = true;
+      if (isImageFile(f) && f.type !== "image/svg+xml") {
+        if (f.size > MAX_IMAGE_BYTES) {
+          rejectedImageSize = true;
+          continue;
+        }
+        valid.push({
+          id: crypto.randomUUID(),
+          file: f,
+          mediaType: "image",
+          previewUrl: URL.createObjectURL(f),
+          status: "preparing",
+        });
         continue;
       }
-      if (currentCount + valid.length >= MAX_MEDIA) {
-        rejected = true;
-        break;
-      }
-      valid.push({
-        id: crypto.randomUUID(),
-        file: f,
-        previewUrl: URL.createObjectURL(f),
-        status: "preparing",
-      });
+      rejectedType = true;
     }
 
-    if (rejected) {
-      setMediaError(
-        rejectedHeic
-          ? "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF."
-          : "Можно добавить только изображения до 5MB (максимум 5 вложений)"
-      );
+    const hasRejects = reachedLimit || rejectedHeic || rejectedType || rejectedImageSize || rejectedVideoSize;
+    if (hasRejects) {
+      let msg = "Можно добавить только фото или видео";
+      if (reachedLimit) {
+        msg = "Можно добавить максимум 5 вложений";
+      } else if (rejectedHeic) {
+        msg = "Формат HEIC/HEIF не поддерживается. Выберите JPG, PNG, WebP или GIF.";
+      } else if (rejectedImageSize && rejectedVideoSize) {
+        msg = "Фото до 10MB, видео до 40MB";
+      } else if (rejectedImageSize) {
+        msg = "Фото должно быть до 10MB";
+      } else if (rejectedVideoSize) {
+        msg = "Видео должно быть до 40MB";
+      }
+      setMediaError(msg);
       setTimeout(() => setMediaError(""), 3000);
     }
 
@@ -1071,6 +1183,7 @@ export default function PostComposer({ onCreated }: Props) {
           url: m.remoteUrl as string,
           width: m.width as number,
           height: m.height as number,
+          type: m.mediaType,
         }));
 
       let musicPayload: UploadedPostMusic | undefined;
@@ -1227,11 +1340,23 @@ export default function PostComposer({ onCreated }: Props) {
               }}
               className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30 aspect-video group focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
             >
-              <img
-                src={m.previewUrl}
-                alt="preview"
-                className="w-full h-full object-cover group-hover:opacity-90 transition"
-              />
+              {m.mediaType === "video" ? (
+                <video
+                  src={m.previewUrl}
+                  className="w-full h-full object-cover group-hover:opacity-90 transition"
+                  muted
+                  autoPlay
+                  loop
+                  playsInline
+                  preload="metadata"
+                />
+              ) : (
+                <img
+                  src={m.previewUrl}
+                  alt="preview"
+                  className="w-full h-full object-cover group-hover:opacity-90 transition"
+                />
+              )}
               {(m.status === "preparing" || m.status === "uploading") && (
                 <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
                   <div className="h-6 w-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
@@ -1503,7 +1628,7 @@ export default function PostComposer({ onCreated }: Props) {
             <ImageIcon className="w-5 h-5" strokeWidth={1.7} />
             <input
               type="file"
-              accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+              accept={POST_MEDIA_ACCEPT}
               className="hidden"
               multiple
               onChange={(e) => {
@@ -1659,7 +1784,7 @@ export default function PostComposer({ onCreated }: Props) {
               className="relative bg-black border border-white/10 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
-              {editing ? (
+              {editing && previewItem.mediaType === "image" ? (
                 <FabricImageEditor
                   src={previewItem.previewUrl}
                   fileName={previewItem.file.name}
@@ -1676,7 +1801,7 @@ export default function PostComposer({ onCreated }: Props) {
                     setMedia((prev) =>
                       prev.map((m) =>
                         m.id === previewItem.id
-                          ? { ...m, file: nextFile, previewUrl: nextUrl, status: "preparing", error: undefined }
+                          ? { ...m, file: nextFile, mediaType: "image", previewUrl: nextUrl, status: "preparing", error: undefined }
                           : m
                       )
                     );
@@ -1688,20 +1813,33 @@ export default function PostComposer({ onCreated }: Props) {
               ) : (
                 <div className="flex-1 flex items-center justify-center overflow-hidden p-4">
                   <div className="relative inline-block max-w-full">
-                    <img
-                      src={previewItem.previewUrl}
-                      alt="preview"
-                      className="max-h-[76vh] max-w-full object-contain rounded-xl"
-                    />
+                    {previewItem.mediaType === "video" ? (
+                      <video
+                        src={previewItem.previewUrl}
+                        className="max-h-[76vh] max-w-full object-contain rounded-xl"
+                        controls
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                      />
+                    ) : (
+                      <img
+                        src={previewItem.previewUrl}
+                        alt="preview"
+                        className="max-h-[76vh] max-w-full object-contain rounded-xl"
+                      />
+                    )}
                     <div className="absolute top-2 right-2 flex items-center gap-2">
-                      <button
-                        type="button"
-                        title="Редактировать"
-                        className="w-10 h-10 rounded-full bg-black/70 border border-white/15 backdrop-blur flex items-center justify-center hover:bg-black/80"
-                        onClick={() => setEditing(true)}
-                      >
-                        <Edit3 className="w-5 h-5 text-sky-400" />
-                      </button>
+                      {previewItem.mediaType === "image" ? (
+                        <button
+                          type="button"
+                          title="Редактировать"
+                          className="w-10 h-10 rounded-full bg-black/70 border border-white/15 backdrop-blur flex items-center justify-center hover:bg-black/80"
+                          onClick={() => setEditing(true)}
+                        >
+                          <Edit3 className="w-5 h-5 text-sky-400" />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         title="Удалить"
@@ -1742,6 +1880,7 @@ export default function PostComposer({ onCreated }: Props) {
             const item: MediaItem = {
               id: crypto.randomUUID(),
               file,
+              mediaType: "image",
               previewUrl: URL.createObjectURL(file),
               status: "preparing",
             };

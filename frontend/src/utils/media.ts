@@ -33,3 +33,45 @@ export const getImageDimensions = async (blob: Blob): Promise<{ width: number; h
     img.src = url;
   });
 };
+
+export const getVideoDimensions = async (blob: Blob): Promise<{ width: number; height: number }> => {
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    let settled = false;
+
+    const cleanup = () => {
+      video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("error", onErr);
+      video.src = "";
+      URL.revokeObjectURL(url);
+    };
+
+    const onMeta = () => {
+      if (settled) return;
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
+      settled = true;
+      cleanup();
+      if (width > 0 && height > 0) {
+        resolve({ width, height });
+      } else {
+        reject(new Error("video_metadata_failed"));
+      }
+    };
+
+    const onErr = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("video_load_failed"));
+    };
+
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.muted = true;
+    video.addEventListener("loadedmetadata", onMeta);
+    video.addEventListener("error", onErr);
+    video.src = url;
+  });
+};

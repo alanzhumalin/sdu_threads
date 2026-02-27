@@ -2,8 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 
+type ViewerItem = {
+  url: string;
+  type?: "image" | "video";
+};
+
 type Props = {
-  urls: string[];
+  items?: ViewerItem[];
+  urls?: string[];
   initialIndex?: number;
   onClose: () => void;
 };
@@ -12,8 +18,25 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-export function MediaViewerModal({ urls, initialIndex = 0, onClose }: Props) {
-  const count = urls.length;
+const isVideoByURL = (url: string) => {
+  const normalized = String(url || "").toLowerCase().split("?")[0]?.split("#")[0] || "";
+  return /\.(mp4|webm|mov|m4v|avi|mkv|3gp|ogv)$/.test(normalized);
+};
+
+const normalizeType = (item: ViewerItem): "image" | "video" => {
+  if (item.type === "video" || item.type === "image") return item.type;
+  return isVideoByURL(item.url) ? "video" : "image";
+};
+
+export function MediaViewerModal({ items, urls, initialIndex = 0, onClose }: Props) {
+  const normalizedItems = useMemo<ViewerItem[]>(() => {
+    if (Array.isArray(items) && items.length > 0) {
+      return items.filter((item) => Boolean(item?.url));
+    }
+    return Array.isArray(urls) ? urls.filter(Boolean).map((url) => ({ url })) : [];
+  }, [items, urls]);
+
+  const count = normalizedItems.length;
   const safeInitial = useMemo(() => clamp(initialIndex, 0, Math.max(0, count - 1)), [initialIndex, count]);
   const [idx, setIdx] = useState(safeInitial);
   const startX = useRef<number | null>(null);
@@ -36,6 +59,8 @@ export function MediaViewerModal({ urls, initialIndex = 0, onClose }: Props) {
   }, [count, onClose]);
 
   if (count === 0) return null;
+  const current = normalizedItems[idx]!;
+  const currentType = normalizeType(current);
 
   return createPortal(
     <div
@@ -69,12 +94,24 @@ export function MediaViewerModal({ urls, initialIndex = 0, onClose }: Props) {
             else next();
           }}
         >
-          <img
-            src={urls[idx]}
-            alt="media"
-            className="w-full h-full object-contain select-none"
-            draggable={false}
-          />
+          {currentType === "video" ? (
+            <video
+              key={`${current.url}-${idx}`}
+              src={current.url}
+              className="w-full h-full object-contain"
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            />
+          ) : (
+            <img
+              src={current.url}
+              alt="media"
+              className="w-full h-full object-contain select-none"
+              draggable={false}
+            />
+          )}
 
           <div className="absolute top-3 left-1/2 -translate-x-1/2 text-xs text-white/80 bg-black/70 border border-white/10 rounded-full px-3 py-1">
             {idx + 1}/{count}
@@ -113,7 +150,7 @@ export function MediaViewerModal({ urls, initialIndex = 0, onClose }: Props) {
 
         {count > 1 && (
           <div className="mt-3 flex items-center justify-center gap-2">
-            {urls.map((_, i) => (
+            {normalizedItems.map((_, i) => (
               <button
                 key={i}
                 type="button"
@@ -131,4 +168,3 @@ export function MediaViewerModal({ urls, initialIndex = 0, onClose }: Props) {
     document.body
   );
 }
-

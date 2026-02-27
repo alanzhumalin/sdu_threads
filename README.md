@@ -128,6 +128,7 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Users: `POST /api/users` (legacy), `GET /api/users/{id}`, `GET /api/users/me`, `GET /api/users/search?q=`.
 - Follow: `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/followers|following`.
 - Media: `POST /api/media/upload?purpose=post|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
+  - `purpose=post`: фото до `10MB` и видео до `40MB` (до 5 файлов).
 - Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
 - Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
 - Telegram notifications:

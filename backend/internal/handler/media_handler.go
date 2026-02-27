@@ -32,10 +32,28 @@ var (
 
 const (
 	maxDefaultMediaBytes = 5 * 1024 * 1024
+	maxPostImageBytes    = 10 * 1024 * 1024
+	maxPostVideoBytes    = 40 * 1024 * 1024
 	maxPostMusicBytes    = 15 * 1024 * 1024
 )
 
 func maxBytesForPurpose(purpose string) int {
+	if purpose == "post" {
+		return maxPostVideoBytes
+	}
+	if purpose == "post_music" {
+		return maxPostMusicBytes
+	}
+	return maxDefaultMediaBytes
+}
+
+func maxBytesForPurposeAndType(purpose, mediaType string) int {
+	if purpose == "post" {
+		if mediaType == "video" {
+			return maxPostVideoBytes
+		}
+		return maxPostImageBytes
+	}
 	if purpose == "post_music" {
 		return maxPostMusicBytes
 	}
@@ -43,10 +61,39 @@ func maxBytesForPurpose(purpose string) int {
 }
 
 func maxBytesLabelForPurpose(purpose string) string {
+	if purpose == "post" {
+		return "10MB для фото, 40MB для видео"
+	}
 	if purpose == "post_music" {
 		return "15MB"
 	}
 	return "5MB"
+}
+
+func maxBytesLabelForPurposeAndType(purpose, mediaType string) string {
+	if purpose == "post" {
+		if mediaType == "video" {
+			return "40MB"
+		}
+		return "10MB"
+	}
+	if purpose == "post_music" {
+		return "15MB"
+	}
+	return "5MB"
+}
+
+func invalidMediaTypeMessage(purpose string) string {
+	switch purpose {
+	case "post":
+		return "Для поста разрешены только изображения (без SVG) и видео"
+	case "chat":
+		return "Для чата разрешены изображения или аудио до 5MB"
+	case "post_music":
+		return "Для музыки поста разрешены только аудио-файлы до 15MB"
+	default:
+		return "Можно загрузить только изображения (без SVG)"
+	}
 }
 
 func normalizeContentType(raw string) string {
@@ -60,6 +107,14 @@ func normalizeContentType(raw string) string {
 func normalizeImageContentType(raw string) (string, bool) {
 	ct := normalizeContentType(raw)
 	if !strings.HasPrefix(ct, "image/") || ct == "image/svg+xml" {
+		return "", false
+	}
+	return ct, true
+}
+
+func normalizeVideoContentType(raw string) (string, bool) {
+	ct := normalizeContentType(raw)
+	if !strings.HasPrefix(ct, "video/") {
 		return "", false
 	}
 	return ct, true
@@ -86,6 +141,15 @@ func normalizeMediaContentType(raw, purpose string) (ct string, mediaType string
 	if purpose == "post_music" {
 		if c, yes := normalizeChatAudioContentType(raw); yes {
 			return c, "audio", true
+		}
+		return "", "", false
+	}
+	if purpose == "post" {
+		if c, yes := normalizeImageContentType(raw); yes {
+			return c, "image", true
+		}
+		if c, yes := normalizeVideoContentType(raw); yes {
+			return c, "video", true
 		}
 		return "", "", false
 	}
@@ -134,6 +198,20 @@ func mediaExtFromContentType(ct string) string {
 		return "3gp"
 	case "audio/amr":
 		return "amr"
+	case "video/mp4":
+		return "mp4"
+	case "video/webm":
+		return "webm"
+	case "video/quicktime":
+		return "mov"
+	case "video/x-msvideo":
+		return "avi"
+	case "video/x-matroska":
+		return "mkv"
+	case "video/3gpp":
+		return "3gp"
+	case "video/ogg":
+		return "ogv"
 	}
 
 	if strings.HasPrefix(ct, "audio/") {
@@ -146,6 +224,19 @@ func mediaExtFromContentType(ct string) string {
 		subtype = strings.ReplaceAll(subtype, ".", "")
 		if subtype == "" {
 			return "audio"
+		}
+		return subtype
+	}
+	if strings.HasPrefix(ct, "video/") {
+		subtype := strings.TrimPrefix(ct, "video/")
+		subtype = strings.TrimSpace(subtype)
+		subtype = strings.TrimPrefix(subtype, "x-")
+		if i := strings.Index(subtype, "+"); i >= 0 {
+			subtype = subtype[:i]
+		}
+		subtype = strings.ReplaceAll(subtype, ".", "")
+		if subtype == "" {
+			return "video"
 		}
 		return subtype
 	}
@@ -333,26 +424,21 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]*storage.PresignedPut, 0, len(req.Files))
-	maxBytes := int64(maxBytesForPurpose(purpose))
 	for _, f := range req.Files {
 		ct, _, ok := normalizeMediaContentType(f.ContentType, purpose)
 		if !ok {
-			msg := "Можно загрузить только изображения (без SVG)"
-			if purpose == "chat" {
-				msg = "Для чата разрешены изображения или аудио до 5MB"
-			} else if purpose == "post_music" {
-				msg = "Для музыки поста разрешены только аудио-файлы до 15MB"
-			}
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "INVALID_MEDIA_TYPE",
-				Message: msg,
+				Message: invalidMediaTypeMessage(purpose),
 			})
 			return
 		}
+		_, mediaType, _ := normalizeMediaContentType(ct, purpose)
+		maxBytes := int64(maxBytesForPurposeAndType(purpose, mediaType))
 		if f.SizeBytes <= 0 || f.SizeBytes > maxBytes {
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "FILE_TOO_LARGE",
-				Message: "Размер файла не должен превышать " + maxBytesLabelForPurpose(purpose),
+				Message: "Размер файла не должен превышать " + maxBytesLabelForPurposeAndType(purpose, mediaType),
 			})
 			return
 		}
@@ -568,7 +654,8 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errInvalidMediaType
 				return
 			}
-			if len(data) == 0 || len(data) > maxBytesForPurpose(purpose) {
+			maxBytes := maxBytesForPurposeAndType(purpose, mediaType)
+			if len(data) == 0 || len(data) > maxBytes {
 				errs <- errFileTooLarge
 				return
 			}
@@ -636,15 +723,9 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if errors.Is(e, errInvalidMediaType) {
-				msg := "Можно загрузить только изображения (без SVG)"
-				if purpose == "chat" {
-					msg = "Для чата разрешены изображения или аудио до 5MB"
-				} else if purpose == "post_music" {
-					msg = "Для музыки поста разрешены только аудио-файлы до 15MB"
-				}
 				writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 					Code:    "INVALID_MEDIA_TYPE",
-					Message: msg,
+					Message: invalidMediaTypeMessage(purpose),
 				})
 				return
 			}

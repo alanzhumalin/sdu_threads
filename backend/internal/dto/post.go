@@ -22,6 +22,7 @@ type MediaItem struct {
 	URL    string `json:"url"`
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
+	Type   string `json:"type,omitempty"`
 }
 
 type PostMusic struct {

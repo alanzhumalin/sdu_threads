@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Volume2, VolumeX } from "lucide-react";
 import { MediaViewerModal } from "./MediaViewerModal";
 import type { MediaItem } from "../types/media";
 
@@ -7,15 +8,29 @@ type Props = {
   className?: string;
 };
 
-export function PostMedia({ media, className }: Props) {
-  const items = useMemo<MediaItem[]>(() => {
-    return Array.isArray(media) ? media : [];
-  }, [media]);
+const isVideoByURL = (url: string) => {
+  const normalized = String(url || "").toLowerCase().split("?")[0]?.split("#")[0] || "";
+  return /\.(mp4|webm|mov|m4v|avi|mkv|3gp|ogv)$/.test(normalized);
+};
 
-  const list = useMemo(() => items.map((i) => i.url).filter(Boolean), [items]);
+const mediaKind = (item: MediaItem): "image" | "video" => {
+  if (item.type === "video" || item.type === "image") return item.type;
+  return isVideoByURL(item.url) ? "video" : "image";
+};
+
+export function PostMedia({ media, className }: Props) {
+  const items = useMemo<MediaItem[]>(() => (Array.isArray(media) ? media : []), [media]);
+  const viewerItems = useMemo(
+    () =>
+      items
+        .map((item) => ({ url: item.url, type: mediaKind(item) }))
+        .filter((item) => Boolean(item.url)),
+    [items]
+  );
 
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [unmuted, setUnmuted] = useState<Record<string, boolean>>({});
 
   const openAt = (idx: number) => {
     setActive(idx);
@@ -24,7 +39,6 @@ export function PostMedia({ media, className }: Props) {
 
   const closeViewer = () => {
     setOpen(false);
-    // Prevent a persistent focus outline on the clicked tile after closing the viewer.
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -32,7 +46,6 @@ export function PostMedia({ media, className }: Props) {
 
   if (items.length === 0) return null;
 
-  // No borders here: the post card already has an outer border, and inner borders look "double".
   const outerCls = `mt-4 overflow-hidden rounded-2xl ${className ?? ""}`;
   const hCls = "h-[320px] md:h-[420px]";
 
@@ -59,33 +72,70 @@ export function PostMedia({ media, className }: Props) {
     const tileAspect = opts?.tileAspect;
     const hasTileAspect = typeof tileAspect === "number" && tileAspect > 0;
     const fit = opts?.fit ?? "contain";
+    const kind = mediaKind(it);
+    const key = `${it.url}-${idx}`;
+    const isUnmuted = Boolean(unmuted[key]);
+
     return (
-      <button
-        key={`${it.url}-${idx}`}
-        type="button"
+      <div
+        key={key}
+        role="button"
+        tabIndex={0}
         onClick={(e) => {
           e.stopPropagation();
           openAt(idx);
         }}
-        className={`relative w-full ${hasTileAspect ? "" : "h-full"} min-w-0 min-h-0 overflow-hidden flex items-center justify-center bg-black/20 focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openAt(idx);
+          }
+        }}
+        className={`relative w-full ${hasTileAspect ? "" : "h-full"} min-w-0 min-h-0 overflow-hidden flex items-center justify-center bg-black/20 focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 cursor-pointer`}
         style={hasTileAspect ? { aspectRatio: tileAspect } : undefined}
       >
-        <img
-          src={it.url}
-          alt="media"
-          width={it.width || undefined}
-          height={it.height || undefined}
-          className={`w-full h-full min-w-0 min-h-0 ${fit === "cover" ? "object-cover" : "object-contain object-center"}`}
-          draggable={false}
-          loading="lazy"
-          decoding="async"
-        />
+        {kind === "video" ? (
+          <video
+            src={it.url}
+            className={`w-full h-full min-w-0 min-h-0 ${fit === "cover" ? "object-cover" : "object-contain object-center"}`}
+            autoPlay
+            loop
+            playsInline
+            preload="metadata"
+            muted={!isUnmuted}
+          />
+        ) : (
+          <img
+            src={it.url}
+            alt="media"
+            width={it.width || undefined}
+            height={it.height || undefined}
+            className={`w-full h-full min-w-0 min-h-0 ${fit === "cover" ? "object-cover" : "object-contain object-center"}`}
+            draggable={false}
+            loading="lazy"
+            decoding="async"
+          />
+        )}
+        {kind === "video" ? (
+          <button
+            type="button"
+            aria-label={isUnmuted ? "Выключить звук видео" : "Включить звук видео"}
+            title={isUnmuted ? "Выключить звук видео" : "Включить звук видео"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setUnmuted((prev) => ({ ...prev, [key]: !prev[key] }));
+            }}
+            className="absolute bottom-2 right-2 z-10 rounded-full border border-white/20 bg-black/55 p-1.5 text-white/90 hover:bg-black/70"
+          >
+            {isUnmuted ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+        ) : null}
         {extraOverlay ? (
           <span className="absolute inset-0 bg-black/60 flex items-center justify-center text-white text-2xl font-semibold">
             {extraOverlay}
           </span>
         ) : null}
-      </button>
+      </div>
     );
   };
 
@@ -100,7 +150,6 @@ export function PostMedia({ media, className }: Props) {
     grid = (
       <div
         className={`w-full overflow-hidden bg-black/20 ${hasDims ? "" : hCls} ${portraitHeightCls}`.trim()}
-        // Safari can misrender portrait single media when aspect-ratio is set on both container and img.
         style={!isPortrait && aspectStr(it) ? { aspectRatio: aspectStr(it) } : undefined}
       >
         {tile(it, 0, undefined, { fit: isPortrait ? "contain" : "cover" })}
@@ -137,7 +186,7 @@ export function PostMedia({ media, className }: Props) {
   return (
     <>
       <div className={outerCls}>{grid}</div>
-      {open && <MediaViewerModal urls={list} initialIndex={active} onClose={closeViewer} />}
+      {open && <MediaViewerModal items={viewerItems} initialIndex={active} onClose={closeViewer} />}
     </>
   );
 }
