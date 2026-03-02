@@ -247,11 +247,17 @@ type StoryViewerModalProps = {
   onClose: () => void;
 };
 
+const IMAGE_STORY_DURATION_MS = 10_000;
+
 function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
   const { t } = useI18n();
   const [index, setIndex] = useState(0);
   const [muted, setMuted] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [mediaLoading, setMediaLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const progressIntervalRef = useRef<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const stories = group?.stories || [];
   const count = stories.length;
@@ -263,35 +269,17 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    if (progressIntervalRef.current) {
+      window.clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    setIndex(0);
-    setMuted(true);
-  }, [open, group?.user.id]);
+  const goPrev = useCallback(() => {
+    setIndex((prev) => (prev > 0 ? prev - 1 : prev));
+  }, []);
 
-  useEffect(() => {
-    clearTimer();
-    if (!open || !current || currentIsVideo) return;
-    timerRef.current = window.setTimeout(() => {
-      setIndex((prev) => {
-        if (prev >= count - 1) {
-          onClose();
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, 5000);
-    return clearTimer;
-  }, [open, current, currentIsVideo, count, onClose, clearTimer]);
-
-  useEffect(() => clearTimer, [clearTimer]);
-
-  if (!open || !group || count === 0) return null;
-
-  const goPrev = () => setIndex((prev) => (prev > 0 ? prev - 1 : prev));
-  const goNext = () =>
+  const goNext = useCallback(() => {
     setIndex((prev) => {
       if (prev >= count - 1) {
         onClose();
@@ -299,6 +287,87 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
       }
       return prev + 1;
     });
+  }, [count, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    setIndex(0);
+    setMuted(true);
+    setProgress(0);
+    setMediaLoading(true);
+  }, [open, group?.user.id]);
+
+  useEffect(() => {
+    if (!open || !current) {
+      setMediaLoading(false);
+      return;
+    }
+    setMediaLoading(true);
+  }, [open, current?.id]);
+
+  useEffect(() => {
+    if (!open || !current) return;
+    const next = stories[index + 1];
+    if (!next?.media?.url) return;
+
+    if (isStoryVideo({ media: next.media })) {
+      const el = document.createElement("video");
+      el.preload = "auto";
+      el.src = next.media.url;
+      el.muted = true;
+      el.playsInline = true;
+      try {
+        el.load();
+      } catch {
+        // ignore preload errors
+      }
+      return () => {
+        el.removeAttribute("src");
+        try {
+          el.load();
+        } catch {
+          // ignore cleanup errors
+        }
+      };
+    }
+
+    const img = new Image();
+    img.decoding = "async";
+    img.src = next.media.url;
+    return () => {
+      img.src = "";
+    };
+  }, [open, current?.id, index, stories]);
+
+  useEffect(() => {
+    clearTimer();
+    setProgress(0);
+
+    if (!open || !current) return;
+    if (currentIsVideo) return;
+    if (mediaLoading) return;
+
+    const startedAt = Date.now();
+    progressIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const next = Math.max(0, Math.min(1, elapsed / IMAGE_STORY_DURATION_MS));
+      setProgress(next);
+    }, 60);
+
+    timerRef.current = window.setTimeout(() => {
+      setProgress(1);
+      goNext();
+    }, IMAGE_STORY_DURATION_MS);
+
+    return clearTimer;
+  }, [open, current, currentIsVideo, mediaLoading, clearTimer, goNext]);
+
+  useEffect(() => clearTimer, [clearTimer]);
+
+  if (!open || !group || count === 0) return null;
+  const soundBottomClass = current.content
+    ? "bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]"
+    : "bottom-5";
 
   return createPortal(
     <div className="fixed inset-0 z-[180] bg-black flex items-center justify-center">
@@ -310,10 +379,10 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
             return (
               <div key={story.id} className="h-1 flex-1 rounded-full bg-white/20 overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ${
+                  className={`h-full rounded-full ${
                     done || active ? "bg-white/90" : "bg-transparent"
                   }`}
-                  style={{ width: done ? "100%" : active ? "35%" : "0%" }}
+                  style={{ width: done ? "100%" : active ? `${Math.round(progress * 100)}%` : "0%" }}
                 />
               </div>
             );
@@ -364,6 +433,7 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
 
         {currentIsVideo ? (
           <video
+            ref={videoRef}
             key={current.id}
             src={current.media.url}
             className="w-full h-full object-contain bg-black"
@@ -371,11 +441,42 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
             playsInline
             preload="metadata"
             muted={muted}
-            onEnded={goNext}
+            onLoadedMetadata={(e) => {
+              const d = Number(e.currentTarget.duration);
+              setProgress(Number.isFinite(d) && d > 0 ? 0 : 0);
+            }}
+            onLoadedData={() => setMediaLoading(false)}
+            onCanPlay={() => setMediaLoading(false)}
+            onError={() => setMediaLoading(false)}
+            onTimeUpdate={(e) => {
+              const d = Number(e.currentTarget.duration);
+              const c = Number(e.currentTarget.currentTime);
+              if (!Number.isFinite(d) || d <= 0 || !Number.isFinite(c) || c < 0) return;
+              setProgress(Math.max(0, Math.min(1, c / d)));
+            }}
+            onEnded={() => {
+              setProgress(1);
+              goNext();
+            }}
           />
         ) : (
-          <img src={current.media.url} alt="story" className="w-full h-full object-contain bg-black" />
+          <img
+            src={current.media.url}
+            alt="story"
+            className="w-full h-full object-contain bg-black"
+            onLoad={() => setMediaLoading(false)}
+            onError={() => setMediaLoading(false)}
+          />
         )}
+
+        {mediaLoading ? (
+          <div className="absolute inset-0 z-20 grid place-items-center bg-black/45 pointer-events-none">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/65 px-3 py-1.5 text-xs text-white/90">
+              <span className="inline-block h-2 w-2 rounded-full bg-sky-300 animate-pulse" />
+              <span>{t("stories.loading")}</span>
+            </div>
+          </div>
+        ) : null}
 
         {current.content ? (
           <div className="absolute inset-x-3 bottom-5 z-20">
@@ -389,7 +490,7 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
           <button
             type="button"
             onClick={() => setMuted((v) => !v)}
-            className="absolute right-3 bottom-5 z-30 w-10 h-10 rounded-full border border-white/20 bg-black/60 text-white hover:bg-black/80 grid place-items-center"
+            className={`absolute right-3 ${soundBottomClass} z-30 w-10 h-10 rounded-full border border-white/20 bg-black/60 text-white hover:bg-black/80 grid place-items-center`}
             aria-label={muted ? t("stories.sound_on") : t("stories.sound_off")}
             title={muted ? t("stories.sound_on") : t("stories.sound_off")}
           >
