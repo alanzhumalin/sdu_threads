@@ -578,6 +578,19 @@ export default function FeedPage() {
     }
   };
 
+  const startQuote = (item: FeedItem) => {
+    if (!token) {
+      showAuthGate({
+        title: t("auth.required_title"),
+        message: t("feed.auth.create_post_message"),
+        ctaLabel: t("auth.cta_login"),
+      });
+      return;
+    }
+    setQuotePost(toQuotedPost(item));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const removePostFromLists = (postId: string) => {
     const nextPopular = feed.filter((p) => p.id !== postId);
     const nextFollowing = followingFeed.filter((p) => p.id !== postId);
@@ -881,16 +894,7 @@ export default function FeedPage() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuOpenId(null);
-                      if (!token) {
-                        showAuthGate({
-                          title: t("auth.required_title"),
-                          message: t("feed.auth.create_post_message"),
-                          ctaLabel: t("auth.cta_login"),
-                        });
-                        return;
-                      }
-                      setQuotePost(toQuotedPost(item));
-                      window.scrollTo({ top: 0, behavior: "smooth" });
+                      startQuote(item);
                     }}
                     className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
                   >
@@ -1024,6 +1028,16 @@ export default function FeedPage() {
                 >
                   <Smile className="w-5 h-5" strokeWidth={1.7} />
                   <span className="font-medium">{t("feed.action.reaction")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startQuote(item)}
+                  className="flex items-center gap-2 rounded-full px-2 py-1 text-white/60 hover:text-white transition"
+                  aria-label={t("feed.menu.quote")}
+                  title={t("feed.menu.quote")}
+                >
+                  <MessageSquareQuote className="w-5 h-5" strokeWidth={1.7} />
+                  <span className="font-medium">{t("feed.action.quote")}</span>
                 </button>
               </div>
 
