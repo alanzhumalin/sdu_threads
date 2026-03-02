@@ -7,6 +7,11 @@ type CreateCommentRequest struct {
 	Hashtags []string `json:"hashtags,omitempty"`
 }
 
+type UpdateCommentRequest struct {
+	Content  string   `json:"content"`
+	Hashtags []string `json:"hashtags,omitempty"`
+}
+
 type CommentResponse struct {
 	ID               string            `json:"id"`
 	PostID           string            `json:"post_id"`

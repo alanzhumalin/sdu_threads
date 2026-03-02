@@ -202,6 +202,63 @@ func (s *CommentService) Delete(ctx context.Context, commentID, userID string) e
 	return nil
 }
 
+func (s *CommentService) Update(ctx context.Context, commentID, userID, body string, hashtags []string) error {
+	commentID = strings.TrimSpace(commentID)
+	userID = strings.TrimSpace(userID)
+	body = strings.TrimSpace(body)
+	if commentID == "" || userID == "" {
+		return errors.New("comment_id and user_id are required")
+	}
+	if body == "" {
+		return errors.New("content is required")
+	}
+
+	meta, err := s.comments.MetaByID(ctx, commentID)
+	if err != nil {
+		return errors.New("not found or not owner")
+	}
+	if strings.TrimSpace(meta.UserID) != userID {
+		return errors.New("not found or not owner")
+	}
+
+	preview := body
+	if len(preview) > 160 {
+		preview = preview[:160] + "..."
+	}
+	if err := s.mod.CheckText(ctx, body, "comment_text", &moderation.AuditMeta{
+		ActorUserID: userID,
+		Action:      "update_comment",
+		TargetType:  "post",
+		TargetID:    meta.PostID,
+		Payload: map[string]any{
+			"comment_id":      commentID,
+			"content_preview": preview,
+		},
+	}); err != nil {
+		return err
+	}
+
+	ok, err := s.comments.UpdateBodyIfOwner(ctx, commentID, userID, body)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("not found or not owner")
+	}
+
+	if s.tags != nil {
+		_ = func() error {
+			cands := normalizeTagsLocal(hashtags)
+			if len(cands) == 0 {
+				return nil
+			}
+			_, err := s.tags.Upsert(ctx, cands)
+			return err
+		}()
+	}
+	return nil
+}
+
 func (s *CommentService) Like(ctx context.Context, commentID, userID string) (bool, error) {
 	if commentID == "" || userID == "" {
 		return false, errors.New("comment_id and user_id are required")

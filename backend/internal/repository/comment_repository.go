@@ -142,3 +142,11 @@ func (r *CommentRepository) DeleteIfOwner(ctx context.Context, commentID, userID
 		Exec(`DELETE FROM comments WHERE id = ? AND user_id = ?`, commentID, userID)
 	return result.RowsAffected > 0, result.Error
 }
+
+func (r *CommentRepository) UpdateBodyIfOwner(ctx context.Context, commentID, userID, body string) (bool, error) {
+	result := r.db.WithContext(ctx).Exec(
+		`UPDATE comments SET body = ?, updated_at = now() WHERE id = ? AND user_id = ?`,
+		body, commentID, userID,
+	)
+	return result.RowsAffected > 0, result.Error
+}

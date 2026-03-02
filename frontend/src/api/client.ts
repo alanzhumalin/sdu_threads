@@ -1118,6 +1118,20 @@ export const api = {
         : { post_id: postId, content: body, hashtags },
       token || undefined
     ),
+  updateComment: (commentId: string, body: string, hashtags?: string[], token?: string | null) =>
+    request<{ status: string }>(
+      `/comments/${encodeURIComponent(commentId)}`,
+      "PATCH",
+      { content: body, hashtags },
+      token || undefined
+    ),
+  deleteComment: (commentId: string, token?: string | null) =>
+    request<{ status: string }>(
+      `/comments/${encodeURIComponent(commentId)}`,
+      "DELETE",
+      undefined,
+      token || undefined
+    ),
   likeComment: (commentId: string, token: string) =>
     request<{ status: string }>(`/comments/${commentId}/like`, "POST", undefined, token),
   unlikeComment: (commentId: string, token: string) =>

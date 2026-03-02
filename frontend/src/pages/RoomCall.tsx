@@ -240,6 +240,7 @@ export default function RoomCallPage() {
   const [singleCameraFocusVisible, setSingleCameraFocusVisible] = useState(false);
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
   const [fullscreenPan, setFullscreenPan] = useState({ x: 0, y: 0 });
+  const [connectEpoch, setConnectEpoch] = useState(0);
   const effectiveStreamQualityTier: StreamQualityTier =
     streamQualityMode === "auto" ? autoStreamQualityTier : streamQualityMode;
 
@@ -283,6 +284,9 @@ export default function RoomCallPage() {
   const landscapeSessionRef = useRef(false);
   const streamQualityTierRef = useRef<StreamQualityTier>(effectiveStreamQualityTier);
   const cameraFacingModeRef = useRef<"user" | "environment">(cameraFacingMode);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const intentionalLeaveRef = useRef(false);
   const touchStateRef = useRef<{
     mode: "none" | "pan" | "pinch";
     startPanX: number;
@@ -340,6 +344,30 @@ export default function RoomCallPage() {
     if (!rtcDebugRef.current) return;
     console.debug("[rtc]", roomIDRef.current, ...args);
   }, []);
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const requestReconnect = useCallback(
+    (reason: string) => {
+      if (intentionalLeaveRef.current) return;
+      if (reconnectTimerRef.current !== null) return;
+      reconnectAttemptsRef.current += 1;
+      const attempt = reconnectAttemptsRef.current;
+      const delay = Math.min(5_000, Math.max(350, 350 * 2 ** (attempt - 1)));
+      rtcLog("ws-reconnect-scheduled", reason, { attempt, delay });
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (intentionalLeaveRef.current) return;
+        setConnectEpoch((v) => v + 1);
+      }, delay);
+    },
+    [rtcLog]
+  );
 
   useEffect(() => {
     streamQualityTierRef.current = effectiveStreamQualityTier;
@@ -452,7 +480,11 @@ export default function RoomCallPage() {
     socket.send(JSON.stringify(payload));
   }, [rtcLog]);
 
-  const leaveRoomSocket = useCallback((reason: string) => {
+  const leaveRoomSocket = useCallback((reason: string, options?: { intentional?: boolean }) => {
+    if (options?.intentional) {
+      intentionalLeaveRef.current = true;
+      clearReconnectTimer();
+    }
     const socket = wsRef.current;
     if (!socket) return;
     if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) return;
@@ -469,7 +501,7 @@ export default function RoomCallPage() {
     } catch {
       // noop
     }
-  }, [rtcLog]);
+  }, [clearReconnectTimer, rtcLog]);
 
   const updateSelfMediaState = useCallback((audio: boolean, video: boolean, screen: boolean) => {
     setAudioEnabled(audio);
@@ -1189,7 +1221,7 @@ export default function RoomCallPage() {
         // noop
       }
     }
-    leaveRoomSocket("leave-button");
+    leaveRoomSocket("leave-button", { intentional: true });
     navigate("/rooms");
   }, [leaveRoomSocket, navigate]);
 
@@ -1205,6 +1237,7 @@ export default function RoomCallPage() {
 
   useEffect(() => {
     if (!token || !roomId) return;
+    intentionalLeaveRef.current = false;
     let cancelled = false;
     let socket: WebSocket | null = null;
     let heartbeatTimer: number | null = null;
@@ -1224,18 +1257,20 @@ export default function RoomCallPage() {
         if (cancelled) return;
         setRoom(info);
 
-        let local: MediaStream;
-        const canUseGetUserMedia = Boolean(navigator.mediaDevices?.getUserMedia);
-        if (!canUseGetUserMedia) {
-          setError(mediaSupportError());
-          local = new MediaStream();
-        } else {
-          try {
-            local = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          } catch (err: any) {
-            rtcLog("getUserMedia(a/v) failed", String(err?.name || err));
+        let local = localStreamRef.current;
+        if (!local) {
+          const canUseGetUserMedia = Boolean(navigator.mediaDevices?.getUserMedia);
+          if (!canUseGetUserMedia) {
             setError(mediaSupportError());
             local = new MediaStream();
+          } else {
+            try {
+              local = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            } catch (err: any) {
+              rtcLog("getUserMedia(a/v) failed", String(err?.name || err));
+              setError(mediaSupportError());
+              local = new MediaStream();
+            }
           }
         }
 
@@ -1243,26 +1278,30 @@ export default function RoomCallPage() {
           local.getTracks().forEach((t) => t.stop());
           return;
         }
-        // Start with mic/camera off for all participants.
-        local.getAudioTracks().forEach((t) => {
-          t.enabled = false;
-        });
-        local.getVideoTracks().forEach((t) => {
-          t.enabled = false;
-        });
-        localStreamRef.current = local;
-        micTrackRef.current = local.getAudioTracks()[0] || null;
-        cameraTrackRef.current = null;
-        screenTrackRef.current = null;
-        screenAudioTrackRef.current = null;
-        setLocalScreenStream(null);
-        updateSelfMediaStateRef.current(false, false, false);
+        if (!localStreamRef.current) {
+          // Initial entry to room: start with mic/camera off.
+          local.getAudioTracks().forEach((t) => {
+            t.enabled = false;
+          });
+          local.getVideoTracks().forEach((t) => {
+            t.enabled = false;
+          });
+          localStreamRef.current = local;
+          micTrackRef.current = local.getAudioTracks()[0] || null;
+          cameraTrackRef.current = null;
+          screenTrackRef.current = null;
+          screenAudioTrackRef.current = null;
+          setLocalScreenStream(null);
+          updateSelfMediaStateRef.current(false, false, false);
+        }
 
         setJoining(true);
         socket = new WebSocket(roomWSURL(roomId));
         wsRef.current = socket;
 
         socket.onopen = () => {
+          clearReconnectTimer();
+          reconnectAttemptsRef.current = 0;
           socket?.send(
             JSON.stringify({
               type: "auth",
@@ -1417,6 +1456,8 @@ export default function RoomCallPage() {
                   wsError === "room_password_invalid"
                     ? t("rooms.password_invalid")
                     : t("rooms.password_required");
+                intentionalLeaveRef.current = true;
+                clearReconnectTimer();
                 navigate("/rooms", { replace: true, state: { roomsError: backError } });
                 break;
               }
@@ -1424,6 +1465,8 @@ export default function RoomCallPage() {
                 wsError === "room_not_found" ||
                 wsError === "room not found"
               ) {
+                intentionalLeaveRef.current = true;
+                clearReconnectTimer();
                 navigate("/rooms", { replace: true });
                 break;
               }
@@ -1458,15 +1501,23 @@ export default function RoomCallPage() {
 
         socket.onclose = () => {
           stopHeartbeat();
-          if (wsRef.current === socket) {
+          const isCurrentSocket = wsRef.current === socket;
+          if (isCurrentSocket) {
             wsRef.current = null;
           }
-          if (cancelled) return;
+          if (cancelled || !isCurrentSocket) return;
+          for (const peerID of Array.from(pcsRef.current.keys())) {
+            removePeerRef.current(peerID);
+          }
+          setParticipants({});
           setJoining(false);
+          requestReconnect("socket-closed");
         };
       } catch (e: any) {
         if (cancelled) return;
         if (e?.status === 404) {
+          intentionalLeaveRef.current = true;
+          clearReconnectTimer();
           navigate("/rooms", { replace: true });
           return;
         }
@@ -1479,6 +1530,8 @@ export default function RoomCallPage() {
 
     return () => {
       cancelled = true;
+      intentionalLeaveRef.current = true;
+      clearReconnectTimer();
       stopHeartbeat();
       try {
         if (socket?.readyState === WebSocket.OPEN) {
@@ -1543,7 +1596,18 @@ export default function RoomCallPage() {
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     };
-  }, [mediaSupportError, navigate, roomId, roomPassword, rtcLog, t, token]);
+  }, [
+    clearReconnectTimer,
+    connectEpoch,
+    mediaSupportError,
+    navigate,
+    requestReconnect,
+    roomId,
+    roomPassword,
+    rtcLog,
+    t,
+    token,
+  ]);
 
   useEffect(() => {
     const onUserGesture = () => {
@@ -1565,7 +1629,7 @@ export default function RoomCallPage() {
 
   useEffect(() => {
     const closeRoomSocket = (reason: string) => {
-      leaveRoomSocket(reason);
+      leaveRoomSocket(reason, { intentional: true });
     };
 
     const onBeforeUnload = () => closeRoomSocket("beforeunload");
@@ -1576,6 +1640,36 @@ export default function RoomCallPage() {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [leaveRoomSocket]);
+
+  useEffect(() => {
+    const reviveConnection = () => {
+      if (intentionalLeaveRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      const ws = wsRef.current;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      clearReconnectTimer();
+      reconnectAttemptsRef.current = 0;
+      setConnectEpoch((v) => v + 1);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        reviveConnection();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", reviveConnection);
+    window.addEventListener("online", reviveConnection);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", reviveConnection);
+      window.removeEventListener("online", reviveConnection);
+    };
+  }, [clearReconnectTimer]);
 
   useEffect(() => {
     const prevHtmlOverflow = document.documentElement.style.overflow;

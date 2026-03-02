@@ -124,6 +124,38 @@ func (h *CommentHandler) handleDynamic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		userID, err := requireUserID(r, h.jwt)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		var req dto.UpdateCommentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		if err := h.comments.Update(r.Context(), commentID, userID, req.Content, req.Hashtags); err != nil {
+			var viol *moderation.ViolationError
+			if errors.As(err, &viol) {
+				writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
+				return
+			}
+			if moderation.IsUnavailable(err) {
+				writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
+					Code:    "MODERATION_UNAVAILABLE",
+					Message: "Сервис модерации временно недоступен",
+				})
+				return
+			}
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		invalidateCachePrefixes(r.Context(), h.cache, cachePrefixHashtagsSearch, cachePrefixHashtagsPopular, cachePrefixFeedPublic)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "like" {
 		userID, err := requireUserID(r, h.jwt)
 		if err != nil {

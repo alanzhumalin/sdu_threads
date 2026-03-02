@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, type QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useProfileMeStore } from "../store/profileMe";
-import { X, Heart, SendHorizontal, MessageCircle, Eye } from "lucide-react";
+import { X, Heart, SendHorizontal, MessageCircle, Eye, Edit3, Trash2, Check } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { getPostContainerColorClass } from "../utils/postColors";
 import { ErrorMessage } from "./ErrorMessage";
@@ -211,6 +211,9 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null);
   const [mentionPos, setMentionPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [editingCommentID, setEditingCommentID] = useState<string | null>(null);
+  const [editingCommentBody, setEditingCommentBody] = useState("");
+  const [commentActionLoadingID, setCommentActionLoadingID] = useState<string | null>(null);
 
   // Keep modal post meta in sync with global post cache (likes, counts, etc).
   useEffect(() => {
@@ -239,6 +242,26 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
   const postColorClass = getPostContainerColorClass(postMeta.container_color);
 
   const toSet = (arr?: string[]) => (arr && arr.length > 0 ? new Set(arr.map((m) => m.toLowerCase())) : undefined);
+
+  const extractCommentMentions = (text: string) => {
+    const uniq = new Set<string>();
+    const regex = /@([\p{L}\p{N}._-]+)/gu;
+    for (const m of text.matchAll(regex)) {
+      const name = (m[1] || "").trim().toLowerCase();
+      if (name) uniq.add(name);
+    }
+    return Array.from(uniq);
+  };
+
+  const extractCommentHashtags = (text: string) => {
+    const uniq = new Set<string>();
+    const regex = /#([\p{L}\p{N}_-]+)/gu;
+    for (const m of text.matchAll(regex)) {
+      const tag = (m[1] || "").trim().toLowerCase();
+      if (tag) uniq.add(tag);
+    }
+    return Array.from(uniq);
+  };
 
   const autoResize = () => {
     const ta = textareaRef.current;
@@ -332,6 +355,9 @@ export function CommentsModal({ post, onClose, onUpdatePost, focusCommentId }: P
     setReplyMode(false);
     setReplyTo(null);
     setBody("");
+    setEditingCommentID(null);
+    setEditingCommentBody("");
+    setCommentActionLoadingID(null);
     setActiveTag(null);
     setActiveMention(null);
     setSuppressedHashtags(new Set());
@@ -798,6 +824,75 @@ useLayoutEffect(() => {
     });
   };
 
+  const syncPostCommentCount = async () => {
+    try {
+      const fresh = await api.postById(postMeta.id, token);
+      const nextCount = Number(fresh.comment_count ?? 0);
+      setPostMeta((prev) => {
+        const patch = { comment_count: nextCount };
+        patchPost(prev.id, patch);
+        onUpdatePost?.(prev.id, patch);
+        return { ...prev, ...patch };
+      });
+    } catch {
+      // ignore sync errors
+    }
+  };
+
+  const startEditComment = (c: Comment) => {
+    setEditingCommentID(c.id);
+    setEditingCommentBody(c.body || "");
+    setError("");
+  };
+
+  const cancelEditComment = () => {
+    setEditingCommentID(null);
+    setEditingCommentBody("");
+  };
+
+  const saveEditedComment = async (commentID: string) => {
+    if (!token) return;
+    const nextBody = editingCommentBody.trim();
+    if (!nextBody) {
+      setError(tr("Пікір бос болмауы керек", "Комментарий не может быть пустым", "Comment cannot be empty"));
+      return;
+    }
+    setCommentActionLoadingID(commentID);
+    setError("");
+    try {
+      const hashtags = extractCommentHashtags(nextBody);
+      await api.updateComment(commentID, nextBody, hashtags, token);
+      updateCommentLocal(commentID, {
+        body: nextBody,
+        mentions: extractCommentMentions(nextBody),
+        hashtags,
+      });
+      cancelEditComment();
+    } catch (e: any) {
+      setError(e?.message || tr("Пікірді сақтау мүмкін болмады", "Не удалось сохранить комментарий", "Failed to save comment"));
+    } finally {
+      setCommentActionLoadingID(null);
+    }
+  };
+
+  const deleteComment = async (c: Comment) => {
+    if (!token) return;
+    setCommentActionLoadingID(c.id);
+    setError("");
+    try {
+      await api.deleteComment(c.id, token);
+      if (editingCommentID === c.id) {
+        cancelEditComment();
+      }
+      await load(false);
+      await syncPostCommentCount();
+    } catch (e: any) {
+      setError(e?.message || tr("Пікірді жою мүмкін болмады", "Не удалось удалить комментарий", "Failed to delete comment"));
+    } finally {
+      setCommentActionLoadingID(null);
+    }
+  };
+
   const renderCommentCard = (
     c: Comment,
     variant: "parent" | "reply",
@@ -818,6 +913,9 @@ useLayoutEffect(() => {
         ? String(c.body || "").replace(/^\s*,\s*/, "")
         : c.body;
     const pending = c.pending === true;
+    const isOwnComment = !!me?.id && c.user_id === me.id;
+    const isEditing = editingCommentID === c.id;
+    const isActionLoading = commentActionLoadingID === c.id;
 
     const base =
       variant === "reply" ? "border border-white/10 bg-white/5" : "border border-white/10";
@@ -857,21 +955,54 @@ useLayoutEffect(() => {
               {tr("Жауап:", "Ответ для", "Reply to")} @{replyTarget}
             </div>
           )}
-          <div className="mt-2 w-full max-w-full text-white leading-relaxed whitespace-pre-wrap break-words break-all">
-            {replyTarget ? (
-              <>
-                <span className="text-sky-400 font-semibold">{replyPrefixWithComma}</span>
-                <span className="ml-1">{highlightHashtags(replyBody || "", toSet(c.mentions), toSet(c.hashtags))}</span>
-              </>
-            ) : (
-              highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))
-            )}
-          </div>
+          {isEditing ? (
+            <div className="mt-2 space-y-2">
+              <textarea
+                value={editingCommentBody}
+                onChange={(e) => setEditingCommentBody(e.target.value)}
+                className="input min-h-[86px] w-full resize-y"
+                maxLength={5000}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void saveEditedComment(c.id);
+                  }}
+                  disabled={isActionLoading}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/35 bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-60"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>{isActionLoading ? tr("Сақталуда...", "Сохраняем...", "Saving...") : tr("Сақтау", "Сохранить", "Save")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEditComment}
+                  disabled={isActionLoading}
+                  className="inline-flex items-center rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80 hover:bg-white/10 disabled:opacity-60"
+                >
+                  {tr("Бас тарту", "Отмена", "Cancel")}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 w-full max-w-full text-white leading-relaxed whitespace-pre-wrap break-words break-all">
+              {replyTarget ? (
+                <>
+                  <span className="text-sky-400 font-semibold">{replyPrefixWithComma}</span>
+                  <span className="ml-1">{highlightHashtags(replyBody || "", toSet(c.mentions), toSet(c.hashtags))}</span>
+                </>
+              ) : (
+                highlightHashtags(c.body, toSet(c.mentions), toSet(c.hashtags))
+              )}
+            </div>
+          )}
           <div className="mt-3 flex items-center justify-between text-sm text-white/60">
             <div className="flex items-center gap-3">
               <button
                 className={`flex items-center gap-1 ${c.liked_by_me ? "text-red-400" : "text-white/70 hover:text-white"}`}
                 onClick={() => toggleLike(c)}
+                disabled={isActionLoading}
               >
                 <Heart className={`w-4 h-4 ${c.liked_by_me ? "fill-current" : ""}`} strokeWidth={1.6} />
                 <span>{c.like_count}</span>
@@ -883,9 +1014,34 @@ useLayoutEffect(() => {
                   setReplyMode(true);
                   focusTextarea();
                 }}
+                disabled={isActionLoading}
               >
                 {tr("Жауап беру", "Ответить", "Reply")}
               </button>
+              {isOwnComment && !isEditing ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-white/70 hover:text-white disabled:opacity-60"
+                  onClick={() => startEditComment(c)}
+                  disabled={isActionLoading}
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  <span>{tr("Өңдеу", "Изменить", "Edit")}</span>
+                </button>
+              ) : null}
+              {isOwnComment ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-red-300 hover:text-red-200 disabled:opacity-60"
+                  onClick={() => {
+                    void deleteComment(c);
+                  }}
+                  disabled={isActionLoading}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{isActionLoading ? tr("Жойылуда...", "Удаляем...", "Deleting...") : tr("Жою", "Удалить", "Delete")}</span>
+                </button>
+              ) : null}
             </div>
           </div>
           {after}
