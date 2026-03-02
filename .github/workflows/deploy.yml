@@ -48,5 +48,10 @@ jobs:
             git checkout dev
             git pull --ff-only origin dev
 
+            # Free old build cache/layers to avoid "no space left on device" during image export.
+            docker system df || true
+            docker builder prune -af || true
+            docker image prune -af || true
+
             docker compose up -d --build
             docker compose ps
