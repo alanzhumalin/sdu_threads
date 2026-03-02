@@ -69,6 +69,54 @@ type FeedItem struct {
 	LikedByMe      bool
 }
 
+func (r *PostRepository) QuoteTargetsByPostIDs(ctx context.Context, postIDs []string) (map[string]string, error) {
+	out := make(map[string]string)
+	if len(postIDs) == 0 {
+		return out, nil
+	}
+
+	uniq := make([]string, 0, len(postIDs))
+	seen := make(map[string]struct{}, len(postIDs))
+	for _, id := range postIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return out, nil
+	}
+
+	type row struct {
+		ID           string
+		QuotedPostID *string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).
+		Model(&models.Post{}).
+		Select("id, quoted_post_id").
+		Where("id IN ? AND removed_at IS NULL AND quoted_post_id IS NOT NULL", uniq).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.QuotedPostID == nil {
+			continue
+		}
+		qid := strings.TrimSpace(*r.QuotedPostID)
+		if qid == "" {
+			continue
+		}
+		out[strings.TrimSpace(r.ID)] = qid
+	}
+	return out, nil
+}
+
 func (r *PostRepository) MusicByPostIDs(ctx context.Context, postIDs []string) (map[string]models.PostMusic, error) {
 	out := make(map[string]models.PostMusic)
 	if len(postIDs) == 0 {

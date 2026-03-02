@@ -14,6 +14,7 @@ import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { SocialLinksOverlay } from "../components/SocialLinks";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
+import { QuotedPostCard } from "../components/QuotedPostCard";
 import { useProfileMeStore } from "../store/profileMe";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useUserStatsStore } from "../store/userStats";
@@ -372,6 +373,8 @@ export default function ProfileUserPage() {
                   p.hashtags ? new Set(p.hashtags.map((h: string) => h.toLowerCase())) : undefined
                 )}
               </p>
+
+              {item.quoted_post ? <QuotedPostCard post={item.quoted_post} /> : null}
 
               <PostMedia media={item.media} />
               <PostMusic music={item.music} />

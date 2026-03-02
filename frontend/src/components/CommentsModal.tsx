@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, type QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useProfileMeStore } from "../store/profileMe";
 import { X, Heart, SendHorizontal, MessageCircle, Eye } from "lucide-react";
@@ -15,6 +15,7 @@ import { MentionPreview } from "./MentionPreview";
 import { PostMedia } from "./PostMedia";
 import { PostMusic } from "./PostMusic";
 import { ExpandablePostText } from "./ExpandablePostText";
+import { QuotedPostCard } from "./QuotedPostCard";
 import type { MediaItem, PostMusic as PostMusicItem } from "../types/media";
 import { AvatarCircle } from "./Avatar";
 import { VerifiedBadge } from "./VerifiedBadge";
@@ -61,6 +62,7 @@ export type PostMeta = {
   comment_count?: number;
   mentions?: string[];
   hashtags?: string[];
+  quoted_post?: QuotedPostPreview;
   is_subscribed?: boolean;
   is_me?: boolean;
 };
@@ -1037,6 +1039,7 @@ useLayoutEffect(() => {
               className="text-white leading-relaxed break-words whitespace-pre-wrap"
               renderText={(text) => highlightHashtags(text, toSet(postMeta.mentions), toSet(postMeta.hashtags))}
             />
+            {postMeta.quoted_post ? <QuotedPostCard post={postMeta.quoted_post} /> : null}
             <PostMedia media={post.media} />
             <PostMusic music={post.music} />
             <div className="mt-3 flex items-center gap-4 text-sm text-white/70">

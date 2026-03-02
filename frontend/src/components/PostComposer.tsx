@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api/client";
+import type { QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useProfileMeStore } from "../store/profileMe";
 import { usePostCooldownStore } from "../store/postCooldown";
@@ -11,6 +12,7 @@ import FabricImageEditor from "./FabricImageEditor";
 import { VerifiedBadge } from "./VerifiedBadge";
 import { EmojiPicker } from "./EmojiPicker";
 import { MusicClipEditor } from "./MusicClipEditor";
+import { QuotedPostCard } from "./QuotedPostCard";
 import { fileToWebpIfNeeded, getImageDimensions, getVideoDimensions } from "../utils/media";
 import { insertTextAtSelection } from "../utils/textarea";
 import {
@@ -23,6 +25,8 @@ import { useI18n } from "../i18n";
 
 type Props = {
   onCreated?: () => void;
+  quotedPost?: QuotedPostPreview | null;
+  onClearQuotedPost?: () => void;
 };
 
 type HashtagSuggestion = { id: number; name: string };
@@ -305,7 +309,7 @@ const findActiveMention = (text: string, cursor: number) => {
   }
 };
 
-export default function PostComposer({ onCreated }: Props) {
+export default function PostComposer({ onCreated, quotedPost, onClearQuotedPost }: Props) {
   const { t } = useI18n();
   const token = useAuthStore((s) => s.token);
   const myProfile = useProfileMeStore((s) => s.profile);
@@ -1209,6 +1213,7 @@ export default function PostComposer({ onCreated }: Props) {
           media: uploadedMedia,
           music: musicPayload,
           container_color: normalizedContainerColor || undefined,
+          quoted_post_id: quotedPost?.id || undefined,
         },
         token
       );
@@ -1226,6 +1231,7 @@ export default function PostComposer({ onCreated }: Props) {
       setActiveTag(null);
       setSuppressedHashtags(new Set());
       setSuppressedMentions(new Set());
+      onClearQuotedPost?.();
       onCreated?.();
     } catch (err: any) {
       const retry = Number(err?.retry_after_seconds);
@@ -1275,6 +1281,14 @@ export default function PostComposer({ onCreated }: Props) {
       </div>
       <ErrorMessage message={mediaError} />
       <ErrorMessage message={musicError} />
+      {quotedPost ? (
+        <QuotedPostCard
+          post={quotedPost}
+          className="mt-0"
+          clickable={false}
+          onRemove={() => onClearQuotedPost?.()}
+        />
+      ) : null}
       {music && (
         <div className="rounded-xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-start gap-3">

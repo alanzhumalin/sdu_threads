@@ -70,7 +70,16 @@ func (h *PostHandler) handlePosts(w http.ResponseWriter, r *http.Request) {
 				media = append(media, dto.MediaItem{URL: u})
 			}
 		}
-		createdPost, err := h.service.CreateWithTags(r.Context(), userID, req.Content, media, req.Music, req.ContainerColor, req.Hashtags)
+		createdPost, err := h.service.CreateWithTags(
+			r.Context(),
+			userID,
+			req.Content,
+			media,
+			req.Music,
+			req.ContainerColor,
+			req.QuotedPostID,
+			req.Hashtags,
+		)
 		if err != nil {
 			var rl *apperror.RateLimitError
 			if errors.As(err, &rl) {

@@ -286,6 +286,69 @@ func (s *PostService) enrichMusic(ctx context.Context, items []repository.FeedIt
 	return result, nil
 }
 
+func toQuotedPostDTO(it *repository.FeedItem) *dto.QuotedPost {
+	if it == nil {
+		return nil
+	}
+	return &dto.QuotedPost{
+		ID:             it.ID,
+		UserID:         it.UserID,
+		Username:       it.Username,
+		FullName:       it.FullName,
+		IsVerified:     it.IsVerified,
+		AvatarURL:      it.AvatarURL,
+		Content:        it.Content,
+		ContainerColor: it.ContainerColor,
+		Media:          effectiveMediaItems(it.Media, it.MediaURL),
+		CreatedAt:      it.CreatedAt,
+	}
+}
+
+func (s *PostService) enrichQuotedPosts(ctx context.Context, items []repository.FeedItem, viewerID *string) (map[string]*dto.QuotedPost, error) {
+	result := make(map[string]*dto.QuotedPost, len(items))
+	if len(items) == 0 {
+		return result, nil
+	}
+
+	postIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		postIDs = append(postIDs, it.ID)
+	}
+
+	targetByPostID, err := s.posts.QuoteTargetsByPostIDs(ctx, postIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(targetByPostID) == 0 {
+		return result, nil
+	}
+
+	quoteCache := make(map[string]*dto.QuotedPost, len(targetByPostID))
+	for _, quoteID := range targetByPostID {
+		if _, ok := quoteCache[quoteID]; ok {
+			continue
+		}
+		it, err := s.posts.Get(ctx, quoteID, viewerID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				quoteCache[quoteID] = nil
+				continue
+			}
+			return nil, err
+		}
+		quoteCache[quoteID] = toQuotedPostDTO(it)
+	}
+
+	for _, it := range items {
+		quoteID := strings.TrimSpace(targetByPostID[it.ID])
+		if quoteID == "" {
+			continue
+		}
+		result[it.ID] = quoteCache[quoteID]
+	}
+	return result, nil
+}
+
 func normalizeMusicClip(durationSec, startSec, endSec int) (int, int, int, error) {
 	if durationSec < 0 {
 		durationSec = 0
@@ -630,9 +693,19 @@ func (s *PostService) enrichReactions(
 	return result, nil
 }
 
-func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string) (*models.Post, error) {
+func (s *PostService) Create(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor, quotedPostID string) (*models.Post, error) {
 	if userID == "" {
 		return nil, errors.New("user_id is required")
+	}
+	quotedPostID = strings.TrimSpace(quotedPostID)
+	if quotedPostID != "" {
+		exists, err := s.posts.Exists(ctx, quotedPostID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("quoted post not found")
+		}
 	}
 	var author *models.User
 	if s.users != nil {
@@ -733,6 +806,10 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 		Content:        content,
 		ContainerColor: colorKey,
 		MediaURL:       mediaURL,
+		QuotedPostID:   nil,
+	}
+	if quotedPostID != "" {
+		post.QuotedPostID = &quotedPostID
 	}
 	rows := make([]models.PostMedia, 0, len(clean))
 	for i, m := range clean {
@@ -773,6 +850,10 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 		return nil, err
 	}
 	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -819,6 +900,7 @@ func (s *PostService) Feed(ctx context.Context, limit, offset int, viewerID *str
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   isSub,
 			IsMe:           isMe,
 		})
@@ -851,6 +933,10 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 	if err != nil {
 		return nil, err
 	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, &viewerID)
+	if err != nil {
+		return nil, err
+	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
 		media := effectiveMediaItems(it.Media, it.MediaURL)
@@ -877,6 +963,7 @@ func (s *PostService) FeedFollowing(ctx context.Context, userID string, limit, o
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   isSub,
 			IsMe:           isMe,
 		})
@@ -909,6 +996,10 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 	if err != nil {
 		return nil, err
 	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, []repository.FeedItem{*item}, viewerID)
+	if err != nil {
+		return nil, err
+	}
 	isMe := viewerID != nil && *viewerID == item.UserID
 	isSub := false
 	if !isMe && viewerID != nil && s.fols != nil {
@@ -936,6 +1027,7 @@ func (s *PostService) Get(ctx context.Context, postID string, viewerID *string) 
 		CommentCount:   item.CommentCount,
 		Mentions:       mentionMap[item.ID],
 		Hashtags:       hashtagMap[item.ID],
+		QuotedPost:     quoteMap[item.ID],
 		IsSubscribed:   isSub,
 		IsMe:           isMe,
 	}
@@ -960,6 +1052,10 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 		return nil, err
 	}
 	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -997,6 +1093,7 @@ func (s *PostService) ByUser(ctx context.Context, userID string, limit, offset i
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   isSub,
 			IsMe:           isMe,
 		})
@@ -1028,6 +1125,10 @@ func (s *PostService) ByUserQuery(ctx context.Context, userID, query string, lim
 	if err != nil {
 		return nil, err
 	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, viewerID)
+	if err != nil {
+		return nil, err
+	}
 	followMap := map[string]bool{}
 	if viewerID != nil && s.fols != nil && userID != *viewerID {
 		if m, err := s.fols.FollowingMap(ctx, *viewerID, []string{userID}); err == nil {
@@ -1062,6 +1163,7 @@ func (s *PostService) ByUserQuery(ctx context.Context, userID, query string, lim
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   isSub,
 			IsMe:           isMe,
 		})
@@ -1087,6 +1189,10 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 		return nil, err
 	}
 	reactionMap, err := s.enrichReactions(ctx, items, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,6 +1244,7 @@ func (s *PostService) LikedBy(ctx context.Context, userID string, limit, offset 
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   isSub,
 			IsMe:           isMe,
 		})
@@ -1166,6 +1273,10 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 	if err != nil {
 		return nil, err
 	}
+	quoteMap, err := s.enrichQuotedPosts(ctx, items, nil)
+	if err != nil {
+		return nil, err
+	}
 	resp := make([]dto.FeedResponseItem, 0, len(items))
 	for _, it := range items {
 		media := effectiveMediaItems(it.Media, it.MediaURL)
@@ -1189,6 +1300,7 @@ func (s *PostService) ModerationFeed(ctx context.Context, query string, limit, o
 			CommentCount:   it.CommentCount,
 			Mentions:       mentionMap[it.ID],
 			Hashtags:       hashtagMap[it.ID],
+			QuotedPost:     quoteMap[it.ID],
 			IsSubscribed:   false,
 			IsMe:           false,
 		})
@@ -1278,8 +1390,17 @@ func (s *PostService) Unreact(ctx context.Context, postID, userID, emoji string)
 }
 
 // CreateWithTags creates post and attaches hashtags.
-func (s *PostService) CreateWithTags(ctx context.Context, userID string, content string, media []dto.MediaItem, music *dto.PostMusic, containerColor string, tags []string) (*models.Post, error) {
-	post, err := s.Create(ctx, userID, content, media, music, containerColor)
+func (s *PostService) CreateWithTags(
+	ctx context.Context,
+	userID string,
+	content string,
+	media []dto.MediaItem,
+	music *dto.PostMusic,
+	containerColor string,
+	quotedPostID string,
+	tags []string,
+) (*models.Post, error) {
+	post, err := s.Create(ctx, userID, content, media, music, containerColor, quotedPostID)
 	if err != nil {
 		return nil, err
 	}

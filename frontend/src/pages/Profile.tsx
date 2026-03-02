@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
-import { api, type TelegramConnectSession, type TelegramStatus } from "../api/client";
+import { api, type TelegramConnectSession, type TelegramStatus, type QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
@@ -13,11 +13,12 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { ProfileSkeleton } from "../components/ProfileSkeleton";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
+import { QuotedPostCard } from "../components/QuotedPostCard";
 import { EditPostModal } from "../components/EditPostModal";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ReportModal } from "../components/ReportModal";
 import { extractHashtags } from "../utils/hashtags";
-import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2, Share2, Flag, Edit3, MoreHorizontal } from "lucide-react";
+import { Heart, MessageCircle, Eye, X, Plus, Paintbrush, Trash2, Share2, Flag, Edit3, MoreHorizontal, MessageSquareQuote } from "lucide-react";
 import { highlightHashtags } from "../utils/text";
 import { getPostContainerColorClass } from "../utils/postColors";
 import { CommentsModal } from "../components/CommentsModal";
@@ -72,6 +73,7 @@ export default function ProfilePage() {
   const [editError, setEditError] = useState("");
   const [deletePost, setDeletePost] = useState<any | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [quotePost, setQuotePost] = useState<QuotedPostPreview | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editSection, setEditSection] = useState<"profile" | "password">("profile");
@@ -138,6 +140,19 @@ export default function ProfilePage() {
     file: File;
   } | null>(null);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+
+  const toQuotedPost = (item: any): QuotedPostPreview => ({
+    id: item.id,
+    user_id: item.user_id,
+    username: item.username,
+    full_name: item.full_name,
+    is_verified: item.is_verified,
+    avatar_url: item.avatar_url,
+    content: item.content,
+    container_color: item.container_color,
+    media: item.media,
+    created_at: item.created_at,
+  });
   const bgInputRef = useRef<HTMLInputElement | null>(null);
   const bgHeaderRef = useRef<HTMLDivElement | null>(null);
   const [bgCropRatio, setBgCropRatio] = useState<number>(3);
@@ -1312,6 +1327,8 @@ export default function ProfilePage() {
 
         {activeTab === "posts" && (
           <PostComposer
+            quotedPost={quotePost}
+            onClearQuotedPost={() => setQuotePost(null)}
             onCreated={() => {
               if (profile) {
                 loadMyPosts(profile.id, 0, false);
@@ -1453,6 +1470,19 @@ export default function ProfilePage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setMenuOpenId(null);
+                            setQuotePost(toQuotedPost(item));
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                        >
+                          <MessageSquareQuote className="w-4 h-4" strokeWidth={1.7} />
+                          {tr("Дәйексөзбен бөлісу", "Цитировать", "Quote")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenId(null);
                             void sharePost(item.id);
                           }}
                           className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
@@ -1486,6 +1516,8 @@ export default function ProfilePage() {
                     item.hashtags ? new Set(item.hashtags.map((h: string) => h.toLowerCase())) : undefined
                   )}
                 </p>
+
+                {item.quoted_post ? <QuotedPostCard post={item.quoted_post} /> : null}
 
                 <PostMedia media={item.media} />
                 <PostMusic music={item.music} />

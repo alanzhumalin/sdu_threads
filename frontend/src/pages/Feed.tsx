@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type ReactionItem } from "../api/client";
+import { api, type ReactionItem, type QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
@@ -24,6 +24,7 @@ import { extractHashtags } from "../utils/hashtags";
 import { getPostContainerColorClass } from "../utils/postColors";
 import { MentionPreview } from "../components/MentionPreview";
 import { EmojiPicker } from "../components/EmojiPicker";
+import { QuotedPostCard } from "../components/QuotedPostCard";
 import { useSubscriptionsStore } from "../store/subscriptions";
 import { useFollowingFeedStore } from "../store/followingFeed";
 import { useUserStatsStore } from "../store/userStats";
@@ -40,6 +41,7 @@ import {
   Trash2,
   Eye,
   Smile,
+  MessageSquareQuote,
 } from "lucide-react";
 
 type FeedItem = {
@@ -62,6 +64,7 @@ type FeedItem = {
   view_count: number;
   mentions?: string[];
   hashtags?: string[];
+  quoted_post?: QuotedPostPreview;
   is_subscribed?: boolean;
   is_me?: boolean;
 };
@@ -157,6 +160,7 @@ export default function FeedPage() {
   const [editError, setEditError] = useState("");
   const [deletePost, setDeletePost] = useState<FeedItem | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [quotePost, setQuotePost] = useState<QuotedPostPreview | null>(null);
   const [justAdded, setJustAdded] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
   const [postReactionPickerPostId, setPostReactionPickerPostId] = useState<string | null>(null);
@@ -181,7 +185,23 @@ export default function FeedPage() {
     if (!token && tab === "following") {
       setTab("popular");
     }
+    if (!token) {
+      setQuotePost(null);
+    }
   }, [token, tab]);
+
+  const toQuotedPost = (item: FeedItem): QuotedPostPreview => ({
+    id: item.id,
+    user_id: item.user_id,
+    username: item.username,
+    full_name: item.full_name,
+    is_verified: item.is_verified,
+    avatar_url: item.avatar_url,
+    content: item.content,
+    container_color: item.container_color,
+    media: item.media,
+    created_at: item.created_at,
+  });
 
   const showToast = (message: string) => {
     setToast(message);
@@ -659,6 +679,8 @@ export default function FeedPage() {
 
         {token ? (
           <PostComposer
+            quotedPost={quotePost}
+            onClearQuotedPost={() => setQuotePost(null)}
             onCreated={() => {
               setTab("popular");
               refreshPopular();
@@ -859,6 +881,27 @@ export default function FeedPage() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuOpenId(null);
+                      if (!token) {
+                        showAuthGate({
+                          title: t("auth.required_title"),
+                          message: t("feed.auth.create_post_message"),
+                          ctaLabel: t("auth.cta_login"),
+                        });
+                        return;
+                      }
+                      setQuotePost(toQuotedPost(item));
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
+                  >
+                    <MessageSquareQuote className="w-4 h-4" strokeWidth={1.7} />
+                    {t("feed.menu.quote")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(null);
                       sharePost(item.id);
                     }}
                     className="w-full flex items-center gap-2 px-4 py-3 text-sm hover:bg-white/5 text-white"
@@ -903,6 +946,8 @@ export default function FeedPage() {
                 )
               }
             />
+
+            {p.quoted_post ? <QuotedPostCard post={p.quoted_post} /> : null}
 
             <PostMedia media={item.media} autoPlayWhenHalfVisible />
             <PostMusic music={item.music} />

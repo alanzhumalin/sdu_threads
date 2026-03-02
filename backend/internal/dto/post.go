@@ -3,6 +3,7 @@ package dto
 type CreatePostRequest struct {
 	Content        string      `json:"content"`
 	ContainerColor string      `json:"container_color,omitempty"`
+	QuotedPostID   string      `json:"quoted_post_id,omitempty"`
 	Media          []MediaItem `json:"media,omitempty"`      // preferred: urls + dimensions
 	MediaURL       string      `json:"media_url,omitempty"`  // legacy: first media url
 	MediaURLs      []string    `json:"media_urls,omitempty"` // legacy: urls only
@@ -57,8 +58,22 @@ type FeedResponseItem struct {
 	CommentCount   int64          `json:"comment_count"`
 	Mentions       []string       `json:"mentions"`
 	Hashtags       []string       `json:"hashtags"`
+	QuotedPost     *QuotedPost    `json:"quoted_post,omitempty"`
 	IsSubscribed   bool           `json:"is_subscribed"`
 	IsMe           bool           `json:"is_me"`
+}
+
+type QuotedPost struct {
+	ID             string      `json:"id"`
+	UserID         string      `json:"user_id"`
+	Username       string      `json:"username"`
+	FullName       string      `json:"full_name"`
+	IsVerified     bool        `json:"is_verified"`
+	AvatarURL      string      `json:"avatar_url,omitempty"`
+	Content        string      `json:"content"`
+	ContainerColor string      `json:"container_color,omitempty"`
+	Media          []MediaItem `json:"media,omitempty"`
+	CreatedAt      string      `json:"created_at"`
 }
 
 type LikeRequest struct{}

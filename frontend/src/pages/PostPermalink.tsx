@@ -68,6 +68,7 @@ export default function PostPermalinkPage() {
           comment_count: p.comment_count,
           mentions: p.mentions,
           hashtags: p.hashtags,
+          quoted_post: p.quoted_post,
           is_subscribed: effectiveSub,
           is_me: p.is_me,
         };

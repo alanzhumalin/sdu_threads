@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Hash, Search, User as UserIcon, Heart, MessageCircle, Eye } from "lucide-react";
-import { api } from "../api/client";
+import { api, type QuotedPostPreview } from "../api/client";
 import { useAuthStore } from "../store/auth";
 import { useFeedStore } from "../store/feed";
 import { usePostCacheStore } from "../store/postCache";
@@ -16,6 +16,7 @@ import { MentionPreview } from "../components/MentionPreview";
 import { PostMedia } from "../components/PostMedia";
 import { PostMusic } from "../components/PostMusic";
 import { ExpandablePostText } from "../components/ExpandablePostText";
+import { QuotedPostCard } from "../components/QuotedPostCard";
 import { AvatarCircle } from "../components/Avatar";
 import { VerifiedBadge } from "../components/VerifiedBadge";
 import { useI18n } from "../i18n";
@@ -56,6 +57,7 @@ type FeedItem = {
   comment_count?: number;
   mentions?: string[];
   hashtags?: string[];
+  quoted_post?: QuotedPostPreview;
   is_subscribed?: boolean;
   is_me?: boolean;
 };
@@ -547,6 +549,8 @@ export default function SearchPage() {
                     )
                   }
                 />
+
+                {item.quoted_post ? <QuotedPostCard post={item.quoted_post} /> : null}
 
                 <PostMedia media={item.media} />
                 <PostMusic music={item.music} />

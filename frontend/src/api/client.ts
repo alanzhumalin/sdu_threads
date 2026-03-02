@@ -124,6 +124,19 @@ export type StoryGroup = {
   stories: StoryItem[];
 };
 
+export type QuotedPostPreview = {
+  id: string;
+  user_id: string;
+  username: string;
+  full_name: string;
+  is_verified?: boolean;
+  avatar_url?: string;
+  content: string;
+  container_color?: string;
+  media?: MediaItem[];
+  created_at: string;
+};
+
 export type LiveRoomParticipant = {
   id: string;
   username: string;
@@ -430,6 +443,7 @@ const feedPageFn = (
       comment_count?: number;
       mentions?: string[];
       hashtags?: string[];
+      quoted_post?: QuotedPostPreview;
       is_subscribed?: boolean;
       is_me?: boolean;
     }[]
@@ -458,6 +472,7 @@ const followingFeedPageFn = (limit = 20, offset = 0, token?: string | null) =>
       comment_count?: number;
       mentions?: string[];
       hashtags?: string[];
+      quoted_post?: QuotedPostPreview;
       is_subscribed?: boolean;
       is_me?: boolean;
     }[]
@@ -581,6 +596,7 @@ export const api = {
       comment_count?: number;
       mentions?: string[];
       hashtags?: string[];
+      quoted_post?: QuotedPostPreview;
       is_subscribed?: boolean;
       is_me?: boolean;
     }[]
@@ -651,6 +667,7 @@ export const api = {
         comment_count?: number;
         mentions?: string[];
         hashtags?: string[];
+        quoted_post?: QuotedPostPreview;
         is_subscribed?: boolean;
         is_me?: boolean;
       }[]
@@ -664,6 +681,7 @@ export const api = {
       container_color?: string;
       media?: MediaItem[];
       music?: PostMusic;
+      quoted_post_id?: string;
       media_url?: string;
       media_urls?: string[];
       hashtags?: string[];
@@ -701,6 +719,7 @@ export const api = {
       comment_count?: number;
       mentions?: string[];
       hashtags?: string[];
+      quoted_post?: QuotedPostPreview;
       is_subscribed?: boolean;
       is_me?: boolean;
     }>(`/posts/${encodeURIComponent(postId)}`, "PATCH", payload, token),
@@ -833,6 +852,7 @@ export const api = {
         comment_count?: number;
         mentions?: string[];
         hashtags?: string[];
+        quoted_post?: QuotedPostPreview;
         is_subscribed?: boolean;
         is_me?: boolean;
       }[]
@@ -1009,6 +1029,7 @@ export const api = {
       comment_count?: number;
       mentions?: string[];
       hashtags?: string[];
+      quoted_post?: QuotedPostPreview;
       is_subscribed?: boolean;
       is_me?: boolean;
     }>(`/posts/${postId}`, "GET", undefined, token),
