@@ -8,6 +8,7 @@ import { useProfileMeStore } from "../store/profileMe";
 import PostComposer from "../components/PostComposer";
 import { CommentsModal } from "../components/CommentsModal";
 import { TopUsers } from "../components/TopUsers";
+import { StoriesBar } from "../components/StoriesBar";
 import { ReportModal } from "../components/ReportModal";
 import { ErrorMessage } from "../components/ErrorMessage";
 import { PostSkeleton } from "../components/PostSkeleton";
@@ -645,6 +646,17 @@ export default function FeedPage() {
           </div>
         </div>
 
+        <StoriesBar
+          token={token}
+          onRequireAuth={() =>
+            showAuthGate({
+              title: t("auth.required_title"),
+              message: t("feed.auth.create_post_message"),
+              ctaLabel: t("auth.cta_login"),
+            })
+          }
+        />
+
         {token ? (
           <PostComposer
             onCreated={() => {
@@ -892,7 +904,7 @@ export default function FeedPage() {
               }
             />
 
-            <PostMedia media={item.media} />
+            <PostMedia media={item.media} autoPlayWhenHalfVisible />
             <PostMusic music={item.music} />
             {postReactions.length > 0 && (
               <div className="mt-3 flex flex-wrap items-center gap-1.5">

@@ -127,9 +127,13 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Auth: `POST /api/auth/register`, `POST /api/auth/login` → JWT.
 - Users: `POST /api/users` (legacy), `GET /api/users/{id}`, `GET /api/users/me`, `GET /api/users/search?q=`.
 - Follow: `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/followers|following`.
-- Media: `POST /api/media/upload?purpose=post|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
-  - `purpose=post`: фото до `10MB` и видео до `40MB` (до 5 файлов).
+- Media: `POST /api/media/upload?purpose=post|story|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
+  - `purpose=post|story`: фото до `10MB` и видео до `40MB` (до 5 файлов).
 - Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
+- Stories:
+  - `GET /api/stories` — активные сторис (24 часа), сгруппированные по пользователю.
+  - `GET /api/stories/{user_id}` — активные сторис конкретного пользователя.
+  - `POST /api/stories` (Bearer) — создать сторис (`content` + `media{url,type,width,height}`).
 - Comments: `POST /api/comments` `{post_id, content}` (Bearer), `GET /api/comments?post_id=...`, `DELETE /api/comments/{id}`.
 - Telegram notifications:
   - `GET /api/telegram/status` (Bearer)

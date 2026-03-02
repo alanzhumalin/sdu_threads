@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 import { MediaViewerModal } from "./MediaViewerModal";
 import type { MediaItem } from "../types/media";
@@ -6,6 +6,7 @@ import type { MediaItem } from "../types/media";
 type Props = {
   media?: MediaItem[];
   className?: string;
+  autoPlayWhenHalfVisible?: boolean;
 };
 
 const isVideoByURL = (url: string) => {
@@ -18,7 +19,95 @@ const mediaKind = (item: MediaItem): "image" | "video" => {
   return isVideoByURL(item.url) ? "video" : "image";
 };
 
-export function PostMedia({ media, className }: Props) {
+type InlineAutoVideoProps = {
+  src: string;
+  className: string;
+  muted: boolean;
+  autoPlayWhenHalfVisible: boolean;
+};
+
+function InlineAutoVideo({ src, className, muted, autoPlayWhenHalfVisible }: InlineAutoVideoProps) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  const visibleRef = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.muted = muted;
+    if (!autoPlayWhenHalfVisible) return;
+    if (visibleRef.current) {
+      const playPromise = el.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {});
+      }
+    } else {
+      el.pause();
+    }
+  }, [muted, autoPlayWhenHalfVisible, src]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !autoPlayWhenHalfVisible) return;
+
+    const syncPlayback = () => {
+      if (!el) return;
+      if (document.hidden) {
+        el.pause();
+        return;
+      }
+      if (visibleRef.current) {
+        const playPromise = el.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {});
+        }
+      } else {
+        el.pause();
+      }
+    };
+
+    const onVisibility = () => {
+      syncPlayback();
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const visible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+        visibleRef.current = visible;
+        if (visible) {
+          syncPlayback();
+        } else {
+          el.pause();
+        }
+      },
+      { threshold: [0, 0.5, 1] }
+    );
+
+    observer.observe(el);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+      el.pause();
+    };
+  }, [autoPlayWhenHalfVisible]);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      className={className}
+      autoPlay
+      loop
+      playsInline
+      preload="metadata"
+      muted={muted}
+    />
+  );
+}
+
+export function PostMedia({ media, className, autoPlayWhenHalfVisible = false }: Props) {
   const items = useMemo<MediaItem[]>(() => (Array.isArray(media) ? media : []), [media]);
   const viewerItems = useMemo(
     () =>
@@ -95,14 +184,11 @@ export function PostMedia({ media, className }: Props) {
         style={hasTileAspect ? { aspectRatio: tileAspect } : undefined}
       >
         {kind === "video" ? (
-          <video
+          <InlineAutoVideo
             src={it.url}
             className={`w-full h-full min-w-0 min-h-0 ${fit === "cover" ? "object-cover" : "object-contain object-center"}`}
-            autoPlay
-            loop
-            playsInline
-            preload="metadata"
             muted={!isUnmuted}
+            autoPlayWhenHalfVisible={autoPlayWhenHalfVisible}
           />
         ) : (
           <img

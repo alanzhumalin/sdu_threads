@@ -38,7 +38,7 @@ const (
 )
 
 func maxBytesForPurpose(purpose string) int {
-	if purpose == "post" {
+	if purpose == "post" || purpose == "story" {
 		return maxPostVideoBytes
 	}
 	if purpose == "post_music" {
@@ -48,7 +48,7 @@ func maxBytesForPurpose(purpose string) int {
 }
 
 func maxBytesForPurposeAndType(purpose, mediaType string) int {
-	if purpose == "post" {
+	if purpose == "post" || purpose == "story" {
 		if mediaType == "video" {
 			return maxPostVideoBytes
 		}
@@ -61,7 +61,7 @@ func maxBytesForPurposeAndType(purpose, mediaType string) int {
 }
 
 func maxBytesLabelForPurpose(purpose string) string {
-	if purpose == "post" {
+	if purpose == "post" || purpose == "story" {
 		return "10MB для фото, 40MB для видео"
 	}
 	if purpose == "post_music" {
@@ -71,7 +71,7 @@ func maxBytesLabelForPurpose(purpose string) string {
 }
 
 func maxBytesLabelForPurposeAndType(purpose, mediaType string) string {
-	if purpose == "post" {
+	if purpose == "post" || purpose == "story" {
 		if mediaType == "video" {
 			return "40MB"
 		}
@@ -87,6 +87,8 @@ func invalidMediaTypeMessage(purpose string) string {
 	switch purpose {
 	case "post":
 		return "Для поста разрешены только изображения (без SVG) и видео"
+	case "story":
+		return "Для сторис разрешены только изображения (без SVG) и видео"
 	case "chat":
 		return "Для чата разрешены изображения или аудио до 5MB"
 	case "post_music":
@@ -144,7 +146,7 @@ func normalizeMediaContentType(raw, purpose string) (ct string, mediaType string
 		}
 		return "", "", false
 	}
-	if purpose == "post" {
+	if purpose == "post" || purpose == "story" {
 		if c, yes := normalizeImageContentType(raw); yes {
 			return c, "image", true
 		}
@@ -377,7 +379,7 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background", "chat", "post_music":
+	case "post", "story", "avatar", "background", "chat", "post_music":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",
@@ -485,7 +487,7 @@ func (h *MediaHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		purpose = "misc"
 	}
 	switch purpose {
-	case "post", "avatar", "background", "chat", "post_music":
+	case "post", "story", "avatar", "background", "chat", "post_music":
 	default:
 		writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 			Code:    "INVALID_PURPOSE",

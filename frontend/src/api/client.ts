@@ -93,6 +93,37 @@ export type LiveRoom = {
   host: LiveRoomHost;
 };
 
+export type StoryUser = {
+  id: string;
+  username: string;
+  full_name: string;
+  is_verified?: boolean;
+  avatar_url?: string;
+};
+
+export type StoryMedia = {
+  url: string;
+  type?: "image" | "video";
+  width?: number;
+  height?: number;
+};
+
+export type StoryItem = {
+  id: string;
+  user_id: string;
+  content: string;
+  media: StoryMedia;
+  created_at: string;
+  expires_at: string;
+};
+
+export type StoryGroup = {
+  user: StoryUser;
+  is_me?: boolean;
+  latest_at: string;
+  stories: StoryItem[];
+};
+
 export type LiveRoomParticipant = {
   id: string;
   username: string;
@@ -512,6 +543,24 @@ export const api = {
   feedPage: feedPageFn,
   followingFeedPage: followingFeedPageFn,
   feed: (token?: string | null) => feedPageFn(20, 0, token).then((r) => r.items),
+  storiesFeed: (token?: string | null) =>
+    request<StoryGroup[]>("/stories", "GET", undefined, token).then((res) =>
+      Array.isArray(res) ? res : []
+    ),
+  storiesByUser: (userId: string, token?: string | null) =>
+    request<StoryGroup>(`/stories/${encodeURIComponent(userId)}`, "GET", undefined, token),
+  createStory: (
+    payload: {
+      content: string;
+      media: StoryMedia;
+      media_url?: string;
+      media_type?: "image" | "video";
+      width?: number;
+      height?: number;
+    },
+    token: string
+  ) =>
+    request<StoryItem>("/stories", "POST", payload, token),
   userPosts: (userId: string, limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {
