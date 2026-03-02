@@ -48,7 +48,13 @@ func maxBytesForPurpose(purpose string) int {
 }
 
 func maxBytesForPurposeAndType(purpose, mediaType string) int {
-	if purpose == "post" || purpose == "story" {
+	if purpose == "story" {
+		if mediaType == "video" {
+			return maxPostVideoBytes
+		}
+		return 0 // no size limit for story images
+	}
+	if purpose == "post" {
 		if mediaType == "video" {
 			return maxPostVideoBytes
 		}
@@ -61,7 +67,10 @@ func maxBytesForPurposeAndType(purpose, mediaType string) int {
 }
 
 func maxBytesLabelForPurpose(purpose string) string {
-	if purpose == "post" || purpose == "story" {
+	if purpose == "story" {
+		return "без лимита для фото, 40MB для видео"
+	}
+	if purpose == "post" {
 		return "10MB для фото, 40MB для видео"
 	}
 	if purpose == "post_music" {
@@ -71,7 +80,13 @@ func maxBytesLabelForPurpose(purpose string) string {
 }
 
 func maxBytesLabelForPurposeAndType(purpose, mediaType string) string {
-	if purpose == "post" || purpose == "story" {
+	if purpose == "story" {
+		if mediaType == "video" {
+			return "40MB"
+		}
+		return "без лимита"
+	}
+	if purpose == "post" {
 		if mediaType == "video" {
 			return "40MB"
 		}
@@ -437,7 +452,7 @@ func (h *MediaHandler) handlePresign(w http.ResponseWriter, r *http.Request) {
 		}
 		_, mediaType, _ := normalizeMediaContentType(ct, purpose)
 		maxBytes := int64(maxBytesForPurposeAndType(purpose, mediaType))
-		if f.SizeBytes <= 0 || f.SizeBytes > maxBytes {
+		if f.SizeBytes <= 0 || (maxBytes > 0 && f.SizeBytes > maxBytes) {
 			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
 				Code:    "FILE_TOO_LARGE",
 				Message: "Размер файла не должен превышать " + maxBytesLabelForPurposeAndType(purpose, mediaType),
@@ -657,7 +672,7 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			maxBytes := maxBytesForPurposeAndType(purpose, mediaType)
-			if len(data) == 0 || len(data) > maxBytes {
+			if len(data) == 0 || (maxBytes > 0 && len(data) > maxBytes) {
 				errs <- errFileTooLarge
 				return
 			}

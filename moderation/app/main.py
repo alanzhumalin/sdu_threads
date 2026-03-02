@@ -21,6 +21,8 @@ logging.basicConfig(level=os.getenv("MODERATION_LOG_LEVEL", "INFO"))
 
 MAX_TEXT_CHARS = int(os.getenv("MODERATION_MAX_TEXT_CHARS", "5000"))
 MAX_IMAGE_BYTES = int(os.getenv("MODERATION_MAX_IMAGE_BYTES", str(7 * 1024 * 1024)))
+# 0 => unlimited for story image moderation payload.
+STORY_MAX_IMAGE_BYTES = int(os.getenv("MODERATION_STORY_MAX_IMAGE_BYTES", "0"))
 FETCH_TIMEOUT_SEC = float(os.getenv("MODERATION_FETCH_TIMEOUT_SEC", "5"))
 INFER_MAX_SIDE = int(os.getenv("MODERATION_INFER_MAX_SIDE", "1024"))
 TEXT_THRESHOLD = float(os.getenv("MODERATION_TEXT_THRESHOLD", "0.75"))
@@ -28,6 +30,9 @@ IMAGE_THRESHOLD = float(os.getenv("MODERATION_IMAGE_THRESHOLD", "0.70"))
 SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_THRESHOLD", "0.45"))
 SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_GATE_THRESHOLD", "0.20"))
 SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_SUGGESTIVE_STRONG_THRESHOLD", "0.80"))
+STORY_SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_STORY_SUGGESTIVE_THRESHOLD", "0.75"))
+STORY_SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_STORY_SUGGESTIVE_GATE_THRESHOLD", "0.45"))
+STORY_SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_STORY_SUGGESTIVE_STRONG_THRESHOLD", "0.92"))
 PROFILE_SUGGESTIVE_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_THRESHOLD", "0.80"))
 PROFILE_SUGGESTIVE_GATE_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD", "0.35"))
 PROFILE_SUGGESTIVE_STRONG_THRESHOLD = float(os.getenv("MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD", "0.92"))
@@ -367,6 +372,10 @@ PROFILE_IMAGE_CONTEXTS = {
     "background_image",
     "background_upload",
 }
+STORY_IMAGE_CONTEXTS = {
+    "story_image",
+    "story_upload",
+}
 
 
 def _normalize_context(context: str) -> str:
@@ -378,6 +387,19 @@ def _is_profile_image_context(context: str) -> bool:
     if low in PROFILE_IMAGE_CONTEXTS:
         return True
     return low.startswith("avatar_") or low.startswith("background_")
+
+
+def _is_story_image_context(context: str) -> bool:
+    low = _normalize_context(context)
+    if low in STORY_IMAGE_CONTEXTS:
+        return True
+    return low.startswith("story_")
+
+
+def _effective_max_image_bytes(context: str) -> int:
+    if _is_story_image_context(context):
+        return STORY_MAX_IMAGE_BYTES
+    return MAX_IMAGE_BYTES
 
 
 def _term_key(term: str) -> str:
@@ -585,10 +607,10 @@ def _find_blocked_terms(text: str) -> List[str]:
     return matched
 
 
-def _ensure_image_bytes(data: bytes) -> Image.Image:
+def _ensure_image_bytes(data: bytes, max_bytes: int) -> Image.Image:
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="empty image")
-    if len(data) > MAX_IMAGE_BYTES:
+    if max_bytes > 0 and len(data) > max_bytes:
         raise HTTPException(status_code=400, detail="image too large")
     try:
         image = Image.open(io.BytesIO(data))
@@ -600,7 +622,7 @@ def _ensure_image_bytes(data: bytes) -> Image.Image:
         raise HTTPException(status_code=400, detail="invalid image") from exc
 
 
-def _fetch_image(url: str) -> bytes:
+def _fetch_image(url: str, max_bytes: int) -> bytes:
     started_at = time.perf_counter()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="only http(s) image urls are allowed")
@@ -628,7 +650,7 @@ def _fetch_image(url: str) -> bytes:
                 if not chunk:
                     continue
                 buf.extend(chunk)
-                if len(buf) > MAX_IMAGE_BYTES:
+                if max_bytes > 0 and len(buf) > max_bytes:
                     raise HTTPException(status_code=400, detail="image too large")
             raw = bytes(buf)
             logger.info(
@@ -699,8 +721,9 @@ def _moderate_text(text: str) -> ModerationDecision:
 def _moderate_image_bytes(data: bytes, context: str = "generic") -> ModerationDecision:
     total_started_at = time.perf_counter()
     normalized_context = _normalize_context(context)
+    max_image_bytes = _effective_max_image_bytes(normalized_context)
     decode_started_at = time.perf_counter()
-    image = _ensure_image_bytes(data)
+    image = _ensure_image_bytes(data, max_image_bytes)
     decode_ms = _duration_ms(decode_started_at)
 
     resize_started_at = time.perf_counter()
@@ -773,6 +796,10 @@ def _moderate_image_bytes(data: bytes, context: str = "generic") -> ModerationDe
         suggestive_threshold = PROFILE_SUGGESTIVE_THRESHOLD
         suggestive_gate_threshold = PROFILE_SUGGESTIVE_GATE_THRESHOLD
         suggestive_strong_threshold = PROFILE_SUGGESTIVE_STRONG_THRESHOLD
+    elif _is_story_image_context(normalized_context):
+        suggestive_threshold = STORY_SUGGESTIVE_THRESHOLD
+        suggestive_gate_threshold = STORY_SUGGESTIVE_GATE_THRESHOLD
+        suggestive_strong_threshold = STORY_SUGGESTIVE_STRONG_THRESHOLD
 
     should_block_suggestive = BLOCK_SUGGESTIVE and (
         suggestive_score >= suggestive_strong_threshold
@@ -860,6 +887,9 @@ def healthz() -> Dict[str, Any]:
             "suggestive": SUGGESTIVE_THRESHOLD,
             "suggestive_gate": SUGGESTIVE_GATE_THRESHOLD,
             "suggestive_strong": SUGGESTIVE_STRONG_THRESHOLD,
+            "story_suggestive": STORY_SUGGESTIVE_THRESHOLD,
+            "story_suggestive_gate": STORY_SUGGESTIVE_GATE_THRESHOLD,
+            "story_suggestive_strong": STORY_SUGGESTIVE_STRONG_THRESHOLD,
             "profile_suggestive": PROFILE_SUGGESTIVE_THRESHOLD,
             "profile_suggestive_gate": PROFILE_SUGGESTIVE_GATE_THRESHOLD,
             "profile_suggestive_strong": PROFILE_SUGGESTIVE_STRONG_THRESHOLD,
@@ -905,11 +935,15 @@ def moderate_text(req: TextModerationRequest) -> ModerationDecision:
 
 @app.post("/moderate/image/url", response_model=ModerationDecision)
 def moderate_image_url(req: ImageURLModerationRequest) -> ModerationDecision:
-    data = _fetch_image(req.url)
+    data = _fetch_image(req.url, _effective_max_image_bytes(req.context))
     return _moderate_image_bytes(data, req.context)
 
 
 @app.post("/moderate/image/file", response_model=ModerationDecision)
 def moderate_image_file(file: UploadFile = File(...), context: str = Form(default="generic")) -> ModerationDecision:
-    data = file.file.read(MAX_IMAGE_BYTES + 1)
+    max_bytes = _effective_max_image_bytes(context)
+    if max_bytes > 0:
+        data = file.file.read(max_bytes + 1)
+    else:
+        data = file.file.read()
     return _moderate_image_bytes(data, context)

@@ -21,7 +21,6 @@ const IMAGE_MIME_RE = /^image\//i;
 const VIDEO_MIME_RE = /^video\//i;
 const IMAGE_EXT_RE = /\.(jpg|jpeg|png|webp|gif|bmp|avif|heic|heif|tif|tiff)$/i;
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|avi|mkv|3gp|ogv)$/i;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
 
 const isStoryVideo = (item: { media?: { type?: string; url?: string } } | null | undefined) => {
@@ -84,10 +83,6 @@ function StoryComposerModal({ open, token, onClose, onCreated }: StoryComposerMo
     const kind = inferFileKind(picked);
     if (!kind) {
       setError(t("stories.invalid_type"));
-      return;
-    }
-    if (kind === "image" && picked.size > MAX_IMAGE_BYTES) {
-      setError(t("stories.too_large_image"));
       return;
     }
     if (kind === "video" && picked.size > MAX_VIDEO_BYTES) {

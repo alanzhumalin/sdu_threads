@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	maxStoryImageBytes = 10 * 1024 * 1024
 	maxStoryVideoBytes = 40 * 1024 * 1024
 	maxStoryTextRunes  = 600
 )
@@ -132,7 +131,7 @@ func storyMediaMaxBytes(mediaType string) int64 {
 	if mediaType == "video" {
 		return maxStoryVideoBytes
 	}
-	return maxStoryImageBytes
+	return 0 // no size limit for story images
 }
 
 func trimAndBoundInt(v int) int {
@@ -209,7 +208,8 @@ func (s *StoryService) verifyStoryMedia(ctx context.Context, userID string, medi
 		return media, ErrStoryMediaTypeInvalid
 	}
 
-	if st.Size <= 0 || st.Size > storyMediaMaxBytes(mediaType) {
+	maxBytes := storyMediaMaxBytes(mediaType)
+	if st.Size <= 0 || (maxBytes > 0 && st.Size > maxBytes) {
 		_ = s.uploader.Remove(ctx, key)
 		return media, ErrStoryMediaTooLarge
 	}

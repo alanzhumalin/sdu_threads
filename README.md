@@ -86,7 +86,9 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `MODERATION_TIMEOUT_MS`
   - `MODERATION_FAIL_CLOSED` (если `true`, при недоступности сервиса контент блокируется)
   - `MODERATION_TEXT_THRESHOLD`, `MODERATION_IMAGE_THRESHOLD`
+  - `MODERATION_STORY_MAX_IMAGE_BYTES` (лимит байт для модерации изображения сторис; `0` = без лимита)
   - `MODERATION_SUGGESTIVE_THRESHOLD`, `MODERATION_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_SUGGESTIVE_STRONG_THRESHOLD`, `MODERATION_BLOCK_SUGGESTIVE`
+  - `MODERATION_STORY_SUGGESTIVE_THRESHOLD`, `MODERATION_STORY_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_STORY_SUGGESTIVE_STRONG_THRESHOLD` (отдельные пороги для сторис)
   - `MODERATION_PROFILE_SUGGESTIVE_THRESHOLD`, `MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD` (отдельные пороги для avatar/background)
   - `MODERATION_TEXT_MODEL`, `MODERATION_IMAGE_MODEL`, `MODERATION_SUGGESTIVE_MODEL`
   - `MODERATION_TEXT_MODEL_REQUIRED`, `MODERATION_IMAGE_MODEL_REQUIRED`, `MODERATION_SUGGESTIVE_MODEL_REQUIRED`
@@ -128,7 +130,8 @@ Create `.env` from `.env.example` before running locally. Key values:
 - Users: `POST /api/users` (legacy), `GET /api/users/{id}`, `GET /api/users/me`, `GET /api/users/search?q=`.
 - Follow: `POST/DELETE /api/users/{id}/follow`, `GET /api/users/{id}/followers|following`.
 - Media: `POST /api/media/upload?purpose=post|story|avatar|background` (Bearer, multipart `files[]`) → `{ items: [{ url }] }`.
-  - `purpose=post|story`: фото до `10MB` и видео до `40MB` (до 5 файлов).
+  - `purpose=post`: фото до `10MB` и видео до `40MB` (до 5 файлов).
+  - `purpose=story`: фото без лимита и видео до `40MB` (до 5 файлов).
 - Posts: `POST /api/posts` (Bearer, `{content, media_urls[]?, media_url? (legacy), hashtags[]}`), `GET /api/posts`, `POST/DELETE /api/posts/{id}/like`.
 - Stories:
   - `GET /api/stories` — активные сторис (24 часа), сгруппированные по пользователю.
