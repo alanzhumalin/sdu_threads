@@ -1236,10 +1236,10 @@ body {
 @keyframes gift8EnvelopeIdle {
   0%,
   100% {
-    transform: rotateZ(0deg) scale(1);
+    transform: translateY(0) rotateZ(0deg);
   }
   50% {
-    transform: rotateZ(-0.45deg) scale(1.008);
+    transform: translateY(-4px) rotateZ(-0.5deg);
   }
 }
 
@@ -1640,35 +1640,44 @@ body {
 }
 
 .gift8-view-closed-stack {
-  width: min(100%, 820px);
-  min-height: 100dvh;
-  display: flex !important;
-  flex-direction: column !important;
+  position: relative !important;
+  width: min(100%, 820px) !important;
+  min-height: calc(100dvh - 2 * clamp(12px, 2.1vw, 24px)) !important;
+  margin: 0 auto !important;
+  display: grid !important;
+  grid-template-rows: 1fr auto 1fr !important;
   align-items: center !important;
-  justify-content: center !important;
-  gap: 24px !important;
+  justify-items: center !important;
+  gap: 0 !important;
 }
 
 .gift8-view-closed-copy {
   position: relative !important;
-  left: auto !important;
-  top: auto !important;
-  transform: none !important;
+  grid-row: 3 !important;
+  align-self: start !important;
+  justify-self: center !important;
   width: min(96vw, 760px) !important;
+  margin: clamp(22px, 4vh, 36px) auto 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  transition:
+    opacity 420ms ease,
+    transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .gift8-view-closed.is-opening .gift8-view-closed-copy,
 .gift8-view-closed.is-opened .gift8-view-closed-copy {
   opacity: 0 !important;
-  transform: translate(-50%, 18px) !important;
+  transform: translateY(18px) !important;
   pointer-events: none !important;
 }
 
 .gift8-view-envelope-scene {
   position: relative !important;
-  left: auto !important;
-  top: auto !important;
-  transform: none !important;
+  grid-row: 2 !important;
   width: min(92vw, 438px) !important;
   min-height: clamp(236px, 31vw, 282px) !important;
   margin: 0 auto !important;
@@ -1679,10 +1688,9 @@ body {
   perspective: 1800px !important;
   isolation: isolate;
   overflow: visible !important;
-  transform: none !important;
+  transform: translateY(clamp(-14px, -1.2vh, -8px)) !important;
   transition:
     transform 720ms cubic-bezier(0.22, 1, 0.36, 1),
-    top 720ms cubic-bezier(0.22, 1, 0.36, 1),
     width 920ms cubic-bezier(0.22, 1, 0.36, 1),
     min-height 920ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1690,8 +1698,7 @@ body {
 .gift8-view-envelope-scene.is-opened {
   width: min(94vw, 780px) !important;
   min-height: min(82dvh, 760px) !important;
-  top: 50% !important;
-  transform: translate(-50%, -50%) !important;
+  transform: translateY(0) !important;
 }
 
 .gift8-view-envelope-shadow {
