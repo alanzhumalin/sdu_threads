@@ -42,6 +42,7 @@ import {
   Eye,
   Smile,
   MessageSquareQuote,
+  Sparkles,
 } from "lucide-react";
 
 type FeedItem = {
@@ -672,15 +673,28 @@ export default function FeedPage() {
   return (
     <main data-feed-root className="max-w-[672px] w-full mx-auto py-6 space-y-4 page-fade">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-white/60">{t("feed.page_label")}</p>
-            <h1 className="text-2xl font-semibold text-white">{t("feed.page_title")}</h1>
-          </div>
+        <div>
+          <p className="text-sm text-white/60">{t("feed.page_label")}</p>
+          <h1 className="text-2xl font-semibold text-white">{t("feed.page_title")}</h1>
         </div>
 
         <StoriesBar
           token={token}
+          leadingAction={
+            <Link
+              to="/gift/create"
+              className="shrink-0 w-[72px] flex flex-col items-center gap-2"
+              aria-label={tr("8 Наурыз ашық хаты", "Открытка к 8 марта", "March 8 card")}
+              title={tr("8 Наурыз ашық хаты", "Открытка к 8 марта", "March 8 card")}
+            >
+              <span className="w-14 h-14 rounded-full border border-rose-300/45 bg-rose-500/15 text-rose-100 grid place-items-center">
+                <Sparkles className="w-5 h-5" />
+              </span>
+              <span className="text-[11px] text-white/75 text-center leading-tight max-w-[70px]">
+                {tr("8 Наурыз ашық хаты", "Открытка к 8 марта", "March 8 card")}
+              </span>
+            </Link>
+          }
           onRequireAuth={() =>
             showAuthGate({
               title: t("auth.required_title"),
@@ -1032,7 +1046,7 @@ export default function FeedPage() {
                 <button
                   type="button"
                   onClick={() => startQuote(item)}
-                  className="flex items-center gap-2 rounded-full px-2 py-1 text-white/60 hover:text-white transition"
+                  className="hidden sm:flex items-center gap-2 rounded-full px-2 py-1 text-white/60 hover:text-white transition"
                   aria-label={t("feed.menu.quote")}
                   title={t("feed.menu.quote")}
                 >

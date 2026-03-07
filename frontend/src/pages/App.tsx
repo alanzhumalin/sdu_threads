@@ -14,6 +14,8 @@ import ChatConversationPage from "./ChatConversation";
 import RoomsPage from "./Rooms";
 import RoomCallPage from "./RoomCall";
 import PostPermalinkPage from "./PostPermalink";
+import GiftCreatePage from "./GiftCreate";
+import GiftViewPage from "./GiftView";
 import AdminPage from "./Admin";
 import ModerationPage from "./Moderation";
 import ModerationReportsPage from "./ModerationReports";
@@ -31,6 +33,24 @@ import { NotificationsSkeleton } from "../components/NotificationsSkeleton";
 import { PostPermalinkSkeleton } from "../components/PostPermalinkSkeleton";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n";
+
+const GIFT_FLAT_RESERVED_SEGMENTS = new Set([
+  "gift",
+  "login",
+  "register",
+  "logout",
+  "search",
+  "notifications",
+  "chats",
+  "rooms",
+  "profile",
+  "admin",
+  "moderation",
+  "u",
+  "p",
+  "api",
+  "healthz",
+]);
 
 function isJwtExpired(token: string, skewSeconds = 10): boolean {
   try {
@@ -57,8 +77,13 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthed = !!token && !isJwtExpired(token);
+  const flatGiftMatch = location.pathname.match(/^\/([^/]+)\/?$/);
+  const flatGiftSlug = flatGiftMatch?.[1]?.toLowerCase() || "";
+  const isFlatGiftViewPage = !!flatGiftSlug && !GIFT_FLAT_RESERVED_SEGMENTS.has(flatGiftSlug);
   const isChatConversationPage = /^\/chats\/[^/]+$/.test(location.pathname);
   const isRoomCallPage = /^\/rooms\/[^/]+$/.test(location.pathname);
+  const isGiftPage = /^\/gift(\/|$)/.test(location.pathname) || isFlatGiftViewPage;
+  const isGiftViewPage = /^\/gift\/(?!create$)[^/]+$/.test(location.pathname) || isFlatGiftViewPage;
   const isFullscreenMobilePage = isChatConversationPage || isRoomCallPage;
   const [chatViewportHeight, setChatViewportHeight] = useState<number | null>(null);
   const telegramChannelUrl = "https://t.me/+vcgFlt-a5Dw0Y2Yy";
@@ -213,11 +238,13 @@ export default function App() {
     isFullscreenMobilePage && chatViewportHeight
       ? ({ "--chat-mobile-vh": `${chatViewportHeight}px` } as CSSProperties)
       : undefined;
-  const pageContainerClass = isRoomCallPage
-    ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0"
-    : isFullscreenMobilePage
-      ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
-      : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6";
+  const pageContainerClass = isGiftViewPage
+    ? "h-[100dvh] overflow-hidden p-0 m-0"
+    : isRoomCallPage
+      ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0"
+      : isFullscreenMobilePage
+        ? "h-[var(--chat-mobile-vh,100dvh)] overflow-hidden pb-0 min-[871px]:h-auto min-[871px]:overflow-visible min-[871px]:pb-6"
+        : "pb-[calc(5rem+env(safe-area-inset-bottom))] min-[871px]:pb-6";
 
   // If the token is expired/invalid, clear it so the app behaves as logged out.
   // We still rely on backend 401/403 for security.
@@ -395,10 +422,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white relative">
-      <div className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[140]">
-        <LanguageSwitcher />
-      </div>
-      {!isAuthPage && (
+      {!isGiftViewPage ? (
+        <div className="fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[140]">
+          <LanguageSwitcher />
+        </div>
+      ) : null}
+      {!isAuthPage && !isGiftPage && (
         <Navigation
           items={items}
           onClick={handleTabClick}
@@ -407,7 +436,7 @@ export default function App() {
         />
       )}
       <AuthGateModal />
-      <div className="mx-auto max-w-6xl px-3 md:px-8">
+      <div className={isGiftViewPage ? "w-full max-w-none px-0" : "mx-auto max-w-6xl px-3 md:px-8"}>
         <div
           key={location.pathname}
           style={chatViewportStyle}
@@ -584,6 +613,9 @@ export default function App() {
                 )
               }
             />
+            <Route path="/gift/create" element={<GiftCreatePage />} />
+            <Route path="/gift/:code" element={<GiftViewPage />} />
+            <Route path="/:code" element={<GiftViewPage />} />
             <Route
               path="/admin"
               element={

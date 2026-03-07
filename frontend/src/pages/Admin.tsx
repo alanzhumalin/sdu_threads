@@ -11,6 +11,7 @@ import type { MediaItem } from "../types/media";
 type AdminStats = {
   users_count: number;
   posts_count: number;
+  gifts_count: number;
   active_users_15m: number;
   generated_at?: string;
 };
@@ -420,7 +421,7 @@ export default function AdminPage() {
         ) : statsError ? (
           <div className="mt-3 text-red-300 text-sm">{statsError}</div>
         ) : stats ? (
-          <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div className="rounded-xl border border-white/10 bg-black/60 p-3">
               <div className="text-white/60">Пользователи</div>
               <div className="text-white text-lg font-semibold">{stats.users_count}</div>
@@ -428,6 +429,10 @@ export default function AdminPage() {
             <div className="rounded-xl border border-white/10 bg-black/60 p-3">
               <div className="text-white/60">Посты</div>
               <div className="text-white text-lg font-semibold">{stats.posts_count}</div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/60 p-3">
+              <div className="text-white/60">Открытки</div>
+              <div className="text-white text-lg font-semibold">{stats.gifts_count}</div>
             </div>
             <div className="rounded-xl border border-white/10 bg-black/60 p-3">
               <div className="text-white/60">Активные (15м)</div>

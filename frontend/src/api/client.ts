@@ -124,6 +124,32 @@ export type StoryGroup = {
   stories: StoryItem[];
 };
 
+export type GiftWish = {
+  author: string;
+  text: string;
+};
+
+export type GiftMedia = {
+  url: string;
+  type?: "image" | "video" | string;
+  width?: number;
+  height?: number;
+};
+
+export type GiftCard = {
+  code: string;
+  to_name: string;
+  from_name: string;
+  message: string;
+  open_line?: string;
+  ui_language?: "kk" | "ru" | "en" | string;
+  animation_type: "envelope" | "petals" | "collective" | string;
+  media: GiftMedia;
+  wishes: GiftWish[];
+  created_at: string;
+  expires_at: string;
+};
+
 export type QuotedPostPreview = {
   id: string;
   user_id: string;
@@ -211,6 +237,18 @@ function normalizeBackendMessage(msg: string, status: number, code?: string) {
 
   if (status === 429 || code === "RATE_LIMIT") {
     return tr("Тым жиі. Кейінірек қайталаңыз.", "Слишком часто. Попробуйте позже.", "Too many requests. Try again later.");
+  }
+
+  if (code === "GIFT_SLUG_TAKEN") {
+    return tr("Бұл сілтеме бос емес.", "Эта ссылка уже занята.", "This link is already taken.");
+  }
+
+  if (code === "GIFT_CODE_INVALID") {
+    return tr("Сілтеме форматы қате.", "Неверный формат ссылки.", "Invalid link format.");
+  }
+
+  if (code === "GIFT_CODE_RESERVED") {
+    return tr("Бұл сілтеме атауы қолжетімсіз.", "Это имя ссылки недоступно.", "This link name is not available.");
   }
 
   if (lower.includes("rules must be accepted")) {
@@ -576,6 +614,36 @@ export const api = {
     token: string
   ) =>
     request<StoryItem>("/stories", "POST", payload, token),
+  createGift: (payload: {
+    to_name: string;
+    from_name: string;
+    message: string;
+    open_line?: string;
+    code?: string;
+    ui_language?: "kk" | "ru" | "en";
+    animation_type: "envelope" | "petals" | "collective";
+    media?: GiftMedia;
+    wishes?: GiftWish[];
+  }) =>
+    request<GiftCard>("/gifts", "POST", {
+      ...payload,
+      media: payload.media || { url: "", type: "" },
+      wishes: Array.isArray(payload.wishes) ? payload.wishes : [],
+    }),
+  giftByCode: (code: string) =>
+    request<GiftCard>(`/gifts/${encodeURIComponent(code)}`, "GET"),
+  uploadGiftMedia: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await requestForm<{ items: MediaItem[] }>(
+      "/gifts/upload",
+      "POST",
+      form
+    );
+    return Array.isArray(res.items)
+      ? res.items.filter((i) => i && typeof i.url === "string" && i.url.trim() !== "")
+      : [];
+  },
   userPosts: (userId: string, limit = 20, offset = 0, token?: string | null) =>
     requestWithHeaders<
       {
@@ -1149,6 +1217,7 @@ export const api = {
     request<{
       users_count: number;
       posts_count: number;
+      gifts_count: number;
       active_users_15m: number;
       generated_at?: string;
     }>(`/admin/stats`, "GET", undefined, token),

@@ -104,6 +104,11 @@ func (h *AdminHandler) stats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var giftsCount int64
+	if err := h.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM gift_cards`).Scan(&giftsCount).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	var active15m int64
 	if err := h.db.WithContext(ctx).Raw(`
@@ -124,6 +129,7 @@ SELECT COUNT(DISTINCT user_id) FROM (
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users_count":      usersCount,
 		"posts_count":      postsCount,
+		"gifts_count":      giftsCount,
 		"active_users_15m": active15m,
 		"generated_at":     time.Now().UTC().Format(time.RFC3339),
 	})

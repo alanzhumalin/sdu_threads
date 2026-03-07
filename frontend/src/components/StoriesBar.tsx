@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Plus, Volume2, VolumeX, X } from "lucide-react";
 import { api, type StoryGroup, type StoryItem } from "../api/client";
@@ -8,6 +8,7 @@ import { getImageDimensions, getVideoDimensions } from "../utils/media";
 type StoriesBarProps = {
   token?: string | null;
   onRequireAuth?: () => void;
+  leadingAction?: ReactNode;
 };
 
 type StoryComposerModalProps = {
@@ -522,7 +523,7 @@ function StoryViewerModal({ open, group, onClose }: StoryViewerModalProps) {
   );
 }
 
-export function StoriesBar({ token, onRequireAuth }: StoriesBarProps) {
+export function StoriesBar({ token, onRequireAuth, leadingAction }: StoriesBarProps) {
   const { t } = useI18n();
   const [groups, setGroups] = useState<StoryGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -561,6 +562,8 @@ export function StoriesBar({ token, onRequireAuth }: StoriesBarProps) {
     <>
       <div className="card p-3">
         <div className="flex items-center gap-3 overflow-x-auto scrollbar-hide">
+          {leadingAction}
+
           <button
             type="button"
             onClick={openComposer}
