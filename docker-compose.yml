@@ -110,48 +110,6 @@ services:
     networks:
       - app
 
-  moderation:
-    build:
-      context: ./moderation
-      dockerfile: Dockerfile
-    container_name: sdu-moderation
-    restart: unless-stopped
-    environment:
-      MODERATION_LOG_LEVEL: ${MODERATION_LOG_LEVEL:-INFO}
-      MODERATION_TEXT_MODEL: ${MODERATION_TEXT_MODEL:-s-nlp/russian_toxicity_classifier}
-      MODERATION_IMAGE_MODEL: ${MODERATION_IMAGE_MODEL:-Falconsai/nsfw_image_detection}
-      MODERATION_SUGGESTIVE_MODEL: ${MODERATION_SUGGESTIVE_MODEL:-prithivMLmods/Mature-Content-Detection}
-      MODERATION_TEXT_THRESHOLD: ${MODERATION_TEXT_THRESHOLD:-0.75}
-      MODERATION_IMAGE_THRESHOLD: ${MODERATION_IMAGE_THRESHOLD:-0.70}
-      MODERATION_SUGGESTIVE_THRESHOLD: ${MODERATION_SUGGESTIVE_THRESHOLD:-0.45}
-      MODERATION_SUGGESTIVE_GATE_THRESHOLD: ${MODERATION_SUGGESTIVE_GATE_THRESHOLD:-0.20}
-      MODERATION_SUGGESTIVE_STRONG_THRESHOLD: ${MODERATION_SUGGESTIVE_STRONG_THRESHOLD:-0.80}
-      MODERATION_PROFILE_SUGGESTIVE_THRESHOLD: ${MODERATION_PROFILE_SUGGESTIVE_THRESHOLD:-0.80}
-      MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD: ${MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD:-0.35}
-      MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD: ${MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD:-0.92}
-      MODERATION_BLOCK_SUGGESTIVE: ${MODERATION_BLOCK_SUGGESTIVE:-true}
-      MODERATION_TEXT_MODEL_REQUIRED: ${MODERATION_TEXT_MODEL_REQUIRED:-false}
-      MODERATION_IMAGE_MODEL_REQUIRED: ${MODERATION_IMAGE_MODEL_REQUIRED:-true}
-      MODERATION_SUGGESTIVE_MODEL_REQUIRED: ${MODERATION_SUGGESTIVE_MODEL_REQUIRED:-false}
-      MODERATION_MAX_TEXT_CHARS: ${MODERATION_MAX_TEXT_CHARS:-5000}
-      MODERATION_MAX_IMAGE_BYTES: ${MODERATION_MAX_IMAGE_BYTES:-7340032}
-      MODERATION_FETCH_TIMEOUT_SEC: ${MODERATION_FETCH_TIMEOUT_SEC:-5}
-      MODERATION_INFER_MAX_SIDE: ${MODERATION_INFER_MAX_SIDE:-1024}
-      MODERATION_PRELOAD_MODELS: ${MODERATION_PRELOAD_MODELS:-true}
-      MODERATION_SUGGESTIVE_BG_WARMUP: ${MODERATION_SUGGESTIVE_BG_WARMUP:-true}
-      MODERATION_BLOCKED_TERMS: ${MODERATION_BLOCKED_TERMS:-}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/livez', timeout=5).read()"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 180s
-    volumes:
-      - moderation_hf_cache:/root/.cache/huggingface
-      - moderation_torch_cache:/root/.cache/torch
-    networks:
-      - app
-
   backend:
     build:
       context: ./backend
@@ -163,8 +121,6 @@ services:
         condition: service_healthy
       db_restore:
         condition: service_completed_successfully
-      moderation:
-        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
@@ -190,10 +146,10 @@ services:
       S3_SIGNATURE_VERSION: ${S3_SIGNATURE_VERSION:-v4}
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
       S3_PREFIX: ${S3_PREFIX:-}
-      MODERATION_ENABLED: ${MODERATION_ENABLED:-true}
-      MODERATION_URL: ${MODERATION_URL:-http://moderation:8001}
+      MODERATION_ENABLED: ${MODERATION_ENABLED:-false}
+      MODERATION_URL: ${MODERATION_URL:-}
       MODERATION_TIMEOUT_MS: ${MODERATION_TIMEOUT_MS:-4000}
-      MODERATION_FAIL_CLOSED: ${MODERATION_FAIL_CLOSED:-true}
+      MODERATION_FAIL_CLOSED: ${MODERATION_FAIL_CLOSED:-false}
       CACHE_ENABLED: ${CACHE_ENABLED:-true}
       CACHE_REDIS_ADDR: ${CACHE_REDIS_ADDR:-redis:6379}
       CACHE_REDIS_PASSWORD: ${CACHE_REDIS_PASSWORD:-}
@@ -236,8 +192,6 @@ volumes:
   redis_data:
   nginx_cache:
   nginx_logs:
-  moderation_hf_cache:
-  moderation_torch_cache:
 
 networks:
   app:
