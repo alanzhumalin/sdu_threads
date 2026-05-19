@@ -80,26 +80,15 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `S3_SIGNATURE_VERSION` (`v4` по умолчанию; `v2` если провайдер требует)
   - `S3_PUBLIC_BASE_URL` (используется для построения публичных URL)
   - `S3_PREFIX` (опционально; если пусто — без префикса в ключах)
-- `MODERATION_*` — внешний FastAPI сервис модерации:
+- `MODERATION_*` — опциональный внешний FastAPI сервис текстовой модерации. В `docker-compose.yml` он не поднимается по умолчанию, чтобы деплой не тянул ML-модели:
   - `MODERATION_ENABLED` (`true|false`)
-  - `MODERATION_URL` (по умолчанию `http://moderation:8001`)
+  - `MODERATION_URL` (URL внешнего сервиса, если модерация включена)
   - `MODERATION_TIMEOUT_MS`
   - `MODERATION_FAIL_CLOSED` (если `true`, при недоступности сервиса контент блокируется)
-  - `MODERATION_TEXT_THRESHOLD`, `MODERATION_IMAGE_THRESHOLD`
-  - `MODERATION_STORY_MAX_IMAGE_BYTES` (лимит байт для модерации изображения сторис; `0` = без лимита)
-  - `MODERATION_SUGGESTIVE_THRESHOLD`, `MODERATION_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_SUGGESTIVE_STRONG_THRESHOLD`, `MODERATION_BLOCK_SUGGESTIVE`
-  - `MODERATION_STORY_SUGGESTIVE_THRESHOLD`, `MODERATION_STORY_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_STORY_SUGGESTIVE_STRONG_THRESHOLD` (отдельные пороги для сторис)
-  - `MODERATION_PROFILE_SUGGESTIVE_THRESHOLD`, `MODERATION_PROFILE_SUGGESTIVE_GATE_THRESHOLD`, `MODERATION_PROFILE_SUGGESTIVE_STRONG_THRESHOLD` (отдельные пороги для avatar/background)
-  - `MODERATION_TEXT_MODEL`, `MODERATION_IMAGE_MODEL`, `MODERATION_SUGGESTIVE_MODEL`
-  - `MODERATION_TEXT_MODEL_REQUIRED`, `MODERATION_IMAGE_MODEL_REQUIRED`, `MODERATION_SUGGESTIVE_MODEL_REQUIRED`
-  - `MODERATION_INFER_MAX_SIDE` (resize только для ML-инференса; исходный файл не меняется)
-  - `MODERATION_PRELOAD_MODELS` (прогрев моделей на старте сервиса)
-  - `MODERATION_SUGGESTIVE_BG_WARMUP` (фоновый прогрев optional suggestive-модели без блокировки запросов)
+  - `MODERATION_TEXT_THRESHOLD`
+  - `MODERATION_TEXT_MODEL`
+  - `MODERATION_TEXT_MODEL_REQUIRED`
   - `MODERATION_BLOCKED_TERMS` (дополнительные слова через запятую)
-  - По умолчанию:
-    - текст: `s-nlp/russian_toxicity_classifier`
-    - NSFW изображения: `Falconsai/nsfw_image_detection`
-    - suggestive/купальники: `prithivMLmods/Mature-Content-Detection` (класс `Enticing or Sensual`)
 - `CACHE_*` — backend query-cache (L1 memory + Redis L2):
   - `CACHE_ENABLED`
   - `CACHE_REDIS_ADDR`, `CACHE_REDIS_PASSWORD`, `CACHE_REDIS_DB`
@@ -142,7 +131,7 @@ Create `.env` from `.env.example` before running locally. Key values:
   - `GET /api/telegram/status` (Bearer)
   - `POST /api/telegram/connect` (Bearer) → создать одноразовый код привязки для `/start <code>` в боте
   - `DELETE /api/telegram/connect` (Bearer) → отключить Telegram-уведомления
-- Контент автоматически проходит модерацию (текст + NSFW изображения) при создании постов/комментариев и обновлении avatar/background.
+- Если `MODERATION_ENABLED=true`, текст автоматически проходит модерацию при регистрации, создании постов и комментариев. Фото не проверяются через ML-модерацию.
 - Moderation: `GET /api/moderation/logs?scope=&query=&limit=&offset=` (для moderator/admin) — логи блокировок с причиной, score, labels.
 - Hashtags: `GET /api/hashtags/search?q=`, `GET /api/hashtags/{name}/posts`.
 - Health: `/healthz`.
