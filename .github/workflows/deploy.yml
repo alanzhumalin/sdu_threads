@@ -74,12 +74,11 @@ jobs:
 
             # Docker Hub can intermittently fail with TLS handshake timeout.
             # Pre-pull base images with retries to reduce flaky build failures.
-            retry 5 10 docker pull python:3.11-slim
             retry 5 10 docker pull node:20-alpine
             retry 5 10 docker pull nginx:1.25-alpine
             retry 5 10 docker pull golang:1.25-alpine
             retry 5 10 docker pull alpine:3.19
 
-            retry 4 12 docker compose build --pull moderation backend nginx
-            docker compose up -d moderation backend nginx
+            retry 4 12 docker compose build --pull backend nginx
+            docker compose up -d backend nginx
             docker compose ps
