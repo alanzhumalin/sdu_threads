@@ -195,36 +195,10 @@ func (s *ProfileService) Update(ctx context.Context, userID string, req dto.Upda
 	}
 	if req.AvatarURL != nil {
 		avatar := strings.TrimSpace(*req.AvatarURL)
-		if avatar != "" {
-			if err := s.mod.CheckImageURL(ctx, avatar, "avatar_image", &moderation.AuditMeta{
-				ActorUserID: userID,
-				Action:      "update_profile_avatar",
-				TargetType:  "user",
-				TargetID:    userID,
-				Payload: map[string]any{
-					"image_url": avatar,
-				},
-			}); err != nil {
-				return nil, err
-			}
-		}
 		fields["avatar_url"] = avatar
 	}
 	if req.BackgroundURL != nil {
 		background := strings.TrimSpace(*req.BackgroundURL)
-		if background != "" {
-			if err := s.mod.CheckImageURL(ctx, background, "background_image", &moderation.AuditMeta{
-				ActorUserID: userID,
-				Action:      "update_profile_background",
-				TargetType:  "user",
-				TargetID:    userID,
-				Payload: map[string]any{
-					"image_url": background,
-				},
-			}); err != nil {
-				return nil, err
-			}
-		}
 		fields["background_url"] = background
 	}
 	if req.SocialLinks != nil {

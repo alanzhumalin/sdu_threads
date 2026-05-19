@@ -773,21 +773,6 @@ func (s *PostService) Create(ctx context.Context, userID string, content string,
 		}
 		clean = verified
 	}
-	for _, m := range clean {
-		if m.Type != "image" {
-			continue
-		}
-		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
-			ActorUserID: userID,
-			Action:      "create_post",
-			TargetType:  "post",
-			Payload: map[string]any{
-				"media_url": m.URL,
-			},
-		}); err != nil {
-			return nil, err
-		}
-	}
 	if len(clean) > 5 {
 		return nil, errors.New("too many media files (max 5)")
 	}
@@ -1485,22 +1470,6 @@ func (s *PostService) UpdateOwnWithTags(
 			return nil, err
 		}
 		clean = verified
-	}
-	for _, m := range clean {
-		if m.Type != "image" {
-			continue
-		}
-		if err := s.mod.CheckImageURL(ctx, m.URL, "post_media", &moderation.AuditMeta{
-			ActorUserID: userID,
-			Action:      "update_post",
-			TargetType:  "post",
-			TargetID:    postID,
-			Payload: map[string]any{
-				"media_url": m.URL,
-			},
-		}); err != nil {
-			return nil, err
-		}
 	}
 	if len(clean) > 5 {
 		return nil, errors.New("too many media files (max 5)")
