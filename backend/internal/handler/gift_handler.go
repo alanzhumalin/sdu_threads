@@ -221,36 +221,6 @@ func (h *GiftHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if mediaType == "image" && h.mod != nil {
-		if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, "gift_upload", &moderation.AuditMeta{
-			Action:     "upload_gift_media",
-			TargetType: "gift",
-			Payload: map[string]any{
-				"filename":     fh.Filename,
-				"content_type": ct,
-				"size_bytes":   len(data),
-			},
-		}); err != nil {
-			var viol *moderation.ViolationError
-			if errors.As(err, &viol) {
-				writeErrorPayload(w, http.StatusBadRequest, moderationViolationPayload(viol))
-				return
-			}
-			if moderation.IsUnavailable(err) {
-				writeErrorPayload(w, http.StatusServiceUnavailable, errorPayload{
-					Code:    "MODERATION_UNAVAILABLE",
-					Message: "Сервис модерации временно недоступен",
-				})
-				return
-			}
-			writeErrorPayload(w, http.StatusBadRequest, errorPayload{
-				Code:    "UPLOAD_FAILED",
-				Message: "Не удалось загрузить файл",
-			})
-			return
-		}
-	}
-
 	width, height := 0, 0
 	if mediaType == "image" {
 		cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(data))

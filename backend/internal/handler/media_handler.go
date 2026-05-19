@@ -676,24 +676,6 @@ func (h *MediaHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 				errs <- errFileTooLarge
 				return
 			}
-			// Для аудио и личных чатов ML-модерацию изображений не применяем.
-			if mediaType == "image" && purpose != "chat" && h.mod != nil {
-				if err := h.mod.CheckImageBytes(r.Context(), data, fh.Filename, ct, purpose+"_upload", &moderation.AuditMeta{
-					ActorUserID: userID,
-					Action:      "upload_media",
-					TargetType:  purpose,
-					Payload: map[string]any{
-						"purpose":      purpose,
-						"filename":     fh.Filename,
-						"content_type": ct,
-						"size_bytes":   len(data),
-					},
-				}); err != nil {
-					errs <- err
-					return
-				}
-			}
-
 			cfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(data))
 			width, height := 0, 0
 			if mediaType == "image" && cfgErr == nil {
